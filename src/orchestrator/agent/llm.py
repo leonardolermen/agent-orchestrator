@@ -5,7 +5,7 @@ permite testar o laço, o orçamento e a abstenção sem gastar um centavo, e o 
 permite trocar de modelo sem tocar em lógica de domínio.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from orchestrator.agent.proposal import Cost
@@ -25,6 +25,18 @@ class LLMResponse:
     text: str
     tool_calls: list[ToolCall]
     cost: Cost
+    # Blocos de conteúdo crus da resposta (texto, tool_use, thinking — o que
+    # o modelo devolveu, na ordem em que devolveu). Precisa voltar VERBATIM
+    # como turno do assistente na próxima chamada: é o único jeito de
+    # preservar blocos de raciocínio (obrigatório em modelos com thinking
+    # adaptativo) e de dar ao SDK real o mesmo objeto que ele emitiu. Lista
+    # vazia por padrão — `FakeLLMClient` e `ReplayClient` não a preenchem, e o
+    # investigador reconstrói um turno mínimo a partir de `text`/`tool_calls`
+    # quando ela vem vazia.
+    raw_content: list[Any] = field(default_factory=list)
+    # Por que o modelo parou: "end_turn", "tool_use", "max_tokens", etc.
+    # Ausente (None) só em resposta que nunca veio de uma API de verdade.
+    stop_reason: str | None = None
 
     def __post_init__(self) -> None:
         # Resposta vazia sem pedido de ferramenta não é resposta. Deixar passar
@@ -53,6 +65,12 @@ class FakeLLMClient:
     Acaba as respostas preparadas e ele levanta AssertionError de propósito —
     um laço que pede mais turnos do que o teste previu é laço descontrolado, e
     devolver algo vazio esconderia isso.
+
+    O que ele NÃO garante: grava `messages` em `chamadas` só para inspeção do
+    teste, mas nunca valida a forma delas. Ele prova a lógica do laço —
+    orçamento, retry de formato, execução de ferramenta — nunca o protocolo de
+    mensagens que o SDK real exige. Essa prova mora só em
+    `test_anthropic_client.py`.
     """
 
     def __init__(

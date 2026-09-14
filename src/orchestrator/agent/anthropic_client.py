@@ -7,9 +7,20 @@ Este é o único arquivo do projeto que conhece o SDK. Todo o resto fala com
 from typing import Any
 
 from orchestrator.agent.llm import LLMResponse, ToolCall
-from orchestrator.agent.proposal import _PRECOS, Cost
+from orchestrator.agent.proposal import Cost, modelo_precificado
 
 _MAX_TOKENS = 2048
+
+# Spec (tabela de tratamento de erro): timeout de LLM tenta de novo com
+# backoff e desiste na 3ª tentativa. `max_retries=2` é 1 chamada inicial + 2
+# retries do próprio SDK = 3 tentativas — o número mora aqui, explícito, em
+# vez de ficar implícito no default de uma biblioteca de terceiros que pode
+# mudar de versão para versão sem aviso.
+_MAX_RETRIES = 2
+# Um turno com ferramenta pode envolver raciocínio mais longo que uma resposta
+# simples; 120s é generoso o bastante para isso sem deixar uma chamada travada
+# pendurar uma divergência inteira por minutos.
+_TIMEOUT_SEGUNDOS = 120.0
 
 
 class AnthropicClient:
@@ -21,7 +32,7 @@ class AnthropicClient:
     """
 
     def __init__(self, model: str = "claude-opus-5", sdk: Any = None) -> None:
-        if model not in _PRECOS:
+        if not modelo_precificado(model):
             raise ValueError(
                 f"modelo sem preço conhecido: {model!r}. Sem preço não há custo, "
                 f"e sem custo o produto não tem métrica."
@@ -33,7 +44,9 @@ class AnthropicClient:
         if self._sdk is None:
             import anthropic
 
-            self._sdk = anthropic.Anthropic()
+            self._sdk = anthropic.Anthropic(
+                timeout=_TIMEOUT_SEGUNDOS, max_retries=_MAX_RETRIES
+            )
         return self._sdk
 
     def complete(
@@ -77,4 +90,11 @@ class AnthropicClient:
                 or 0,
                 calls=1,
             ),
+            # Blocos crus, na ordem — inclui texto, tool_use e (em opus-5, que
+            # roda thinking adaptativo por padrão) blocos de raciocínio. Viram
+            # o turno do assistente verbatim na próxima chamada; reconstruir a
+            # partir de `texto`/`chamadas` perderia justamente os blocos de
+            # thinking, que a API exige de volta inalterados.
+            raw_content=list(resposta.content),
+            stop_reason=getattr(resposta, "stop_reason", None),
         )

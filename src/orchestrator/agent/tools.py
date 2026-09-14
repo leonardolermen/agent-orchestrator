@@ -14,7 +14,7 @@ from typing import Any
 
 from orchestrator.dates import business_days_between
 from orchestrator.models import BankEntry, LedgerEntry
-from orchestrator.synth.injectors import calcular_retencao as _calcular_retencao
+from orchestrator.tax import calcular_retencao as _calcular_retencao
 
 _LIMITE_PADRAO = 10
 
@@ -67,13 +67,13 @@ class ToolContext:
             and (fornecedor is None or le.supplier == fornecedor)
             and (documento is None or le.document == documento)
         ]
-        return [self._ledger_dict(le) for le in achados[:limite]]
+        return [self.ledger_dict(le) for le in achados[:limite]]
 
     def buscar_documento_fiscal(self, documento: str) -> dict[str, Any] | None:
         """Dados do lançamento que carrega este documento."""
         for le in self.ledger:
             if le.document == documento:
-                return self._ledger_dict(le)
+                return self.ledger_dict(le)
         return None
 
     def historico_fornecedor(self, fornecedor: str) -> dict[str, Any]:
@@ -96,7 +96,7 @@ class ToolContext:
         return {"de": de, "ate": ate, "dias_uteis": business_days_between(inicio, fim)}
 
     @staticmethod
-    def _ledger_dict(le: LedgerEntry) -> dict[str, Any]:
+    def ledger_dict(le: LedgerEntry) -> dict[str, Any]:
         return {
             "id": le.id,
             "documento": le.document,

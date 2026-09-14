@@ -2,10 +2,10 @@ import json
 
 import pytest
 
-from orchestrator.agent.investigator import Investigator
+from orchestrator.agent.investigator import SYSTEM, Investigator
 from orchestrator.agent.llm import FakeLLMClient, LLMResponse, ToolCall
-from orchestrator.agent.proposal import Confidence, Cost
-from orchestrator.agent.tools import ToolContext
+from orchestrator.agent.proposal import _PRECOS, Confidence, Cost, TraceKind
+from orchestrator.agent.tools import TOOL_SCHEMAS, ToolContext
 from orchestrator.models import Divergence
 from orchestrator.synth.generator import build_dataset, generate_clean_pairs
 from orchestrator.taxonomy import DivergenceType
@@ -170,18 +170,25 @@ def test_custo_total_agrega_o_de_cada_divergencia():
 
 
 def test_erro_de_api_vira_abstencao_e_nao_derruba_o_processo():
-    # Um timeout num item nao pode custar a conciliacao inteira.
+    # Um timeout num item nao pode custar a conciliacao inteira. A mensagem
+    # injetada aqui NÃO menciona "API" de propósito: a asserção precisa valer
+    # pelo prefixo que o próprio código escreve, não porque o texto do teste
+    # contém a palavra que o teste depois procura.
     class _ClienteQueFalha:
         model = "claude-opus-5"
 
         def complete(self, system, messages, tools):
-            raise RuntimeError("timeout da API")
+            raise RuntimeError("o servidor caiu")
 
     out = Investigator(client=_ClienteQueFalha(), context=_ctx()).investigate([_div()])
 
     assert out.proposals[0].tipo is DivergenceType.NAO_IDENTIFICADO
-    assert "api" in out.proposals[0].explicacao.lower()
+    assert out.proposals[0].explicacao.lower().startswith("falha de api ao investigar")
     assert any(e.kind == "erro" for e in out.proposals[0].trace)
+    # A saída por erro era o único caminho de retorno sem evento "outcome"
+    # terminal — um consumidor não podia contar com "o último evento é
+    # outcome" para nenhuma proposta.
+    assert out.proposals[0].trace[-1].kind == "outcome"
 
 
 def test_trace_registra_turno_ferramenta_e_desfecho():
@@ -209,6 +216,13 @@ def test_trace_registra_turno_ferramenta_e_desfecho():
     assert "llm" in tipos
     assert "tool" in tipos
     assert tipos[-1] == "outcome"
+
+    # I2: o rastro precisa carregar ARGUMENTOS *e* RETORNO de cada ferramenta
+    # — sem o retorno, uma auditoria não consegue saber o que a ferramenta
+    # respondeu, só o que foi pedido.
+    evento_tool = next(e for e in p.trace if e.kind == TraceKind.TOOL)
+    assert evento_tool.detail["argumentos"] == {"bruto": 100000, "aliquota_bp": 500}
+    assert evento_tool.detail["resultado"] == 5000
 
 
 def test_modelo_sem_preco_falha_na_construcao():
@@ -277,3 +291,212 @@ def test_cada_divergencia_comeca_com_contexto_limpo():
     assert len(cliente.chamadas[0]["messages"]) == len(cliente.chamadas[1]["messages"])
     assert "d2" in json.dumps(cliente.chamadas[1]["messages"])
     assert "d1" not in json.dumps(cliente.chamadas[1]["messages"])
+
+
+# ---------------------------------------------------------------------------
+# CRITICAL 1 — o orçamento padrão precisa sobreviver a um turno de verdade.
+# ---------------------------------------------------------------------------
+
+
+def test_orcamento_padrao_admite_um_turno_realista_em_todo_modelo_precificado():
+    # Antes desta guarda: 100_000 µ¢ pagava só uma fração de UM turno em
+    # QUALQUER modelo da tabela — a primeira chamada já estourava o
+    # orçamento, e uma avaliação ao vivo gastaria dinheiro e devolveria 100%
+    # de abstenção nos três modelos, sem produzir proposta nenhuma. O cálculo
+    # abaixo deriva do PRÓPRIO prompt (SYSTEM + TOOL_SCHEMAS): se o prompt
+    # crescer ou a tabela de preços mudar, este teste quebra sozinho.
+    overhead_chars = len(SYSTEM) + len(json.dumps(TOOL_SCHEMAS))
+    tokens_entrada = overhead_chars // 4  # heurística grosseira: ~4 chars/token
+    turno_realista = Cost(input_tokens=tokens_entrada, output_tokens=200, calls=1)
+
+    padrao = Investigator.budget_microcents
+    for modelo in _PRECOS:
+        custo = turno_realista.microcents(modelo)
+        assert custo <= padrao, (
+            f"orçamento padrão ({padrao} µ¢) não cobre um turno realista em "
+            f"{modelo} ({custo} µ¢)"
+        )
+
+
+# ---------------------------------------------------------------------------
+# I1 — orçamento por execução, além do orçamento por divergência.
+# ---------------------------------------------------------------------------
+
+
+def test_orcamento_total_da_execucao_interrompe_o_restante():
+    resposta = LLMResponse(
+        text=_proposta_json(), tool_calls=[], cost=Cost(input_tokens=100, calls=1)
+    )
+    cliente = FakeLLMClient([resposta, resposta, resposta])
+    inv = Investigator(client=cliente, context=_ctx(), budget_total_microcents=1)
+
+    out = inv.investigate([_div("d1"), _div("d2"), _div("d3")])
+
+    # O teto é checado ANTES de cada item, contra o total acumulado ATÉ o
+    # item anterior — o primeiro roda porque o total começa em zero.
+    assert len(cliente.chamadas) == 1
+    assert out.proposals[0].tipo is DivergenceType.RETENCAO_IMPOSTO
+    for p in out.proposals[1:]:
+        assert p.tipo is DivergenceType.NAO_IDENTIFICADO
+        assert "orçamento" in p.explicacao.lower()
+
+
+# ---------------------------------------------------------------------------
+# I3 — acao_sugerida tem vocabulário fechado.
+# ---------------------------------------------------------------------------
+
+
+def test_acao_sugerida_fora_do_vocabulario_e_rebaixada_para_investigar_manual():
+    ruim = json.dumps(
+        {
+            "tipo": "RETENCAO_IMPOSTO",
+            "explicacao": "ISS retido",
+            "evidencia": ["l1"],
+            "confianca": "MEDIA",
+            "acao_sugerida": "texto livre que o modelo inventou",
+        }
+    )
+    cliente = FakeLLMClient([LLMResponse(text=ruim, tool_calls=[], cost=Cost(calls=1))])
+    inv = Investigator(client=cliente, context=_ctx())
+
+    p = inv.investigate([_div()]).proposals[0]
+
+    assert p.acao_sugerida == "investigar_manual"
+
+
+@pytest.mark.parametrize("acao", ["conciliar_com(l1,l2)", "ajustar(500)", "investigar_manual"])
+def test_acao_sugerida_do_vocabulario_e_preservada(acao):
+    valida = json.dumps(
+        {
+            "tipo": "RETENCAO_IMPOSTO",
+            "explicacao": "ISS retido",
+            "evidencia": ["l1"],
+            "confianca": "MEDIA",
+            "acao_sugerida": acao,
+        }
+    )
+    cliente = FakeLLMClient([LLMResponse(text=valida, tool_calls=[], cost=Cost(calls=1))])
+    inv = Investigator(client=cliente, context=_ctx())
+
+    p = inv.investigate([_div()]).proposals[0]
+
+    assert p.acao_sugerida == acao
+
+
+# ---------------------------------------------------------------------------
+# I4 — cerca de markdown em volta do JSON não pode custar um turno de retry.
+# ---------------------------------------------------------------------------
+
+
+def test_resposta_envolta_em_cerca_markdown_ainda_e_interpretada():
+    envolto = f"```json\n{_proposta_json()}\n```"
+    cliente = FakeLLMClient([LLMResponse(text=envolto, tool_calls=[], cost=Cost(calls=1))])
+    inv = Investigator(client=cliente, context=_ctx())
+
+    p = inv.investigate([_div()]).proposals[0]
+
+    assert p.tipo is DivergenceType.RETENCAO_IMPOSTO
+    assert len(cliente.chamadas) == 1  # não deveria ter gastado um turno de retry
+
+
+def test_resposta_envolta_em_cerca_sem_linguagem_tambem_e_interpretada():
+    envolto = f"```\n{_proposta_json()}\n```"
+    cliente = FakeLLMClient([LLMResponse(text=envolto, tool_calls=[], cost=Cost(calls=1))])
+    inv = Investigator(client=cliente, context=_ctx())
+
+    p = inv.investigate([_div()]).proposals[0]
+
+    assert p.tipo is DivergenceType.RETENCAO_IMPOSTO
+
+
+# ---------------------------------------------------------------------------
+# CRITICAL 2 — o laço precisa falar o protocolo de tool_use/tool_result.
+# ---------------------------------------------------------------------------
+
+
+def test_turno_so_com_ferramenta_nao_produz_assistente_vazio():
+    # Defeito 1: quando o modelo só pede ferramenta, resposta.text é "".
+    # Mandar isso como conteúdo do turno do assistente é mensagem vazia, e a
+    # API real rejeita mensagem de assistente vazia com 400.
+    cliente = FakeLLMClient(
+        [
+            LLMResponse(
+                text="",
+                tool_calls=[
+                    ToolCall(id="t1", name="historico_fornecedor", arguments={"fornecedor": "X"})
+                ],
+                cost=Cost(calls=1),
+            ),
+            LLMResponse(text=_proposta_json(), tool_calls=[], cost=Cost(calls=1)),
+        ]
+    )
+    inv = Investigator(client=cliente, context=_ctx())
+
+    inv.investigate([_div()])
+
+    segunda_chamada = cliente.chamadas[1]["messages"]
+    assistente = next(m for m in segunda_chamada if m["role"] == "assistant")
+    assert assistente["content"] != ""
+
+
+def test_resultado_de_ferramenta_volta_como_tool_result_com_id_casado():
+    # Defeito 2: o resultado precisa voltar como bloco `tool_result` casado
+    # pelo `tool_use_id` da chamada que ele responde — não como texto solto
+    # que não referencia chamada nenhuma.
+    cliente = FakeLLMClient(
+        [
+            LLMResponse(
+                text="",
+                tool_calls=[
+                    ToolCall(
+                        id="tool-abc",
+                        name="calcular_retencao",
+                        arguments={"bruto": 100000, "aliquota_bp": 500},
+                    )
+                ],
+                cost=Cost(calls=1),
+            ),
+            LLMResponse(text=_proposta_json(), tool_calls=[], cost=Cost(calls=1)),
+        ]
+    )
+    inv = Investigator(client=cliente, context=_ctx())
+
+    inv.investigate([_div()])
+
+    segunda_chamada = cliente.chamadas[1]["messages"]
+    msg_resultado = segunda_chamada[-1]
+    assert msg_resultado["role"] == "user"
+    assert isinstance(msg_resultado["content"], list)
+    assert msg_resultado["content"][0]["type"] == "tool_result"
+    assert msg_resultado["content"][0]["tool_use_id"] == "tool-abc"
+    assert "5000" in msg_resultado["content"][0]["content"]
+
+
+def test_multiplas_chamadas_de_ferramenta_voltam_em_uma_unica_mensagem():
+    # Espalhar resultados de ferramenta em várias mensagens de usuário ensina
+    # o modelo, silenciosamente, a parar de pedir ferramentas em paralelo.
+    cliente = FakeLLMClient(
+        [
+            LLMResponse(
+                text="",
+                tool_calls=[
+                    ToolCall(id="t1", name="historico_fornecedor", arguments={"fornecedor": "A"}),
+                    ToolCall(id="t2", name="historico_fornecedor", arguments={"fornecedor": "B"}),
+                ],
+                cost=Cost(calls=1),
+            ),
+            LLMResponse(text=_proposta_json(), tool_calls=[], cost=Cost(calls=1)),
+        ]
+    )
+    inv = Investigator(client=cliente, context=_ctx())
+
+    inv.investigate([_div()])
+
+    segunda_chamada = cliente.chamadas[1]["messages"]
+    mensagens_de_resultado = [
+        m for m in segunda_chamada if m["role"] == "user" and isinstance(m["content"], list)
+    ]
+    assert len(mensagens_de_resultado) == 1
+    assert len(mensagens_de_resultado[0]["content"]) == 2
+    ids = {b["tool_use_id"] for b in mensagens_de_resultado[0]["content"]}
+    assert ids == {"t1", "t2"}

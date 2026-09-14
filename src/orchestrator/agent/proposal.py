@@ -79,6 +79,26 @@ class Cost:
         )
 
 
+def modelo_precificado(model: str) -> bool:
+    """Verdadeiro quando o modelo tem preço conhecido na tabela.
+
+    Fronteira pública para código fora deste módulo (ex.: `AnthropicClient`)
+    que precisa validar um modelo sem importar a tabela de preços privada
+    diretamente.
+    """
+    return model in _PRECOS
+
+
+class TraceKind(StrEnum):
+    """Os cinco tipos de passo que aparecem no rastro de uma investigação."""
+
+    ENTRADA = "entrada"
+    ERRO = "erro"
+    LLM = "llm"
+    TOOL = "tool"
+    OUTCOME = "outcome"
+
+
 @dataclass(frozen=True)
 class TraceEvent:
     """Um passo do que aconteceu ao investigar uma divergência.
@@ -88,7 +108,7 @@ class TraceEvent:
     rastro é uma afirmação sem fonte.
     """
 
-    kind: str  # "llm" | "tool" | "outcome"
+    kind: TraceKind
     detail: dict[str, Any]
 
 
