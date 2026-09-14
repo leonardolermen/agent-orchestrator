@@ -5,7 +5,7 @@ permite testar o laço, o orçamento e a abstenção sem gastar um centavo, e o 
 permite trocar de modelo sem tocar em lógica de domínio.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from orchestrator.agent.proposal import Cost
