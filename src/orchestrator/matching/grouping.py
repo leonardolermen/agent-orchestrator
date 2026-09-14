@@ -95,6 +95,13 @@ class GroupingMatcher:
                         "quantidade": len(grupo),
                         "soma": alvo,
                         "documentos": sorted(le.document or le.id for le in grupo),
+                        # A soma sozinha não é auditável: "estes valores somam
+                        # este total" só se verifica com os valores
+                        # individuais. Chaveado por documento (ou id, na
+                        # ausência) para bater com a lista acima.
+                        "valores_por_documento": {
+                            (le.document or le.id): le.net_amount for le in grupo
+                        },
                     },
                 )
             )

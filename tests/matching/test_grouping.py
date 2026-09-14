@@ -41,6 +41,24 @@ def test_registra_as_parcelas_na_evidencia():
     assert r.evidence["soma"] == abs(inj.bank[0].amount)
 
 
+def test_evidencia_registra_o_valor_de_cada_documento_agrupado():
+    # A soma sozinha não é a metade não óbvia da alegação de L3: "estes N
+    # valores somam este total" só é auditável se os N valores individuais
+    # estiverem na evidência, não só o total. Spec 4.3: a trilha de auditoria
+    # é subproduto do matching, não algo a reconstruir depois.
+    pares = generate_clean_pairs(seed=6, n=2)
+    inj = PagamentoAgregado().apply_many(Random(0), pares)
+
+    r = GroupingMatcher().match(inj.bank, inj.ledger)[0]
+
+    valores = r.evidence["valores_por_documento"]
+    for le in inj.ledger:
+        chave = le.document or le.id
+        assert chave in valores
+        assert valores[chave] == le.net_amount
+    assert sum(valores.values()) == r.evidence["soma"]
+
+
 def test_nao_agrupa_fornecedores_diferentes():
     from dataclasses import replace
 

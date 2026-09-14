@@ -91,6 +91,16 @@ def test_retencao_sobra_para_o_agente():
     assert ToleranceMatcher().match(r.bank, r.ledger) == []
 
 
+def test_retencao_e_deterministica():
+    # Determinismo por semente é um Global Constraint do projeto: a mesma
+    # semente precisa produzir o mesmo resultado, também para este injetor.
+    par = _par()
+    a = RetencaoImposto().apply(Random(42), par)
+    b = RetencaoImposto().apply(Random(42), par)
+    assert a.bank[0].amount == b.bank[0].amount
+    assert a.truth.explanation == b.truth.explanation
+
+
 def test_retencao_registra_o_gabarito():
     par = _par()
     r = RetencaoImposto().apply(Random(0), par)
@@ -201,6 +211,16 @@ def test_devolucao_gabarito_cobre_todas_as_pernas():
     assert r.truth.bank_ids == frozenset(e.id for e in r.bank)
     assert r.truth.divergence_type is DivergenceType.DEVOLUCAO_FUNDOS
     assert r.consumed == (par,)
+
+
+def test_devolucao_e_deterministica():
+    # DevolucaoFundos consome dois draws de randrange (devolução e reenvio).
+    # Determinismo por semente é um Global Constraint: a mesma semente precisa
+    # reproduzir exatamente as mesmas três datas.
+    par = _par()
+    a = DevolucaoFundos().apply(Random(42), par)
+    b = DevolucaoFundos().apply(Random(42), par)
+    assert [e.date for e in a.bank] == [e.date for e in b.bank]
 
 
 def test_devolucao_zera_o_documento_das_pernas():

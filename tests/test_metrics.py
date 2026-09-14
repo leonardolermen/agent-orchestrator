@@ -3,6 +3,7 @@ from random import Random
 from orchestrator.matching.engine import reconcile
 from orchestrator.metrics import evaluate
 from orchestrator.models import MatchResult
+from orchestrator.money import format_brl
 from orchestrator.synth.generator import build_dataset, generate_clean_pairs
 from orchestrator.synth.injectors import DefasagemTemporal, PagamentoAgregado
 
@@ -119,13 +120,26 @@ def test_valores_somam_o_total_do_extrato():
 
 
 def test_render_formata_valores_em_reais():
+    # A versão anterior só checava "R$" em algum lugar da saída — passaria
+    # mesmo com os dois campos trocados ou zerados. Aqui os dois valores são
+    # diferentes de propósito, e cada um precisa aparecer na linha certa.
     pares = generate_clean_pairs(seed=9, n=10)
-    ds = build_dataset(pares, injections=[])
+    inj = DefasagemTemporal().apply(Random(0), pares[0])
+    ds = build_dataset(pares, injections=[inj])
 
-    saida = evaluate(ds, reconcile(ds.bank, ds.ledger)).render()
+    m = evaluate(ds, reconcile(ds.bank, ds.ledger))
+    linhas = m.render().splitlines()
 
-    assert "R$" in saida
-    assert "Valor conciliado" in saida
+    linha_conciliado = next(linha for linha in linhas if linha.startswith("Valor conciliado"))
+    linha_divergencia = next(
+        linha for linha in linhas if linha.startswith("Valor em divergência")
+    )
+
+    assert m.matched_amount != m.divergent_amount
+    assert format_brl(m.matched_amount) in linha_conciliado
+    assert format_brl(m.divergent_amount) in linha_divergencia
+    assert format_brl(m.divergent_amount) not in linha_conciliado
+    assert format_brl(m.matched_amount) not in linha_divergencia
 
 
 def test_resolucao_parcial_de_agregado_conta_falso_negativo():

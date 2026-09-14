@@ -78,6 +78,20 @@ def test_fronteira_de_dias_e_inclusiva():
     assert ToleranceMatcher().match(um_alem, [par.ledger]) == []
 
 
+def test_cada_lancamento_e_usado_uma_vez_so():
+    # Duas entradas bancárias disputando o mesmo lançamento contábil: só uma
+    # pode consumi-lo. Sem esta guarda, a mesma nota conciliaria duas vezes e
+    # a taxa de resolução determinística infla por dupla contagem — o mesmo
+    # invariante que L1 já guarda, e que faltava aqui.
+    par = _par()
+    concorrente = replace(par.bank, id="b-concorrente", amount=par.bank.amount + 2)
+    banco = [par.bank, concorrente]
+
+    resultados = ToleranceMatcher().match(banco, [par.ledger])
+
+    assert len(resultados) == 1
+
+
 def test_rejeita_tolerancia_negativa():
     # Tolerância negativa não casaria nada e pareceria só uma camada sem achados.
     import pytest
