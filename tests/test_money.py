@@ -38,6 +38,22 @@ def test_parse_brl_completa_centavos_com_um_digito():
     assert parse_brl("10,5") == 1050
 
 
+def test_parse_brl_rejeita_formato_americano():
+    # "10.5" é decimal americano (US$ 10,50); sem validar o agrupamento de
+    # milhar, o parser lia isso como R$ 10.500,00 — corrupção silenciosa.
+    with pytest.raises(ValueError):
+        parse_brl("10.5")
+
+
+def test_parse_brl_rejeita_grupo_de_milhar_mal_formado():
+    with pytest.raises(ValueError):
+        parse_brl("1.2345,00")
+
+
+def test_parse_brl_aceita_varios_grupos_de_milhar():
+    assert parse_brl("1.234.567,89") == 123456789
+
+
 def test_format_brl_positivo():
     assert format_brl(123456) == "R$ 1.234,56"
 

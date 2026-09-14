@@ -1,6 +1,18 @@
+import pytest
+
 from orchestrator.cli import build_benchmark, main
 from orchestrator.matching.engine import reconcile
 from orchestrator.metrics import evaluate
+
+
+def test_benchmark_rejeita_taxa_divergencia_fora_do_intervalo():
+    # --taxa-divergencia -1 faz `alvo` ficar negativo, o laço nunca roda, e a
+    # CLI imprime "Taxa determinística: 100.0%" com exit code 0 — degradação
+    # silenciosa no único lugar onde um humano lê o número.
+    with pytest.raises(ValueError):
+        build_benchmark(seed=1, n=10, taxa_divergencia=-1.0)
+    with pytest.raises(ValueError):
+        build_benchmark(seed=1, n=10, taxa_divergencia=1.5)
 
 
 def test_benchmark_injeta_a_proporcao_pedida():

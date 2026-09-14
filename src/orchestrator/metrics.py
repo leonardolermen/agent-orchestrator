@@ -60,8 +60,17 @@ class Metrics:
 
 def evaluate(dataset: Dataset, result: ReconcileResult) -> Metrics:
     bank_total = len(dataset.bank)
-    casados_banco = {i for m in result.matches for i in m.bank_ids}
-    casados_todos = {i for m in result.matches for i in m.bank_ids | m.ledger_ids}
+    ids_banco = {e.id for e in dataset.bank}
+    ids_contabil = {e.id for e in dataset.ledger}
+
+    # `matchers` é um ponto de extensão anunciado (reconcile aceita qualquer
+    # lista de Matcher). Um matcher com bug — ou hostil — pode devolver ids
+    # que não existem no dataset; sem intersectar, esses ids fantasma inflam
+    # o numerador sem limite e a taxa passa de 1.0. A interseção com os ids
+    # reais do dataset é a garantia de domínio que o tipo por si só não dá.
+    casados_banco = {i for m in result.matches for i in m.bank_ids} & ids_banco
+    casados_todos = ({i for m in result.matches for i in m.bank_ids | m.ledger_ids}
+                      & (ids_banco | ids_contabil))
 
     def ids(gt) -> set[str]:
         return set(gt.bank_ids | gt.ledger_ids)

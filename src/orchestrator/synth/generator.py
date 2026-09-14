@@ -79,6 +79,25 @@ def build_dataset(pares: list[Pair], injections: list[InjectionResult]) -> Datas
     N pares num lançamento só, então inferir por id deixaria originais órfãos
     somando dinheiro que não existe.
     """
+    # Duas injeções declarando o mesmo par, ou uma injeção declarando um par
+    # que não está em `pares`, silenciosamente duplicaria ou inventaria
+    # entradas — a mesma classe de "dinheiro que não existe" que `consumed`
+    # foi desenhado para prevenir (ver docstring de InjectionResult), um nível
+    # acima onde nada mais checa isso.
+    ids_pares_validos = {p.bank.id for p in pares}
+    vistos: set[str] = set()
+    for inj in injections:
+        for p in inj.consumed:
+            if p.bank.id not in ids_pares_validos:
+                raise ValueError(
+                    f"par consumido não pertence ao dataset base: {p.bank.id}"
+                )
+            if p.bank.id in vistos:
+                raise ValueError(
+                    f"par consumido por mais de uma injeção: {p.bank.id}"
+                )
+            vistos.add(p.bank.id)
+
     substituidos_banco = {p.bank.id for inj in injections for p in inj.consumed}
     substituidos_contabil = {p.ledger.id for inj in injections for p in inj.consumed}
 

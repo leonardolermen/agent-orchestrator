@@ -79,6 +79,74 @@ def test_build_dataset_remove_originais_em_fan_out():
     assert p.bank.id not in {e.id for e in ds.bank}
 
 
+def test_build_dataset_rejeita_pares_sobrepostos_entre_injecoes():
+    # Duas injeções declarando o mesmo par consumido duplicariam a entrada no
+    # dataset final — a mesma classe de "dinheiro que não existe" que
+    # `consumed` foi desenhado para prevenir, um nível acima.
+    from orchestrator.synth.dataset import GroundTruth, InjectionResult
+    from orchestrator.taxonomy import DivergenceType
+
+    pares = generate_clean_pairs(seed=8, n=3)
+    p = pares[0]
+
+    def _injecao_trivial(par) -> InjectionResult:
+        return InjectionResult(
+            consumed=(par,),
+            bank=[par.bank],
+            ledger=[par.ledger],
+            truth=GroundTruth(
+                divergence_type=DivergenceType.DEFASAGEM_TEMPORAL,
+                bank_ids=frozenset({par.bank.id}),
+                ledger_ids=frozenset({par.ledger.id}),
+                explanation="teste",
+            ),
+        )
+
+    inj_a = _injecao_trivial(p)
+    inj_b = _injecao_trivial(p)
+
+    import pytest
+
+    with pytest.raises(ValueError):
+        build_dataset(pares, injections=[inj_a, inj_b])
+
+
+def test_build_dataset_rejeita_par_consumido_estranho_ao_dataset():
+    # Um `consumed` que referencia um par fora de `pares` inventaria uma
+    # entrada que nunca existiu no dataset base. Os ids de `generate_clean_pairs`
+    # são posicionais (b00000, b00001, ...), então uma outra semente colidiria
+    # por acaso — o par estranho aqui é construído com um id que não existe em
+    # nenhuma chamada de `pares`.
+    from dataclasses import replace
+
+    from orchestrator.synth.dataset import GroundTruth, InjectionResult, Pair
+    from orchestrator.taxonomy import DivergenceType
+
+    pares = generate_clean_pairs(seed=8, n=3)
+    base = pares[0]
+    par_estranho = Pair(
+        bank=replace(base.bank, id="b-nao-pertence-ao-dataset"),
+        ledger=replace(base.ledger, id="l-nao-pertence-ao-dataset"),
+    )
+
+    inj = InjectionResult(
+        consumed=(par_estranho,),
+        bank=[par_estranho.bank],
+        ledger=[par_estranho.ledger],
+        truth=GroundTruth(
+            divergence_type=DivergenceType.DEFASAGEM_TEMPORAL,
+            bank_ids=frozenset({par_estranho.bank.id}),
+            ledger_ids=frozenset({par_estranho.ledger.id}),
+            explanation="teste",
+        ),
+    )
+
+    import pytest
+
+    with pytest.raises(ValueError):
+        build_dataset(pares, injections=[inj])
+
+
 def test_build_dataset_remove_originais_em_fan_in():
     # Pagamento agregado: três pares consumidos, um lançamento devolvido. Se os
     # outros dois sobreviverem, o dataset soma dinheiro que não existe.

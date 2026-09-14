@@ -23,6 +23,16 @@ _INJETORES_SIMPLES = [DefasagemTemporal(), RetencaoImposto(), DevolucaoFundos()]
 
 def build_benchmark(seed: int, n: int, taxa_divergencia: float) -> Dataset:
     """Monta um dataset com a proporção pedida de divergências."""
+    # Fora de [0, 1] o alvo de injeções vira negativo ou maior que o dataset;
+    # com alvo negativo o laço abaixo nunca roda e a CLI imprime "Taxa
+    # determinística: 100.0%" com exit code 0 — degradação silenciosa no único
+    # lugar onde um humano lê o número. Todo outro módulo deste projeto falha
+    # alto em config inválida; a CLI não é exceção.
+    if not 0.0 <= taxa_divergencia <= 1.0:
+        raise ValueError(
+            f"taxa_divergencia precisa estar entre 0.0 e 1.0: {taxa_divergencia}"
+        )
+
     rng = Random(seed)
     pares = generate_clean_pairs(seed=seed, n=n)
 

@@ -42,11 +42,32 @@ def test_falso_positivo_quando_casa_o_que_deveria_divergir():
 
 
 def test_taxa_fica_entre_zero_e_um():
-    pares = generate_clean_pairs(seed=9, n=30)
-    inj = DefasagemTemporal().apply(Random(0), pares[0])
-    ds = build_dataset(pares, injections=[inj])
+    # Matcher hostil: devolve ids que não existem no dataset. `matchers` é um
+    # ponto de extensão anunciado (reconcile aceita qualquer lista), então um
+    # matcher com bug ou malicioso é um cenário alcançável, não hipotético.
+    # Sem interseção com o dataset real, cada "casamento" fantasma infla o
+    # numerador sem tocar o denominador — a taxa passa de 1.0 sem limite.
+    class MatcherHostil:
+        layer = "HOSTIL"
 
-    m = evaluate(ds, reconcile(ds.bank, ds.ledger))
+        def match(self, bank, ledger):
+            # Mais ids fantasma que lançamentos reais no dataset: se o código
+            # não intersectar com o dataset, o numerador ultrapassa o
+            # denominador e a taxa passa de 1.0.
+            return [
+                MatchResult(
+                    bank_ids=frozenset({f"id-fora-do-dataset-{i}" for i in range(10)}),
+                    ledger_ids=frozenset({f"outro-id-fora-do-dataset-{i}" for i in range(10)}),
+                    layer=self.layer,
+                    rule="finge casar ids que não existem no dataset",
+                    evidence={},
+                )
+            ]
+
+    pares = generate_clean_pairs(seed=9, n=2)
+    ds = build_dataset(pares, injections=[])
+
+    m = evaluate(ds, reconcile(ds.bank, ds.ledger, matchers=[MatcherHostil()]))
 
     assert 0.0 <= m.deterministic_rate <= 1.0
 
