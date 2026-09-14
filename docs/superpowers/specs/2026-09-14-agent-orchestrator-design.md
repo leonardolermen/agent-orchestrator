@@ -83,9 +83,21 @@ Isso não impede que o código seja bem estruturado. Impede que ele seja *genér
 | 2 | **Procurement** | Mesmo comprador (CFO), mesma pilha documental (contrato, NF, fornecedor), mesma exigência de aprovação. Estende em vez de recomeçar. |
 | 3 | **Plataforma** | Extraída das duas anteriores mais o terceiro processo que aparecer |
 
-Descartadas por ora, com razão registrada:
+#### Verticais não-comerciais
 
-- **Software Engineering Crew** — mercado saturado (Cursor, Devin, Copilot, Claude Code), difícil cobrar caro, e sem vantagem competitiva nossa.
+Nem toda vertical precisa gerar receita para merecer lugar no projeto. **Software Engineering** entra por dois motivos que não são venda:
+
+- **Dogfooding.** É o único domínio onde o autor é seu próprio usuário. O atrito da abstração é sentido na pele, imediatamente, sem ciclo de venda e sem intermediário. Nas outras verticais esse sinal é caro; nesta é gratuito.
+- **Critério de aceitação da plataforma.** Se a abstração extraída no V3 não conseguir expressar um fluxo `issue → plano → código → teste → revisão → PR`, ela é estreita demais. Isso é um teste de generalidade que se pode rodar sem vender nada a ninguém.
+
+Como vertical comercial ela permanece fraca — mercado saturado (Cursor, Devin, Copilot, Claude Code) e difícil sustentar preço. Mas essa avaliação só se aplica a vendê-la, e vendê-la não é o objetivo aqui.
+
+**Gatilho:** usada como lente de design desde já; construída como produto apenas depois de V1 e V2 estarem pagos.
+
+**Risco a vigiar, nomeado de propósito:** esta vertical é divertida e conciliação é chata. É exatamente assim que um projeto solo perde o foco da vertical que paga. A lente de design não pode virar desvio de escopo — se ela começar a consumir horas de construção antes de V1 entregar, o gatilho foi violado.
+
+Adiada, sem papel definido:
+
 - **E-commerce Ops** — fraude e estoque são latência-sensíveis, com incumbentes estabelecidos; a fatia onde IA agrega é mais fina do que aparenta.
 
 ### 2.3 Critérios de sucesso por fase
@@ -392,7 +404,8 @@ O principal risco deste projeto é derivar para construir um workflow engine gen
 | Multi-tenant | Houver 2º cliente pagante |
 | Sandbox de execução | Executarmos código de terceiros |
 | Escrita em ERP | O loop de leitura estiver validado por usuários reais |
-| Verticais 3 e 4 | Finance Ops e Procurement estiverem pagos |
+| Software Eng Crew como produto | V1 e V2 pagos. Antes disso vale só como lente de design (ver 2.2) — zero horas de construção. |
+| E-commerce Ops | Sem gatilho definido; reavaliar se aparecer comprador |
 
 ---
 
@@ -401,6 +414,7 @@ O principal risco deste projeto é derivar para construir um workflow engine gen
 | Risco | Severidade | Mitigação |
 |---|---|---|
 | Deriva para plataforma cedo demais | Alta | Seção 9 com gatilhos; revisar a cada marco |
+| Desvio para a vertical divertida (Software Eng) | Média | Gatilho em 2.2: lente de design sim, horas de construção não, até V1 e V2 pagos |
 | Dado sintético não representa a realidade | Alta | F3 obrigatória antes de vender |
 | Empregador reivindicar propriedade | Alta | Zero dado, tempo e infraestrutura da empresa; registrado na seção 8 |
 | Matching determinístico resolver menos que o esperado | Média | Se L4 receber demais, melhorar L1-L3 — nunca compensar com agente |
