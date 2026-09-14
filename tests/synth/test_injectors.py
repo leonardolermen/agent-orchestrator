@@ -6,6 +6,7 @@ from orchestrator.dates import business_days_between
 from orchestrator.synth.generator import generate_clean_pairs
 from orchestrator.synth.injectors import (
     DefasagemTemporal,
+    DevolucaoFundos,
     PagamentoAgregado,
     RetencaoImposto,
     calcular_retencao,
@@ -136,3 +137,51 @@ def test_agregado_normaliza_fornecedor_e_data():
     r = PagamentoAgregado().apply_many(Random(0), _pares(3))
     assert len({le.supplier for le in r.ledger}) == 1
     assert all(le.cash_date == r.bank[0].date for le in r.ledger)
+
+
+def test_devolucao_produz_tres_pernas_bancarias():
+    par = _par()
+    r = DevolucaoFundos().apply(Random(0), par)
+    assert len(r.bank) == 3
+
+
+def test_devolucao_soma_das_pernas_iguala_o_debito_original():
+    par = _par()
+    r = DevolucaoFundos().apply(Random(0), par)
+    # débito, estorno de volta, e reenvio: o efeito líquido é um débito só
+    assert sum(e.amount for e in r.bank) == par.bank.amount
+
+
+def test_devolucao_tem_uma_perna_de_credito():
+    par = _par()
+    r = DevolucaoFundos().apply(Random(0), par)
+    creditos = [e for e in r.bank if e.amount > 0]
+    assert len(creditos) == 1
+
+
+def test_devolucao_pernas_tem_ids_distintos():
+    par = _par()
+    r = DevolucaoFundos().apply(Random(0), par)
+    assert len({e.id for e in r.bank}) == 3
+
+
+def test_devolucao_em_ordem_cronologica():
+    par = _par()
+    r = DevolucaoFundos().apply(Random(0), par)
+    datas = [e.date for e in r.bank]
+    assert datas == sorted(datas)
+
+
+def test_devolucao_gabarito_cobre_todas_as_pernas():
+    par = _par()
+    r = DevolucaoFundos().apply(Random(0), par)
+    assert r.truth.bank_ids == frozenset(e.id for e in r.bank)
+    assert r.truth.divergence_type is DivergenceType.DEVOLUCAO_FUNDOS
+
+
+def test_devolucao_zera_o_documento_das_pernas():
+    # L1 e L2 exigem documento não nulo. Sem zerar, L1 casaria a perna de envio
+    # com o lançamento contábil e o caso viraria falso positivo.
+    par = _par()
+    r = DevolucaoFundos().apply(Random(0), par)
+    assert all(e.document is None for e in r.bank)

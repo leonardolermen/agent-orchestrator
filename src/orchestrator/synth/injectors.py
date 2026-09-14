@@ -144,3 +144,62 @@ class PagamentoAgregado:
                 deterministic_expected=True,
             ),
         )
+
+
+class DevolucaoFundos:
+    """TED ou Pix devolvido, com reenvio posterior.
+
+    Produz três pernas bancárias para um único lançamento contábil:
+    o débito original, o crédito de devolução, e o reenvio corrigido.
+    Nenhuma camada determinística resolve isso — é o caso que vai para o
+    agente de investigação.
+    """
+
+    divergence_type = DivergenceType.DEVOLUCAO_FUNDOS
+
+    def apply(self, rng: Random, pair: Pair) -> InjectionResult:
+        valor = pair.bank.amount  # negativo
+        data_envio = pair.bank.date
+        data_devolucao = add_business_days(data_envio, rng.randrange(1, 3))
+        data_reenvio = add_business_days(data_devolucao, rng.randrange(1, 5))
+
+        # As três pernas perdem a referência do documento. Isso espelha o
+        # extrato real — transferência devolvida aparece como movimentação
+        # genérica — e tem uma consequência de desenho: L1 e L2 exigem
+        # documento não nulo, então nenhuma das duas casa estas pernas. Sem
+        # isso, L1 casaria a perna de envio com o lançamento contábil (mesmo
+        # documento, valor e data do original) e o caso que o spec reserva
+        # para o agente viraria falso positivo.
+        envio = replace(pair.bank, id=f"{pair.bank.id}-a", date=data_envio, document=None)
+        devolucao = replace(
+            pair.bank,
+            id=f"{pair.bank.id}-b",
+            date=data_devolucao,
+            amount=-valor,
+            description="DEVOLUCAO TED",
+            document=None,
+        )
+        reenvio = replace(
+            pair.bank,
+            id=f"{pair.bank.id}-c",
+            date=data_reenvio,
+            amount=valor,
+            description=f"{pair.bank.description} REENVIO",
+            document=None,
+        )
+
+        return InjectionResult(
+            consumed=(pair,),
+            bank=[envio, devolucao, reenvio],
+            ledger=[pair.ledger],
+            truth=GroundTruth(
+                divergence_type=self.divergence_type,
+                bank_ids=frozenset({envio.id, devolucao.id, reenvio.id}),
+                ledger_ids=frozenset({pair.ledger.id}),
+                explanation=(
+                    f"Pagamento enviado em {data_envio}, devolvido em "
+                    f"{data_devolucao} e reenviado em {data_reenvio}. Três "
+                    f"lançamentos bancários para um documento."
+                ),
+            ),
+        )
