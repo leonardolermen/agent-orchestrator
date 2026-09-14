@@ -1,7 +1,15 @@
 from random import Random
 
+import pytest
+
+from orchestrator.dates import business_days_between
 from orchestrator.synth.generator import generate_clean_pairs
-from orchestrator.synth.injectors import DefasagemTemporal
+from orchestrator.synth.injectors import (
+    DefasagemTemporal,
+    PagamentoAgregado,
+    RetencaoImposto,
+    calcular_retencao,
+)
 from orchestrator.taxonomy import DivergenceType
 
 
@@ -39,14 +47,9 @@ def test_defasagem_e_deterministica():
 def test_defasagem_excede_a_tolerancia_da_camada_l2():
     # A tolerância padrão de L2 é 3 dias úteis; a injeção precisa passar disso
     # para que o caso de fato vire divergência.
-    from orchestrator.dates import business_days_between
-
     par = _par()
     r = DefasagemTemporal().apply(Random(0), par)
     assert business_days_between(r.bank[0].date, par.ledger.cash_date) > 3
-
-
-from orchestrator.synth.injectors import RetencaoImposto, calcular_retencao
 
 
 def test_calcular_retencao_iss_cinco_por_cento():
@@ -77,3 +80,59 @@ def test_retencao_registra_o_gabarito():
     par = _par()
     r = RetencaoImposto().apply(Random(0), par)
     assert r.truth.divergence_type is DivergenceType.RETENCAO_IMPOSTO
+
+
+def _pares(n: int):
+    return generate_clean_pairs(seed=11, n=n)
+
+
+def test_agregado_produz_um_lancamento_bancario():
+    pares = _pares(3)
+    r = PagamentoAgregado().apply_many(Random(0), pares)
+    assert len(r.bank) == 1
+
+
+def test_agregado_preserva_todos_os_contabeis():
+    pares = _pares(3)
+    r = PagamentoAgregado().apply_many(Random(0), pares)
+    assert len(r.ledger) == 3
+
+
+def test_agregado_soma_os_liquidos():
+    pares = _pares(4)
+    r = PagamentoAgregado().apply_many(Random(0), pares)
+    esperado = sum(p.ledger.net_amount for p in pares)
+    assert abs(r.bank[0].amount) == esperado
+
+
+def test_agregado_registra_todos_os_ids_no_gabarito():
+    pares = _pares(3)
+    r = PagamentoAgregado().apply_many(Random(0), pares)
+    assert r.truth.ledger_ids == frozenset(p.ledger.id for p in pares)
+    assert len(r.truth.bank_ids) == 1
+
+
+def test_agregado_exige_pelo_menos_dois_pares():
+    with pytest.raises(ValueError):
+        PagamentoAgregado().apply_many(Random(0), _pares(1))
+
+
+def test_agregado_e_esperado_no_deterministico():
+    # L3 deve resolver: o gabarito precisa dizer isso, senão a métrica conta
+    # como falso positivo quando o sistema acerta.
+    r = PagamentoAgregado().apply_many(Random(0), _pares(3))
+    assert r.truth.deterministic_expected is True
+
+
+def test_defasagem_e_retencao_nao_sao_deterministicos():
+    par = _par()
+    assert DefasagemTemporal().apply(Random(0), par).truth.deterministic_expected is False
+    assert RetencaoImposto().apply(Random(0), par).truth.deterministic_expected is False
+
+
+def test_agregado_normaliza_fornecedor_e_data():
+    # Sem isto, a camada L3 (que agrupa por fornecedor dentro de uma janela de
+    # dias úteis) nunca encontraria o conjunto.
+    r = PagamentoAgregado().apply_many(Random(0), _pares(3))
+    assert len({le.supplier for le in r.ledger}) == 1
+    assert all(le.cash_date == r.bank[0].date for le in r.ledger)

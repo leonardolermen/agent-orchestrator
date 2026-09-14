@@ -93,3 +93,54 @@ class RetencaoImposto:
                 ),
             ),
         )
+
+
+class PagamentoAgregado:
+    """Um único débito bancário cobre N documentos contábeis.
+
+    Diferente dos demais injetores: consome vários pares, porque a divergência
+    só existe entre múltiplas notas. Por isso expõe apply_many, não apply.
+    """
+
+    divergence_type = DivergenceType.PAGAMENTO_AGREGADO
+
+    def apply_many(self, rng: Random, pairs: list[Pair]) -> InjectionResult:
+        if len(pairs) < 2:
+            raise ValueError("pagamento agregado exige pelo menos dois pares")
+
+        total = sum(p.ledger.net_amount for p in pairs)
+        primeiro = pairs[0]
+        documentos = ", ".join(sorted(p.ledger.document or p.ledger.id for p in pairs))
+
+        banco = replace(
+            primeiro.bank,
+            amount=-total,
+            description=f"PAGTO LOTE {len(pairs)} DOCS",
+            document=None,
+        )
+
+        # Um pagamento em lote é a um único fornecedor e liquida tudo no mesmo
+        # dia. Sem normalizar as duas coisas, a camada L3 — que agrupa por
+        # fornecedor dentro de uma janela de dias úteis — nunca encontraria o
+        # conjunto, e o caso que ela existe para resolver viraria divergência.
+        contabeis = [
+            replace(p.ledger, supplier=primeiro.ledger.supplier, cash_date=banco.date)
+            for p in pairs
+        ]
+
+        return InjectionResult(
+            consumed=tuple(pairs),
+            bank=[banco],
+            ledger=contabeis,
+            truth=GroundTruth(
+                divergence_type=self.divergence_type,
+                bank_ids=frozenset({banco.id}),
+                ledger_ids=frozenset(le.id for le in contabeis),
+                explanation=(
+                    f"Um débito de {total} centavos cobre {len(pairs)} documentos: "
+                    f"{documentos}."
+                ),
+                # A camada L3 deve resolver este caso sozinha.
+                deterministic_expected=True,
+            ),
+        )
