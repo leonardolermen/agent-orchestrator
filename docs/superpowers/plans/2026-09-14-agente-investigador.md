@@ -2368,6 +2368,11 @@ from orchestrator.agent.proposal import Cost
 from orchestrator.eval.agent_eval import EvalResult, avaliar
 
 
+# Preenchido com os valores MEDIDOS na semente 1, n=40. Rode `avaliar` uma vez
+# e copie a saída; não invente os números.
+PRECISAO_ESPERADA = {"total": 0, "abstidas": 0, "corretas": 0}
+
+
 def _fabrica_falsa(model: str):
     """Sempre devolve a mesma proposta, sem tocar em rede."""
     def fabrica():
@@ -2396,11 +2401,34 @@ def test_avaliacao_devolve_resultado_completo():
     assert r.proposals_total > 0
 
 
-def test_precisao_fica_entre_zero_e_um():
+def test_precisao_pina_os_contadores_e_o_valor():
+    # Uma asserção de faixa (0 <= x <= 1) é satisfeita por qualquer
+    # implementação, inclusive uma com numerador e denominador trocados. Com os
+    # três contadores brutos E o valor resultante fixos, trocar a fórmula
+    # quebra o teste.
+    #
+    # Os números abaixo são MEDIDOS nesta semente, não escolhidos: rode
+    # `avaliar` e copie o que sair. Se o benchmark mudar de forma, este teste
+    # falha — e esse é exatamente o momento em que alguém deveria olhar para
+    # ele.
     r = avaliar(model="claude-opus-5", seed=1, n=40, taxa_divergencia=0.15,
                 client_factory=_fabrica_falsa("claude-opus-5"))
 
-    assert 0.0 <= r.precision <= 1.0
+    arriscadas = r.proposals_total - r.proposals_abstained
+    assert r.proposals_total == PRECISAO_ESPERADA["total"]
+    assert r.proposals_abstained == PRECISAO_ESPERADA["abstidas"]
+    assert r.proposals_correct == PRECISAO_ESPERADA["corretas"]
+    assert r.precision == PRECISAO_ESPERADA["corretas"] / arriscadas
+
+
+def test_fabrica_que_devolve_outro_modelo_e_rejeitada():
+    # Pedir um modelo e medir outro produziria um relatório precificado numa
+    # tabela e rotulado como outra.
+    import pytest
+
+    with pytest.raises(ValueError):
+        avaliar(model="claude-opus-5", seed=1, n=40, taxa_divergencia=0.15,
+                client_factory=_fabrica_falsa("claude-haiku-4-5"))
 
 
 def test_custo_por_divergencia_e_inteiro_em_microcents():
@@ -2515,6 +2543,16 @@ def avaliar(
 ) -> EvalResult:
     dataset = build_benchmark(seed=seed, n=n, taxa_divergencia=taxa_divergencia)
     cliente = (client_factory or _fabrica_real(model))()
+
+    # O rótulo do resultado vem do modelo PEDIDO; o preço vem do modelo que o
+    # cliente REPORTA. Se divergirem, o relatório sai precificado numa tabela e
+    # rotulado como outra — corrupção silenciosa que derrota exatamente o
+    # propósito desta avaliação, que é transformar escolha de modelo em medição.
+    if cliente.model != model:
+        raise ValueError(
+            f"a fábrica devolveu um cliente de {cliente.model!r} quando "
+            f"{model!r} foi pedido; o custo sairia precificado errado"
+        )
     investigador = Investigator(
         client=cliente, context=ToolContext(bank=dataset.bank, ledger=dataset.ledger)
     )
