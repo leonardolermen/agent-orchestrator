@@ -2401,7 +2401,10 @@ def test_avaliacao_devolve_resultado_completo():
                 client_factory=_fabrica_falsa("claude-opus-5"))
 
     assert isinstance(r, EvalResult)
-    assert r.model == "fake"
+    # `avaliar` constrói EvalResult a partir do PARÂMETRO model, nunca de
+    # cliente.model — então isto reflete o que foi pedido, e "fake" aqui era
+    # resíduo de uma versão anterior do FakeLLMClient.
+    assert r.model == "claude-opus-5"
     assert r.proposals_total > 0
 
 
