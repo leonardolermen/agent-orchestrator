@@ -104,13 +104,31 @@ from orchestrator.taxonomy import DivergenceType
 
 
 def _custo() -> Cost:
-    return Cost(input_tokens=1000, output_tokens=200, cached_tokens=500, calls=2)
+    return Cost(
+        input_tokens=1000,
+        output_tokens=200,
+        cached_tokens=500,
+        cache_creation_tokens=300,
+        calls=2,
+    )
 
 
 def test_custo_soma_tokens_ao_preco_do_modelo():
-    # opus-5: 500 micro-cents por token de entrada, 2500 de saída, 50 de cache.
+    # opus-5: 500 por token de entrada, 2500 de saída, 50 de leitura de cache,
+    # 625 de escrita de cache.
     c = _custo()
-    assert c.microcents("claude-opus-5") == 1000 * 500 + 200 * 2500 + 500 * 50
+    assert c.microcents("claude-opus-5") == (
+        1000 * 500 + 200 * 2500 + 500 * 50 + 300 * 625
+    )
+
+
+def test_escrita_de_cache_entra_no_custo():
+    # Escrita de cache custa mais que entrada normal e não aparece em nenhum dos
+    # outros campos da resposta da API. Ignorá-la subcontaria toda primeira
+    # chamada de cada janela.
+    sem = Cost(input_tokens=1000)
+    com = Cost(input_tokens=1000, cache_creation_tokens=100)
+    assert com.microcents("claude-opus-5") > sem.microcents("claude-opus-5")
 
 
 def test_custo_de_modelo_mais_barato_e_menor():
@@ -255,11 +273,18 @@ class Confidence(StrEnum):
 #   opus-5     $5,00 entrada / $25,00 saída
 #   sonnet-5   $2,00 / $10,00
 #   haiku-4.5  $1,00 / $5,00
-# Leitura de cache custa ~10% da entrada.
+#
+# Ler do cache custa ~10% da entrada. ESCREVER no cache custa ~125% — e esses
+# tokens de escrita não aparecem nem em input_tokens nem em cached_tokens na
+# resposta da API. Ignorá-los subcontaria o custo real em toda primeira chamada
+# de cada janela de cache, e custo por divergência é o número comercial deste
+# produto.
+#
+# Ordem: entrada, saída, leitura de cache, escrita de cache.
 _PRECOS = {
-    "claude-opus-5": (500, 2500, 50),
-    "claude-sonnet-5": (200, 1000, 20),
-    "claude-haiku-4-5": (100, 500, 10),
+    "claude-opus-5": (500, 2500, 50, 625),
+    "claude-sonnet-5": (200, 1000, 20, 250),
+    "claude-haiku-4-5": (100, 500, 10, 125),
 }
 
 
@@ -271,6 +296,7 @@ class Cost:
     input_tokens: int = 0
     output_tokens: int = 0
     cached_tokens: int = 0
+    cache_creation_tokens: int = 0
     calls: int = 0
 
     @staticmethod
@@ -282,6 +308,8 @@ class Cost:
             input_tokens=self.input_tokens + outro.input_tokens,
             output_tokens=self.output_tokens + outro.output_tokens,
             cached_tokens=self.cached_tokens + outro.cached_tokens,
+            cache_creation_tokens=self.cache_creation_tokens
+            + outro.cache_creation_tokens,
             calls=self.calls + outro.calls,
         )
 
@@ -289,11 +317,12 @@ class Cost:
         """Custo em micro-cents de USD para o modelo dado."""
         if model not in _PRECOS:
             raise ValueError(f"modelo sem preço conhecido: {model!r}")
-        entrada, saida, cache = _PRECOS[model]
+        entrada, saida, leitura, escrita = _PRECOS[model]
         return (
             self.input_tokens * entrada
             + self.output_tokens * saida
-            + self.cached_tokens * cache
+            + self.cached_tokens * leitura
+            + self.cache_creation_tokens * escrita
         )
 
 
@@ -374,7 +403,7 @@ class InvestigationOutput:
 - [ ] **Step 5: Rodar e confirmar que passa**
 
 Run: `.venv/Scripts/pytest tests/agent/test_proposal.py -v`
-Expected: 13 passed
+Expected: 14 passed
 
 - [ ] **Step 6: Commit**
 
@@ -1510,9 +1539,12 @@ def _resposta_sdk(blocos, uso):
     return SimpleNamespace(content=blocos, usage=uso)
 
 
-def _uso(entrada=100, saida=50, cache=0):
+def _uso(entrada=100, saida=50, cache=0, escrita=0):
     return SimpleNamespace(
-        input_tokens=entrada, output_tokens=saida, cache_read_input_tokens=cache
+        input_tokens=entrada,
+        output_tokens=saida,
+        cache_read_input_tokens=cache,
+        cache_creation_input_tokens=escrita,
     )
 
 
@@ -1548,6 +1580,16 @@ def test_contabiliza_tokens_de_cache_separado():
 
     assert r.cost.cached_tokens == 990
     assert r.cost.input_tokens == 10
+
+
+def test_contabiliza_escrita_de_cache():
+    sdk = _SDKFalso(_resposta_sdk([SimpleNamespace(type="text", text="oi")],
+                                  _uso(entrada=10, escrita=2000)))
+    c = AnthropicClient(model="claude-opus-5", sdk=sdk)
+
+    r = c.complete(system="s", messages=[], tools=[])
+
+    assert r.cost.cache_creation_tokens == 2000
 
 
 def test_marca_o_system_para_cache():
@@ -1655,6 +1697,12 @@ class AnthropicClient:
                 input_tokens=getattr(uso, "input_tokens", 0),
                 output_tokens=getattr(uso, "output_tokens", 0),
                 cached_tokens=getattr(uso, "cache_read_input_tokens", 0) or 0,
+                # Tokens gastos para POPULAR o cache. Não aparecem em
+                # input_tokens nem em cache_read_input_tokens, e custam mais que
+                # entrada normal — ignorá-los subcontaria toda primeira chamada
+                # de cada janela de cache.
+                cache_creation_tokens=getattr(uso, "cache_creation_input_tokens", 0)
+                or 0,
                 calls=1,
             ),
         )
@@ -1663,7 +1711,7 @@ class AnthropicClient:
 - [ ] **Step 5: Rodar e confirmar que passa**
 
 Run: `.venv/Scripts/pytest tests/agent/test_anthropic_client.py -v`
-Expected: 6 passed
+Expected: 7 passed
 
 - [ ] **Step 6: Commit**
 
