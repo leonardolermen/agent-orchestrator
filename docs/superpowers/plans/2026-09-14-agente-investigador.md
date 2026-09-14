@@ -10,6 +10,40 @@
 
 **Spec:** [`2026-09-14-agent-orchestrator-design.md`](../specs/2026-09-14-agent-orchestrator-design.md) seção 4.6 e 5, mais [`2026-09-14-composicao-de-workflows-design.md`](../specs/2026-09-14-composicao-de-workflows-design.md) seção 6.
 
+## ⚠️ Correções pós-execução — leia antes de reexecutar este plano
+
+O review final de branch encontrou **dois defeitos críticos no texto deste
+plano** que sobreviveram a nove tarefas e a todas as revisões por tarefa,
+porque nenhuma camada do desenho de teste em três níveis consegue pegá-los —
+o cliente falso e a reprise ignoram `messages` por completo.
+
+**C1 — o orçamento padrão era 9x menor que um único turno real.** O plano
+especificava `budget_microcents = 100_000` enquanto o próprio plano definia o
+`SYSTEM` e os `TOOL_SCHEMAS` que somam ~792 tokens de entrada, custando 896.000
+micro-cents por turno no opus-5. Toda divergência pagaria uma chamada e
+abstiria com "orçamento esgotado". Ninguém multiplicou o tamanho do prompt pela
+tabela de preços que o plano definira duas tarefas antes. Corrigido para
+4.000.000, derivado e com teste que recalcula o turno realista a cada execução.
+
+**C2 — o laço de ferramentas não falava o protocolo da Messages API.** O plano
+mandava `mensagens.append({"role": "assistant", "content": resposta.text or ""})`,
+que produz mensagem de assistant VAZIA quando o modelo só emite `tool_use` — a
+API rejeita com 400 — e devolvia resultados como texto solto em vez de blocos
+`tool_result` com `tool_use_id`. Era por isso que `ToolCall.id` foi
+especificado na Task 2 e nunca consumido: é a metade faltante do protocolo.
+
+**I1 — o plano largou um requisito do spec sem registrar.** O spec exige teto em
+DOIS níveis, por divergência e por execução; o plano só previa o primeiro.
+
+**A verificação final deste plano não pegava nenhum dos dois.** Os cinco itens
+dela passavam nesta branch com o agente quebrado. Falta um item: uma chamada
+real, uma vez, contra o modelo mais barato.
+
+O código na branch está corrigido. **Os blocos de código deste documento não
+foram reescritos** — reexecutar este plano literalmente reproduziria C1 e C2.
+
+---
+
 ## Global Constraints
 
 - **Valores monetários são `int` em centavos.** Ponto flutuante em dinheiro é proibido, inclusive em testes. Custo de API é contabilizado em **micro-cents de USD** (`int`), convertido para centavos de BRL só na renderização.

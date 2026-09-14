@@ -117,3 +117,121 @@ corrigir os rótulos para nomear as unidades e separar o gabarito entre casos qu
 ## 26. Task 16
 
 a asserção passa a ser sobre o MÍNIMO entre as sementes varridas, não sobre a média. Medido: sementes 1-5 a n=300 dão 86,8 / 83,0 / 85,3 / 89,7 / 90,1, mínimo 83,0%. Com piso sobre o mínimo, 0,85 de fato falha e a verificação de falsificação passa a significar alguma coisa. O mínimo também é a estatística certa para o propósito: um teste de regressão precisa pegar ALGUMA semente colapsar, não a média deslizar — a média esconde exatamente o caso que interessa. Piso fixado em 0,78, cinco pontos abaixo do mínimo medido de 83,0%, com folga para dispersão sem virar teste instável. Custo se errado: o teste tolera uma degradação de até cinco pontos numa semente antes de reclamar.
+
+---
+
+# Plano 2 — Agente investigador
+
+Mais **27 decisões** tomadas sem consulta prévia durante a execução do
+plano 2. Mesmo critério: cada uma traz a alternativa rejeitada e o custo de
+estar errada.
+
+---
+
+## P2.1. Pre-flight (antes da Task 1)
+
+usar branch `feat/agente-investigador`. A execução anterior teve a branch renomeada para main por processo externo; começar direto na main violaria a skill e perderia a separação. Custo se errado: nenhum.
+
+## P2.2. Pre-flight (antes da Task 1)
+
+DEFEITO 1 — `metrics.py` importa apenas `DivergenceType`. `Confidence` fica só no arquivo de teste, onde é de fato usado. Alternativa rejeitada: usar `Confidence` em metrics.py para justificar o import — seria inventar uso para salvar uma linha. Custo se errado: nenhum; o import volta se algum dia for preciso.
+
+## P2.3. Pre-flight (antes da Task 1)
+
+DEFEITO 2 — usar o `Counter` já importado no topo de metrics.py, sem alias local. Custo se errado: nenhum.
+
+## P2.4. Pre-flight (antes da Task 1)
+
+manter `_PRECOS` como fonte única importada por `anthropic_client`, apesar de ser nome privado atravessando módulo. Duplicar a tabela de preços em dois arquivos criaria a possibilidade de eles divergirem, e preço errado significa métrica de custo errada — que é a métrica central do produto. Custo se errado: acoplamento a um detalhe interno de `proposal.py`; visível e fácil de promover a público depois.
+
+## P2.5. Pre-flight (antes da Task 1)
+
+aceitar os dois `Investigator` homônimos (classe em `agent.investigator`, protocolo em `matching.engine`). Renomear o protocolo para algo como `InvestigatorProtocol` seria feio, e renomear a classe perderia o nome óbvio. Tipagem estrutural resolve. Custo se errado: confusão de leitura, resolvível com um comentário.
+
+## P2.6. Task 1
+
+corrigir coagindo `tipo` e `confianca` ao enum no `__post_init__`, não trocando `is` por `==`. Trocar o operador conserta UMA verificação e deixa o campo guardando string, o que quebraria as outras verificações por identidade que o projeto usa em toda parte (metrics faz `p.tipo is DivergenceType.NAO_IDENTIFICADO`). Coagir uma vez torna toda verificação por identidade segura e torna Proposal construível a partir de JSON — que é exatamente o que o plano 3 vai fazer. Custo se errado: duas linhas de object.__setattr__ num dataclass frozen, padrão conhecido e feio, removível se a coerção nunca for exercida.
+
+## P2.7. Task 1
+
+Tasks 2 e 3 despachadas num brief só. Dois módulos folha sem interface comum (llm.py: protocolo mais cliente falso; tools.py: cinco ferramentas e seus schemas), ambos com código completo no plano, ambos transcrição mais teste. Custo se errado: o diff de review cobre dois arquivos em vez de um.
+
+## P2.8. Task 2+3
+
+substituir o idioma `or` por checagem explícita de None e rejeitar limite < 1 com ValueError, mais `minimum: 1` no schema. Alternativa rejeitada: clampar em silêncio — seria a mesma classe de falha silenciosa que este projeto já corrigiu cinco vezes. Custo se errado: uma chamada do modelo com limite inválido vira erro que volta para ele em vez de resultado; é o comportamento desejado.
+
+## P2.9. Task 2+3
+
+corrigir a descrição do schema, que afirma "no máximo 10 resultados" mas só vale quando limite é omitido. A descrição É a interface do agente; descrição que promete garantia que o código não dá é defeito, não polimento.
+
+## P2.10. Task 2+3
+
+o reviewer marcou `ToolContext.bank` como estado morto. NÃO é — a Task 4 usa `self.context.bank` em `_descrever` para montar a divergência. O reviewer não tinha a Task 4 à vista. Registrado para o review final não reabrir. Custo se errado: nenhum.
+
+## P2.11. Task 4 — #1 e #2 juntos
+
+estreitar o try para envolver só `client.complete()`, e validar `client.model` contra a tabela de preços no `__post_init__`. Modelo sem preço não é abstenção, é erro de configuração: abster em toda divergência gastaria a execução inteira sem produzir nada, e o custo — métrica central do produto — ficaria incalculável. Validar na construção também elimina a necessidade do re-raise de AssertionError, que era a única coisa mantendo um caminho vivo de exceção saindo de investigate. Alternativa rejeitada: `except ValueError` estreito em volta do teto — conserta o sintoma e mantém o modelo sem preço rodando. Custo se errado: construir o investigador com modelo desconhecido falha na hora em vez de degradar; é o comportamento desejado.
+
+## P2.12. Task 4 — #3
+
+`evidencia` que não seja lista é rejeitada e vai para o caminho de retry, não embrulhada numa lista de um elemento. Embrulhar preservaria o conteúdo e economizaria um turno, mas seria adivinhar intenção — e este projeto já corrigiu seis defeitos da classe "aceita em silêncio o que deveria rejeitar". Consistência vale mais que um turno. Custo se errado: um turno a mais quando o modelo manda string onde pediu-se lista; medível na avaliação da Task 9.
+
+## P2.13. Task 4 — #4
+
+as três regressões ganham teste. Desvio de brief sem teste que o fixe é desvio que a próxima execução do plano desfaz em silêncio.
+
+## P2.14. Task 4 — Minor 3 do reviewer, promovido
+
+`_executar` passa a capturar largo. É a inversão exata do #1 — ali a captura larga esconde bug do investigador; aqui ela é o requisito literal do spec, porque erro de ferramenta tem que voltar ao modelo como texto sempre.
+
+## P2.15. Task 5
+
+corrigir agora, não adiar para o review final, apesar de exigir estender o Cost da Task 1 já fechada. A Task 9 vai reportar custo por divergência como o número comercial do produto, e um subcontagem sistemática conhecida nesse número é exatamente a classe de erro que eu já corrigi uma vez neste projeto com a taxa de 85%. Adiar significaria a avaliação reportar um número que eu sei ser baixo. Custo se errado: um campo a mais no Cost e um preço a mais na tabela; magnitude pequena em valor absoluto, porque só incide na primeira chamada de cada janela de cache.
+
+## P2.16. Task 5
+
+preço de escrita de cache fixado em 1,25x o preço de entrada, por modelo. É a razão documentada da API. Custo se errado: o custo reportado erra por uma fração de uma fração; corrigível numa linha da tabela.
+
+## P2.17. Task 5
+
+usuário perguntou se dava para fazer o front em paralelo num worktree. Respondi que o sistema de arquivos paraleliza mas eu não — sou um controlador só, e a verificação empírica entre rodadas, que pegou os defeitos mais caros de hoje, é a primeira coisa a degradar com atenção dividida. Somado a isso, Proposal mudou duas vezes só hoje, então front construído agora perseguiria contrato em movimento. Usuário escolheu terminar o plano 2 primeiro. Front vira plano 3, com a medição de precisão e abstenção na mão — que é o que decide qual das três telas o produto precisa ser.
+
+## P2.18. Task 5
+
+Tasks 6 e 7 despachadas juntas. Ambas modificam arquivo existente e a 7 consome diretamente o que a 6 produz (ReconcileResult.proposals e agent_cost); separá-las faria a 7 ser revisada contra uma engine que a própria 6 acabou de mudar. Custo se errado: diff de review maior.
+
+## P2.19. Task 6+7
+
+Tasks 8 e 9 despachadas juntas. Ambas criam arquivos novos em eval/, a 9 consome a 8 só conceitualmente (camadas de teste diferentes), e nenhuma toca código existente. Custo se errado: diff de review maior.
+
+## P2.20. Task 8+9 — 1
+
+asserção dura em avaliar de que cliente.model == model. Alternativa rejeitada: usar cliente.model para os dois — esconderia a discrepância em vez de gritar, e o ponto é que pedir um modelo e medir outro é erro de quem chamou. Custo se errado: uma fábrica legítima que troque de modelo deliberadamente passa a falhar; não existe caso assim hoje.
+
+## P2.21. Task 8+9 — 2
+
+pinar os três contadores brutos E o valor de precisão resultante, não só a faixa. Com os quatro fixos, trocar numerador por denominador quebra. Pinar só o valor final seria circular se a fórmula estivesse errada; pinar só os contadores não testaria a fórmula. Custo se errado: o teste precisa ser reajustado se o benchmark mudar de forma — que é exatamente quando alguém deveria olhar para ele.
+
+## P2.22. Task 8+9
+
+trocar a amostra do teste de precisão para n=100, semente 1 — medido por mim: 12 propostas, 0 abstenções, 6 corretas, precisão 0,5. Fórmula invertida daria 2,0, fora de [0,1], então a amostra discrimina. Alternativa rejeitada: manter n=40 e aceitar a degenerescência — pinar contadores numa amostra que não distingue a fórmula é teatro. Custo se errado: o teste roda sobre 100 pares em vez de 40, uns milissegundos a mais.
+
+## P2.23. Task 8+9
+
+acrescentar um segundo teste com falso que só abstém — medido: 12 propostas, 12 abstenções, 0 corretas, precisão 0,0, taxa de abstenção 1,0. Sem ele o denominador `total - abstidas` nunca é exercido com abstidas maior que zero, e o ramo de denominador zero também não. Custo se errado: um teste a mais.
+
+## P2.24. Task 8+9
+
+onda única de correção com os 30 itens, conforme a skill. Alternativa rejeitada: um corretor por achado — cada um reconstrói contexto e roda a suíte inteira.
+
+## P2.25. Task 8+9
+
+o novo orçamento padrão é derivado, não chutado: 4.000.000 micro-cents, com a derivação documentada no código e um teste que recalcula o turno realista a partir de len(SYSTEM) e len(TOOL_SCHEMAS) a cada execução. Assim crescimento de prompt ou mudança de preço quebram alto. Custo se errado: uma execução de 500 lançamentos com ~116 divergências custa até US$ 4,64 no opus em vez de falhar barato.
+
+## P2.26. Task 8+9
+
+calcular_retencao movido para tax.py neutro. O agente calculava retenção com a MESMA função que fabricou a divergência — a acurácia de RETENCAO_IMPOSTO na avaliação era parcialmente circular. Custo se errado: um módulo a mais.
+
+## P2.27. Task 8+9
+
+NÃO faço a chamada real que o reviewer pede como prova final. Gasta dinheiro e depende da chave do usuário; é decisão dele, não minha. Registrado como a única evidência que falta.
