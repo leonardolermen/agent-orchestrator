@@ -38,6 +38,21 @@ def test_busca_limita_o_numero_de_resultados():
     assert len(achados) <= 3
 
 
+def test_limite_invalido_e_rejeitado():
+    # Medido antes da guarda: limite=-3 devolvia 197 de 200 lançamentos,
+    # porque a fatia `achados[:-3]` devolve tudo menos os últimos três.
+    ctx = _contexto()
+    with pytest.raises(ValueError):
+        ctx.buscar_lancamentos(limite=0)
+    with pytest.raises(ValueError):
+        ctx.buscar_lancamentos(limite=-3)
+
+
+def test_limite_maior_que_o_padrao_e_respeitado():
+    ctx = _contexto()
+    assert len(ctx.buscar_lancamentos(limite=15)) <= 15
+
+
 def test_busca_sem_criterio_nenhum_e_rejeitada():
     ctx = _contexto()
     with pytest.raises(ValueError):

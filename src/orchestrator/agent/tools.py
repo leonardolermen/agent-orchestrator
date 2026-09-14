@@ -50,6 +50,16 @@ class ToolContext:
         if valor is None and fornecedor is None and documento is None and limite is None:
             raise ValueError("buscar_lancamentos exige pelo menos um critério")
 
+        # `limite or _LIMITE_PADRAO` seria armadilha: 0 é falsy e viraria 10, e
+        # um limite negativo entraria na fatia como `achados[:-3]`, devolvendo
+        # tudo menos os últimos três. Medido: limite=-3 devolveu 197 de 200
+        # lançamentos — exatamente o "vira o dataset inteiro no contexto" que
+        # esta guarda existe para impedir.
+        if limite is None:
+            limite = _LIMITE_PADRAO
+        if limite < 1:
+            raise ValueError(f"limite deve ser pelo menos 1: {limite}")
+
         achados = [
             le
             for le in self.ledger
@@ -57,7 +67,7 @@ class ToolContext:
             and (fornecedor is None or le.supplier == fornecedor)
             and (documento is None or le.document == documento)
         ]
-        return [self._ledger_dict(le) for le in achados[: limite or _LIMITE_PADRAO]]
+        return [self._ledger_dict(le) for le in achados[:limite]]
 
     def buscar_documento_fiscal(self, documento: str) -> dict[str, Any] | None:
         """Dados do lançamento que carrega este documento."""
@@ -119,12 +129,17 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     _schema(
         "buscar_lancamentos",
         "Busca lançamentos contábeis por valor líquido em centavos, fornecedor "
-        "ou documento. Devolve no máximo 10 resultados.",
+        "ou documento. Devolve no máximo `limite` resultados, ou 10 se `limite` "
+        "for omitido. Enviar os quatro campos como null é erro.",
         {
             "valor": {"type": ["integer", "null"], "description": "valor líquido em centavos"},
             "fornecedor": {"type": ["string", "null"]},
             "documento": {"type": ["string", "null"]},
-            "limite": {"type": ["integer", "null"], "description": "máximo de resultados"},
+            "limite": {
+                "type": ["integer", "null"],
+                "minimum": 1,
+                "description": "máximo de resultados; pelo menos 1",
+            },
         },
         ["valor", "fornecedor", "documento", "limite"],
     ),
