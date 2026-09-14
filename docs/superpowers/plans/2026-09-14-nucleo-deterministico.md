@@ -136,6 +136,21 @@ def test_parse_brl_rejeita_lixo():
         parse_brl("abc")
 
 
+def test_parse_brl_completa_uma_casa_decimal():
+    assert parse_brl("R$ 10,5") == 1050
+
+
+def test_parse_brl_rejeita_tres_casas_decimais():
+    # Truncar para 1099 em silêncio corromperia o valor sem avisar.
+    with pytest.raises(ValueError):
+        parse_brl("10,999")
+
+
+def test_parse_brl_rejeita_virgula_sem_digitos():
+    with pytest.raises(ValueError):
+        parse_brl("10,")
+
+
 def test_format_brl_positivo():
     assert format_brl(123456) == "R$ 1.234,56"
 
@@ -178,7 +193,12 @@ def parse_brl(texto: str) -> int:
 
     if "," in limpo:
         inteiros, _, decimais = limpo.partition(",")
-        decimais = (decimais + "00")[:2]
+        # Truncar silenciosamente uma terceira casa decimal corromperia o valor
+        # sem avisar ninguém. Num sistema cuja premissa é trilha auditável,
+        # rejeitar é sempre melhor que adivinhar.
+        if len(decimais) not in (1, 2):
+            raise ValueError(f"parte decimal inválida: {texto!r}")
+        decimais = decimais.ljust(2, "0")
     else:
         inteiros, decimais = limpo, "00"
 
@@ -200,7 +220,7 @@ def format_brl(centavos: int) -> str:
 - [ ] **Step 7: Rodar o teste e confirmar que passa**
 
 Run: `.venv/Scripts/pytest tests/test_money.py -v`
-Expected: 8 passed
+Expected: 11 passed
 
 - [ ] **Step 8: Commit**
 
