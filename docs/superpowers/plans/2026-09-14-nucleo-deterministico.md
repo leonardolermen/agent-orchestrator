@@ -2515,8 +2515,9 @@ from random import Random
 
 from orchestrator.matching.engine import reconcile
 from orchestrator.metrics import evaluate
+from orchestrator.models import MatchResult
 from orchestrator.synth.generator import build_dataset, generate_clean_pairs
-from orchestrator.synth.injectors import DefasagemTemporal
+from orchestrator.synth.injectors import DefasagemTemporal, PagamentoAgregado
 
 
 def test_dataset_limpo_tem_taxa_total():
@@ -2617,6 +2618,49 @@ def test_render_formata_valores_em_reais():
 
     assert "R$" in saida
     assert "Valor conciliado" in saida
+
+
+def test_resolucao_parcial_de_agregado_conta_falso_negativo():
+    # Um agregado só está resolvido se TODOS os seus ids foram casados. Casar
+    # um dos três e deixar dois em divergência é falha parcial, e contar isso
+    # como resolvido esconderia exatamente o que esta métrica existe para expor.
+    class MatcherParcial:
+        layer = "PARCIAL"
+
+        def match(self, bank, ledger):
+            if not bank or not ledger:
+                return []
+            return [
+                MatchResult(
+                    bank_ids=frozenset({bank[0].id}),
+                    ledger_ids=frozenset({ledger[0].id}),
+                    layer=self.layer,
+                    rule="casa só um dos contábeis, de propósito",
+                    evidence={},
+                )
+            ]
+
+    pares = generate_clean_pairs(seed=9, n=3)
+    inj = PagamentoAgregado().apply_many(Random(0), pares)
+    ds = build_dataset(pares, injections=[inj])
+
+    m = evaluate(ds, reconcile(ds.bank, ds.ledger, matchers=[MatcherParcial()]))
+
+    assert m.false_negatives == 1
+
+
+def test_separa_casos_do_gabarito_por_destino():
+    # As duas contagens que o relatório imprime lado a lado precisam ser
+    # separáveis, senão o leitor compara lançamentos órfãos com casos.
+    pares = generate_clean_pairs(seed=9, n=4)
+    agregado = PagamentoAgregado().apply_many(Random(0), pares[:3])
+    defasado = DefasagemTemporal().apply(Random(0), pares[3])
+    ds = build_dataset(pares, injections=[agregado, defasado])
+
+    m = evaluate(ds, reconcile(ds.bank, ds.ledger))
+
+    assert m.truth_deterministic == 1
+    assert m.truth_for_agent == 1
 ```
 
 - [ ] **Step 2: Rodar e confirmar falha**
@@ -2654,21 +2698,31 @@ class Metrics:
     false_negatives: int
     matched_amount: int
     divergent_amount: int
+    truth_deterministic: int
+    truth_for_agent: int
     truth_by_type: dict[str, int]
 
     def render(self) -> str:
+        # As duas contagens abaixo medem unidades diferentes: uma conta
+        # LANÇAMENTOS sem contrapartida, a outra conta CASOS injetados. Uma
+        # única devolução de fundos vira quatro lançamentos órfãos e um caso.
+        # Os rótulos dizem isso, porque lado a lado sem dizer o leitor compara
+        # os dois e conclui um erro que não existe.
         linhas = [
-            f"Lançamentos bancários:       {self.bank_total}",
-            f"Lançamentos contábeis:       {self.ledger_total}",
-            f"Casados deterministicamente: {self.bank_matched}",
-            f"Taxa determinística:         {self.deterministic_rate:.1%}",
-            f"Divergências apuradas:       {self.divergences}",
-            f"Divergências no gabarito:    {self.truth_divergences}",
-            f"Falsos positivos:            {self.false_positives}",
-            f"Falsos negativos:            {self.false_negatives}",
+            f"Lançamentos bancários:         {self.bank_total}",
+            f"Lançamentos contábeis:         {self.ledger_total}",
+            f"Casados deterministicamente:   {self.bank_matched}",
+            f"Taxa determinística:           {self.deterministic_rate:.1%}",
             "",
-            f"Valor conciliado:            {format_brl(self.matched_amount)}",
-            f"Valor em divergência:        {format_brl(self.divergent_amount)}",
+            f"Lançamentos sem contrapartida: {self.divergences}",
+            f"Casos injetados no gabarito:   {self.truth_divergences}",
+            f"  que as camadas devem resolver: {self.truth_deterministic}",
+            f"  reservados ao agente:          {self.truth_for_agent}",
+            f"Falsos positivos:              {self.false_positives}",
+            f"Falsos negativos:              {self.false_negatives}",
+            "",
+            f"Valor conciliado:              {format_brl(self.matched_amount)}",
+            f"Valor em divergência:          {format_brl(self.divergent_amount)}",
             "",
             "Gabarito por tipo:",
         ]
@@ -2682,19 +2736,28 @@ def evaluate(dataset: Dataset, result: ReconcileResult) -> Metrics:
     casados_banco = {i for m in result.matches for i in m.bank_ids}
     casados_todos = {i for m in result.matches for i in m.bank_ids | m.ledger_ids}
 
-    def foi_casado(gt) -> bool:
-        return bool((gt.bank_ids | gt.ledger_ids) & casados_todos)
+    def ids(gt) -> set[str]:
+        return set(gt.bank_ids | gt.ledger_ids)
 
-    # Falso positivo: o gabarito diz que só o agente resolveria, mas alguma
-    # camada determinística casou assim mesmo. Casar errado é pior que não casar.
+    # A assimetria entre as duas contagens abaixo é deliberada.
+    #
+    # Falso positivo usa SOBREPOSIÇÃO: o gabarito diz que só o agente
+    # resolveria, então qualquer toque de uma camada determinística já é erro.
+    # Resolver parcialmente um caso que não deveria ser resolvido é resolver
+    # errado do mesmo jeito.
     falsos_positivos = sum(
-        1 for gt in dataset.truth if not gt.deterministic_expected and foi_casado(gt)
+        1 for gt in dataset.truth
+        if not gt.deterministic_expected and ids(gt) & casados_todos
     )
 
-    # Falso negativo: o gabarito diz que uma camada deveria resolver, e nenhuma
-    # resolveu. Isso é trabalho desnecessário empurrado para o agente.
+    # Falso negativo usa CONTENÇÃO TOTAL: o gabarito diz que as camadas devem
+    # resolver o caso INTEIRO. Um pagamento agregado com dois dos três
+    # contábeis casados não foi resolvido — contar "qualquer toque" como
+    # resolvido esconderia exatamente a falha parcial que esta métrica existe
+    # para expor.
     falsos_negativos = sum(
-        1 for gt in dataset.truth if gt.deterministic_expected and not foi_casado(gt)
+        1 for gt in dataset.truth
+        if gt.deterministic_expected and not ids(gt) <= casados_todos
     )
 
     # Valor é o que o comprador entende. Contagem de lançamentos não diz se o
@@ -2713,6 +2776,8 @@ def evaluate(dataset: Dataset, result: ReconcileResult) -> Metrics:
         false_negatives=falsos_negativos,
         matched_amount=conciliado,
         divergent_amount=divergente,
+        truth_deterministic=sum(1 for gt in dataset.truth if gt.deterministic_expected),
+        truth_for_agent=sum(1 for gt in dataset.truth if not gt.deterministic_expected),
         truth_by_type=dict(Counter(str(gt.divergence_type) for gt in dataset.truth)),
     )
 ```
@@ -2720,7 +2785,7 @@ def evaluate(dataset: Dataset, result: ReconcileResult) -> Metrics:
 - [ ] **Step 4: Rodar e confirmar que passa**
 
 Run: `.venv/Scripts/pytest tests/test_metrics.py -v`
-Expected: 9 passed
+Expected: 11 passed
 
 - [ ] **Step 5: Rodar ruff e corrigir o que aparecer**
 
