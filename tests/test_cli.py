@@ -56,6 +56,24 @@ def test_camadas_nao_erram_e_taxa_e_estavel_entre_sementes():
     #
     # Piso em 78%, cinco pontos abaixo do mínimo medido de 83,0%: folga para a
     # dispersão observada sem virar teste instável.
+    #
+    # Estas medições assumem a composição atual do benchmark, e o piso NÃO
+    # protege contra essa composição mudar:
+    #
+    # 1. _FRACAO_AGREGADOS (cli.py) = 0.25 controla que fração das injeções
+    #    vira PAGAMENTO_AGREGADO, o único tipo que as camadas resolvem
+    #    sozinhas. Variar essa fração de 0.00 a 0.90 move a taxa média de
+    #    78,1% a 99,5% — um piso fixo não pega a mistura de agregados
+    #    caindo a zero, só uma semente ruim dentro da mistura atual.
+    #
+    # 2. O benchmark só injeta 4 dos 14 tipos da taxonomia: DEFASAGEM_TEMPORAL,
+    #    RETENCAO_IMPOSTO, DEVOLUCAO_FUNDOS e PAGAMENTO_AGREGADO. TARIFA_BANCARIA,
+    #    JUROS_MULTA e DESCONTO_ANTECIPACAO são deltas pequenos que a
+    #    tolerância de 5 centavos de L2 não absorveria, e DUPLICIDADE criaria
+    #    contenção em L1 — os quatro empurrariam a taxa para baixo se
+    #    existissem. A taxa medida aqui é sobre uma mistura de 4 em 14 tipos e,
+    #    por isso, tende a ser um limite superior otimista, não a taxa que um
+    #    dataset com a taxonomia completa produziria.
     taxas = []
     for semente in range(1, 6):
         ds = build_benchmark(seed=semente, n=300, taxa_divergencia=0.15)

@@ -18,12 +18,17 @@ class Metrics:
     bank_total: int
     ledger_total: int
     bank_matched: int
+    # Lado bancário apenas: numerador e denominador são ambos sobre
+    # dataset.bank. O lado contábil nunca entra no denominador, então um
+    # órfão contábil puro não move esta taxa.
     deterministic_rate: float
     divergences: int
     truth_divergences: int
     false_positives: int
     false_negatives: int
     matched_amount: int
+    # Idem: soma apenas lançamentos bancários. Um órfão contábil contribui
+    # R$ 0,00 aqui, mesmo que represente dinheiro real em divergência.
     divergent_amount: int
     truth_deterministic: int
     truth_for_agent: int
@@ -39,7 +44,7 @@ class Metrics:
             f"Lançamentos bancários:         {self.bank_total}",
             f"Lançamentos contábeis:         {self.ledger_total}",
             f"Casados deterministicamente:   {self.bank_matched}",
-            f"Taxa determinística:           {self.deterministic_rate:.1%}",
+            f"Taxa determinística (lado bancário): {self.deterministic_rate:.1%}",
             "",
             f"Lançamentos sem contrapartida: {self.divergences}",
             f"Casos injetados no gabarito:   {self.truth_divergences}",
@@ -49,7 +54,7 @@ class Metrics:
             f"Falsos negativos:              {self.false_negatives}",
             "",
             f"Valor conciliado:              {format_brl(self.matched_amount)}",
-            f"Valor em divergência:          {format_brl(self.divergent_amount)}",
+            f"Valor em divergência (lado bancário): {format_brl(self.divergent_amount)}",
             "",
             "Gabarito por tipo:",
         ]

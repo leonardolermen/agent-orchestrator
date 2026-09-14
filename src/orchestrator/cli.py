@@ -20,6 +20,24 @@ from orchestrator.synth.injectors import (
 
 _INJETORES_SIMPLES = [DefasagemTemporal(), RetencaoImposto(), DevolucaoFundos()]
 
+# Fração das injeções que vira PAGAMENTO_AGREGADO — o único tipo injetado que
+# L1-L3 conseguem resolver sozinhas. A taxa determinística reportada é uma
+# função direta deste número, não só do dataset:
+#
+#   fração agregados | taxa média | mínimo  | máximo
+#   0.00              | 78.1%      | 75.4%   | 80.2%
+#   0.25 (valor atual)| 87.2%      | 83.0%   | 92.3%
+#   0.50              | 93.2%      | 88.5%   | 96.7%
+#   0.90              | 99.5%      | 98.9%   | 100.0%
+# (medido em 12 sementes, n=300)
+#
+# Variação de 21 pontos por causa de um único literal, sem estar documentado
+# em lugar nenhum antes desta nota. Qualquer taxa que este benchmark reportar
+# é condicional a esta composição — não é uma propriedade do sistema medida
+# no vácuo. O piso de regressão em test_cli.py (78%) coincide com a média do
+# cenário 0.00: ele não pegaria a mistura de agregados cair a zero.
+_FRACAO_AGREGADOS = 0.25
+
 
 def build_benchmark(seed: int, n: int, taxa_divergencia: float) -> Dataset:
     """Monta um dataset com a proporção pedida de divergências."""
@@ -41,7 +59,7 @@ def build_benchmark(seed: int, n: int, taxa_divergencia: float) -> Dataset:
     indice = 0
 
     while indice < alvo and indice < len(pares):
-        if rng.random() < 0.25 and indice + 3 <= len(pares):
+        if rng.random() < _FRACAO_AGREGADOS and indice + 3 <= len(pares):
             lote = pares[indice : indice + 3]
             injecoes.append(PagamentoAgregado().apply_many(rng, lote))
             indice += 3

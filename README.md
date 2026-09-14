@@ -20,7 +20,7 @@ entrada estruturada
       ↓
   [código]   normalização
       ↓
-  [código]   regra determinística  ──→ resolvido (85-95%) ──→ fim, centavos
+  [código]   regra determinística  ──→ resolvido (83-92%) ──→ fim, centavos
       ↓ não resolvido
   [AGENTE]   investigação com ferramentas
       ↓
@@ -86,5 +86,9 @@ pip install -e ".[dev]"
 pytest
 orchestrator --seed 1 --n 500
 ```
+
+Flags da CLI: `--seed` (semente do gerador), `--n` (tamanho do dataset) e
+`--taxa-divergencia` (fração de pares que recebe divergência injetada — é o
+flag que move a taxa determinística reportada acima).
 
 Próximo: agente de investigação (plano 2), revisão humana (plano 3).
