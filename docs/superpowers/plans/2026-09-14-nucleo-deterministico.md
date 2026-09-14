@@ -878,6 +878,16 @@ def test_build_dataset_sem_injecoes_devolve_tudo_limpo():
     assert len(ds.bank) == 10
     assert len(ds.ledger) == 10
     assert ds.truth == []
+
+
+def test_generate_rejeita_n_invalido():
+    # Lista vazia em silêncio zeraria toda métrica calculada em cima dela.
+    import pytest
+
+    with pytest.raises(ValueError):
+        generate_clean_pairs(seed=1, n=0)
+    with pytest.raises(ValueError):
+        generate_clean_pairs(seed=1, n=-5)
 ```
 
 - [ ] **Step 2: Rodar e confirmar falha**
@@ -918,6 +928,12 @@ _BASE = date(2026, 6, 1)
 
 def generate_clean_pairs(seed: int, n: int) -> list[Pair]:
     """Gera n pares que conciliam perfeitamente."""
+    # Um n inválido devolveria lista vazia em silêncio, e toda métrica
+    # calculada em cima dela sairia zerada sem nenhum sinal de que o dataset
+    # nunca existiu.
+    if n < 1:
+        raise ValueError(f"n precisa ser pelo menos 1: {n}")
+
     rng = Random(seed)
     pares: list[Pair] = []
 
@@ -983,7 +999,7 @@ def build_dataset(pares: list[Pair], injections: list[InjectionResult]) -> Datas
 - [ ] **Step 4: Rodar e confirmar que passa**
 
 Run: `.venv/Scripts/pytest tests/synth/test_generator.py -v`
-Expected: 6 passed
+Expected: 7 passed
 
 - [ ] **Step 5: Commit**
 
@@ -1786,6 +1802,16 @@ def test_registra_a_diferenca_na_evidencia():
     r = ToleranceMatcher().match(banco, [par.ledger])[0]
 
     assert r.evidence["diferenca_centavos"] == 3
+
+
+def test_rejeita_tolerancia_negativa():
+    # Tolerância negativa não casaria nada e pareceria só uma camada sem achados.
+    import pytest
+
+    with pytest.raises(ValueError):
+        ToleranceMatcher(max_cents=-1)
+    with pytest.raises(ValueError):
+        ToleranceMatcher(max_business_days=-1)
 ```
 
 - [ ] **Step 2: Rodar e confirmar falha**
@@ -1812,6 +1838,17 @@ class ToleranceMatcher:
     max_cents: int = 5
     max_business_days: int = 3
     layer: str = field(default="L2", init=False)
+
+    def __post_init__(self) -> None:
+        # Tolerância negativa não casaria nada e pareceria uma camada que
+        # simplesmente não encontrou nada — falha silenciosa disfarçada de
+        # resultado.
+        if self.max_cents < 0:
+            raise ValueError(f"max_cents não pode ser negativo: {self.max_cents}")
+        if self.max_business_days < 0:
+            raise ValueError(
+                f"max_business_days não pode ser negativo: {self.max_business_days}"
+            )
 
     def match(self, bank: list[BankEntry], ledger: list[LedgerEntry]) -> list[MatchResult]:
         por_documento: dict[str, list[LedgerEntry]] = {}
@@ -1860,7 +1897,7 @@ class ToleranceMatcher:
 - [ ] **Step 4: Rodar e confirmar que passa**
 
 Run: `.venv/Scripts/pytest tests/matching/test_tolerance.py -v`
-Expected: 6 passed
+Expected: 7 passed
 
 - [ ] **Step 5: Commit**
 
@@ -1937,6 +1974,17 @@ def test_nao_agrupa_fornecedores_diferentes():
     contabeis = [inj.ledger[0], replace(inj.ledger[1], supplier="OUTRO FORNECEDOR SA")]
 
     assert GroupingMatcher().match(inj.bank, contabeis) == []
+
+
+def test_rejeita_configuracao_que_nunca_agrupa():
+    # Tamanho 1 esvazia o range de combinações: a camada nunca agruparia nada,
+    # sem erro e sem aviso.
+    import pytest
+
+    with pytest.raises(ValueError):
+        GroupingMatcher(max_group_size=1)
+    with pytest.raises(ValueError):
+        GroupingMatcher(max_business_days=-1)
 ```
 
 - [ ] **Step 2: Rodar e confirmar falha**
@@ -1966,6 +2014,18 @@ class GroupingMatcher:
     max_group_size: int = 4
     max_business_days: int = 3
     layer: str = field(default="L3", init=False)
+
+    def __post_init__(self) -> None:
+        # Tamanho menor que 2 esvazia o range de combinações e a camada nunca
+        # agrupa nada, sem erro e sem aviso.
+        if self.max_group_size < 2:
+            raise ValueError(
+                f"agrupamento exige tamanho mínimo 2: {self.max_group_size}"
+            )
+        if self.max_business_days < 0:
+            raise ValueError(
+                f"max_business_days não pode ser negativo: {self.max_business_days}"
+            )
 
     def match(self, bank: list[BankEntry], ledger: list[LedgerEntry]) -> list[MatchResult]:
         por_fornecedor: dict[str, list[LedgerEntry]] = {}
@@ -2030,7 +2090,7 @@ class GroupingMatcher:
 - [ ] **Step 4: Rodar e confirmar que passa**
 
 Run: `.venv/Scripts/pytest tests/matching/test_grouping.py -v`
-Expected: 5 passed
+Expected: 6 passed
 
 - [ ] **Step 5: Commit**
 
