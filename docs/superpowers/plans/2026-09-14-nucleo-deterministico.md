@@ -1258,13 +1258,27 @@ def test_retencao_reduz_o_valor_bancario():
     assert abs(r.bank[0].amount) < par.ledger.gross_amount
 
 
-def test_retencao_mantem_bruto_e_ajusta_liquido():
+def test_retencao_nao_toca_o_lancamento_contabil():
+    # A empresa lança pelo bruto, o banco paga o líquido, e a diferença é a
+    # divergência. Se a contabilidade já registrasse o líquido, os dois lados
+    # bateriam e não haveria divergência nenhuma.
     par = _par()
     r = RetencaoImposto().apply(Random(0), par)
-    contabil = r.ledger[0]
-    assert contabil.gross_amount == par.ledger.gross_amount
-    assert contabil.net_amount == abs(r.bank[0].amount)
-    assert contabil.net_amount < contabil.gross_amount
+    assert r.ledger[0] == par.ledger
+
+
+def test_retencao_sobra_para_o_agente():
+    # A guarda que faltava. Sem ela, o injetor produzia um caso que L1 casava
+    # em cheio enquanto o gabarito afirmava divergência — dois falsos positivos
+    # medidos em benchmark antes de alguém notar.
+    from orchestrator.matching.exact import ExactMatcher
+    from orchestrator.matching.tolerance import ToleranceMatcher
+
+    par = _par()
+    r = RetencaoImposto().apply(Random(0), par)
+
+    assert ExactMatcher().match(r.bank, r.ledger) == []
+    assert ToleranceMatcher().match(r.bank, r.ledger) == []
 
 
 def test_retencao_registra_o_gabarito():
@@ -1310,17 +1324,22 @@ class RetencaoImposto:
         retido = calcular_retencao(bruto, aliquota)
         liquido = bruto - retido
 
+        # O lançamento contábil NÃO é tocado. A empresa registra a nota pelo
+        # bruto; o banco paga o líquido; e a diferença entre os dois é
+        # exatamente o que o reconciliador enxerga e o agente precisa explicar.
+        # Reescrever o líquido do contábil faria os dois lados baterem, a
+        # camada L1 casaria o caso em cheio, e o gabarito passaria a afirmar
+        # uma divergência que não existe.
         banco = replace(pair.bank, amount=-liquido)
-        contabil = replace(pair.ledger, net_amount=liquido)
 
         return InjectionResult(
             consumed=(pair,),
             bank=[banco],
-            ledger=[contabil],
+            ledger=[pair.ledger],
             truth=GroundTruth(
                 divergence_type=self.divergence_type,
                 bank_ids=frozenset({banco.id}),
-                ledger_ids=frozenset({contabil.id}),
+                ledger_ids=frozenset({pair.ledger.id}),
                 explanation=(
                     f"{nome} retido na fonte a {aliquota / 100:.2f}%: bruto de "
                     f"{bruto} centavos, retenção de {retido}, líquido de {liquido}."
@@ -1332,7 +1351,7 @@ class RetencaoImposto:
 - [ ] **Step 4: Rodar e confirmar que passa**
 
 Run: `.venv/Scripts/pytest tests/synth/test_injectors.py -v`
-Expected: 10 passed
+Expected: 11 passed
 
 - [ ] **Step 5: Commit**
 
@@ -1500,7 +1519,7 @@ class PagamentoAgregado:
 - [ ] **Step 4: Rodar e confirmar que passa**
 
 Run: `.venv/Scripts/pytest tests/synth/test_injectors.py -v`
-Expected: 19 passed
+Expected: 20 passed
 
 - [ ] **Step 5: Commit**
 
@@ -1656,7 +1675,7 @@ class DevolucaoFundos:
 - [ ] **Step 4: Rodar e confirmar que passa**
 
 Run: `.venv/Scripts/pytest tests/synth/test_injectors.py -v`
-Expected: 26 passed
+Expected: 27 passed
 
 - [ ] **Step 5: Commit**
 
