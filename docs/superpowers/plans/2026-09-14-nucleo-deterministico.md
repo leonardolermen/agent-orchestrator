@@ -462,7 +462,9 @@ git commit -m "feat: taxonomia de divergências com os 14 tipos do spec"
 - Test: `tests/test_models.py`
 
 **Interfaces:**
-- Consumes: `orchestrator.taxonomy.DivergenceType`
+- Consumes: nada. O tipo da divergência não vive aqui — `Divergence` registra
+  apenas o que não casou; a classificação é do gabarito (`GroundTruth`) e, mais
+  adiante, da proposta do agente.
 - Produces: `BankEntry`, `LedgerEntry`, `MatchResult`, `Divergence`
 
 - [ ] **Step 1: Escrever o teste que falha**
