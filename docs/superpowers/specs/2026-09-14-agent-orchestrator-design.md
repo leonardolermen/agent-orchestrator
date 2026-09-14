@@ -267,12 +267,32 @@ Esta taxonomia é conhecimento de domínio e constitui parte substancial da prop
 | `DEFASAGEM_TEMPORAL` | Competência versus caixa; D+1, D+2, fim de semana, feriado |
 | `DUPLICIDADE` | Mesmo documento lançado duas vezes |
 | `ESTORNO` | Devolução total ou parcial |
+| `DEVOLUCAO_FUNDOS` | TED, Pix ou cheque devolvido. **Alta frequência, confirmada em campo.** |
 | `DIFERENCA_CAMBIAL` | Variação entre contratação e liquidação |
 | `ERRO_DIGITACAO` | Transposição de dígitos, vírgula deslocada |
 | `CONTA_INCORRETA` | Lançado em conta ou centro de custo errado |
 | `NAO_IDENTIFICADO` | Nenhuma hipótese com confiança suficiente |
 
 `NAO_IDENTIFICADO` é resposta legítima e deve ser barata.
+
+#### Eventos de múltiplas pernas
+
+`DEVOLUCAO_FUNDOS` não é um lançamento divergente isolado — é uma cadeia: o débito sai, o crédito volta, e frequentemente um reenvio corrigido ocorre dias depois. Três linhas do extrato compõem um evento só.
+
+Isso impõe um requisito ao modelo de dados que os outros tipos não impõem: `MatchResult` precisa vincular **conjuntos** de `BankEntry` a conjuntos de `LedgerEntry`, nunca par a par. O mesmo vale para `PAGAMENTO_AGREGADO`. Tratar matching como relação 1:1 e depois generalizar seria reescrita, então a cardinalidade n:m é assumida desde o primeiro dia.
+
+#### A taxonomia é aberta por design
+
+Esta lista foi montada de conhecimento geral mais uma confirmação de campo (`DEVOLUCAO_FUNDOS`). **Ela está certamente incompleta**, e a resposta honesta a isso não é inventar mais tipos para parecer completa — é construir o mecanismo que encontra os que faltam.
+
+Candidatos levantados mas não confirmados, deliberadamente fora da lista até que apareçam: transferência entre contas próprias, aplicação e resgate financeiro, antecipação de recebíveis com deságio, encontro de contas, pagamento por terceiro, split de adquirente, bloqueio judicial.
+
+**Mecanismo de descoberta.** `NAO_IDENTIFICADO` não é só um fallback — é o canal por onde um tipo ausente se anuncia. Duas fontes de sinal:
+
+1. **Agrupamento dos não identificados.** Se casos marcados `NAO_IDENTIFICADO` se repetem com estrutura parecida, há um tipo faltando. Revisão periódica desse conjunto é tarefa recorrente, não eventual.
+2. **Correção humana para "nenhum destes".** Quando o revisor rejeita a proposta sem conseguir escolher um tipo existente, isso é evidência direta de lacuna.
+
+**Requisito de extensibilidade:** adicionar um tipo deve custar uma entrada na taxonomia, um gerador de caso sintético e uma linha na métrica de cobertura — nunca mudança estrutural. Se adicionar um tipo exigir refatoração, o desenho está errado.
 
 ### 4.6 O agente
 
@@ -338,6 +358,7 @@ Medir o **sistema** e o **agente** separadamente — confundir os dois esconde r
 | Taxa de abstenção | Está abstendo de menos (arriscado) ou demais (inútil)? |
 | Custo por divergência | O argumento comercial se sustenta? |
 | Taxa de correção humana | Tendência ao longo do tempo |
+| Volume e agrupamento de `NAO_IDENTIFICADO` | Há um tipo faltando na taxonomia? (ver 4.5) |
 
 ### 5.3 Suíte de regressão
 
@@ -416,6 +437,7 @@ O principal risco deste projeto é derivar para construir um workflow engine gen
 | Deriva para plataforma cedo demais | Alta | Seção 9 com gatilhos; revisar a cada marco |
 | Desvio para a vertical divertida (Software Eng) | Média | Gatilho em 2.2: lente de design sim, horas de construção não, até V1 e V2 pagos |
 | Dado sintético não representa a realidade | Alta | F3 obrigatória antes de vender |
+| Taxonomia incompleta | Alta | Assumida incompleta em 4.5; mecanismo de descoberta via `NAO_IDENTIFICADO` e extensibilidade sem refatoração |
 | Empregador reivindicar propriedade | Alta | Zero dado, tempo e infraestrutura da empresa; registrado na seção 8 |
 | Matching determinístico resolver menos que o esperado | Média | Se L4 receber demais, melhorar L1-L3 — nunca compensar com agente |
 | Tempo disponível cair | Média | Marcos pequenos e independentes; nada exige bloco contínuo |
