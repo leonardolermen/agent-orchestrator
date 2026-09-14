@@ -44,3 +44,36 @@ def test_defasagem_excede_a_tolerancia_da_camada_l2():
     par = _par()
     r = DefasagemTemporal().apply(Random(0), par)
     assert business_days_between(r.bank[0].date, par.ledger.cash_date) > 3
+
+
+from orchestrator.synth.injectors import RetencaoImposto, calcular_retencao
+
+
+def test_calcular_retencao_iss_cinco_por_cento():
+    # 500 basis points = 5%
+    assert calcular_retencao(100_000, 500) == 5_000
+
+
+def test_calcular_retencao_arredonda_para_baixo():
+    assert calcular_retencao(333, 500) == 16  # 16,65 centavos -> 16
+
+
+def test_retencao_reduz_o_valor_bancario():
+    par = _par()
+    r = RetencaoImposto().apply(Random(0), par)
+    assert abs(r.bank[0].amount) < par.ledger.gross_amount
+
+
+def test_retencao_mantem_bruto_e_ajusta_liquido():
+    par = _par()
+    r = RetencaoImposto().apply(Random(0), par)
+    contabil = r.ledger[0]
+    assert contabil.gross_amount == par.ledger.gross_amount
+    assert contabil.net_amount == abs(r.bank[0].amount)
+    assert contabil.net_amount < contabil.gross_amount
+
+
+def test_retencao_registra_o_gabarito():
+    par = _par()
+    r = RetencaoImposto().apply(Random(0), par)
+    assert r.truth.divergence_type is DivergenceType.RETENCAO_IMPOSTO

@@ -45,3 +45,51 @@ class DefasagemTemporal:
                 ),
             ),
         )
+
+
+# Alíquotas em basis points (1% = 100 bp). Valores típicos de retenção na fonte.
+_ALIQUOTAS = {
+    "ISS": 500,      # 5%
+    "IRRF": 150,     # 1,5%
+    "CSLL/PIS/COFINS": 465,  # 4,65%
+    "INSS": 1100,    # 11%
+}
+
+
+def calcular_retencao(bruto: int, aliquota_bp: int) -> int:
+    """Retenção em centavos, truncada para baixo.
+
+    Determinística e testável de propósito: cálculo fiscal não pode depender
+    de raciocínio de modelo de linguagem. Ver spec 4.6.
+    """
+    return bruto * aliquota_bp // 10_000
+
+
+class RetencaoImposto:
+    """O banco credita o líquido; a contabilidade registra o bruto."""
+
+    divergence_type = DivergenceType.RETENCAO_IMPOSTO
+
+    def apply(self, rng: Random, pair: Pair) -> InjectionResult:
+        nome, aliquota = rng.choice(sorted(_ALIQUOTAS.items()))
+        bruto = pair.ledger.gross_amount
+        retido = calcular_retencao(bruto, aliquota)
+        liquido = bruto - retido
+
+        banco = replace(pair.bank, amount=-liquido)
+        contabil = replace(pair.ledger, net_amount=liquido)
+
+        return InjectionResult(
+            consumed=(pair,),
+            bank=[banco],
+            ledger=[contabil],
+            truth=GroundTruth(
+                divergence_type=self.divergence_type,
+                bank_ids=frozenset({banco.id}),
+                ledger_ids=frozenset({contabil.id}),
+                explanation=(
+                    f"{nome} retido na fonte a {aliquota / 100:.2f}%: bruto de "
+                    f"{bruto} centavos, retenção de {retido}, líquido de {liquido}."
+                ),
+            ),
+        )
