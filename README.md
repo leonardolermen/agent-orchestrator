@@ -79,4 +79,12 @@ projetada a partir de zero instâncias.
 
 ## Status
 
-Design em andamento. Sem código de produção ainda.
+Núcleo determinístico funcionando. Sem dependência de IA.
+
+```bash
+pip install -e ".[dev]"
+pytest
+orchestrator --seed 1 --n 500
+```
+
+Próximo: agente de investigação (plano 2), revisão humana (plano 3).
