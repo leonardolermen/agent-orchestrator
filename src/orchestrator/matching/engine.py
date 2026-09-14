@@ -1,0 +1,58 @@
+"""Orquestra as camadas determinísticas e apura o que sobrou.
+
+Cada camada recebe apenas o que as anteriores não casaram. O que nenhuma
+resolveu vira Divergence — e é isso, e só isso, que o agente de investigação
+recebe. Ver spec 4.3.
+"""
+
+from dataclasses import dataclass
+
+from orchestrator.matching.exact import ExactMatcher
+from orchestrator.matching.grouping import GroupingMatcher
+from orchestrator.matching.protocol import Matcher
+from orchestrator.matching.tolerance import ToleranceMatcher
+from orchestrator.models import BankEntry, Divergence, LedgerEntry, MatchResult
+
+
+@dataclass(frozen=True)
+class ReconcileResult:
+    matches: list[MatchResult]
+    divergences: list[Divergence]
+
+
+def default_matchers() -> list[Matcher]:
+    """As três camadas, da mais barata para a mais cara."""
+    return [ExactMatcher(), ToleranceMatcher(), GroupingMatcher()]
+
+
+def reconcile(
+    bank: list[BankEntry],
+    ledger: list[LedgerEntry],
+    matchers: list[Matcher] | None = None,
+) -> ReconcileResult:
+    camadas = default_matchers() if matchers is None else matchers
+
+    banco_restante = list(bank)
+    contabil_restante = list(ledger)
+    todos: list[MatchResult] = []
+
+    for camada in camadas:
+        resultados = camada.match(banco_restante, contabil_restante)
+        if not resultados:
+            continue
+
+        todos.extend(resultados)
+        casados_banco = {i for m in resultados for i in m.bank_ids}
+        casados_contabil = {i for m in resultados for i in m.ledger_ids}
+        banco_restante = [e for e in banco_restante if e.id not in casados_banco]
+        contabil_restante = [e for e in contabil_restante if e.id not in casados_contabil]
+
+    divergencias = [
+        Divergence(id=f"d-b-{e.id}", bank_ids=frozenset({e.id}), ledger_ids=frozenset())
+        for e in banco_restante
+    ] + [
+        Divergence(id=f"d-l-{e.id}", bank_ids=frozenset(), ledger_ids=frozenset({e.id}))
+        for e in contabil_restante
+    ]
+
+    return ReconcileResult(matches=todos, divergences=divergencias)
