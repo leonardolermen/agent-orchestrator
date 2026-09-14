@@ -110,6 +110,11 @@ class PagamentoAgregado:
     divergence_type = DivergenceType.PAGAMENTO_AGREGADO
 
     def apply_many(self, rng: Random, pairs: list[Pair]) -> InjectionResult:
+        # rng não é usado aqui — a fusão em um único débito é determinística
+        # dado o conjunto de pares. O parâmetro fica por simetria com o
+        # protocolo Injector (e com apply_many como contraparte de apply):
+        # quem chama não precisa saber qual injetor usa aleatoriedade e qual
+        # não usa.
         if len(pairs) < 2:
             raise ValueError("pagamento agregado exige pelo menos dois pares")
 

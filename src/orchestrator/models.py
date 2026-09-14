@@ -64,5 +64,9 @@ class Divergence:
     ledger_ids: frozenset[str]
 
     def __post_init__(self) -> None:
+        # Ao contrário de MatchResult, um lado vazio aqui é válido: um
+        # lançamento contábil sem contrapartida bancária (ou vice-versa) é
+        # uma divergência legítima de um lado só. Os dois vazios é que não
+        # descrevem nada — nem um vínculo, nem uma sobra.
         if not self.bank_ids and not self.ledger_ids:
             raise ValueError("Divergence precisa de pelo menos um id")

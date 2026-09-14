@@ -84,8 +84,6 @@ def test_cobertura_por_tipo_lista_os_tipos_injetados():
 
 
 def test_agregado_resolvido_por_l3_nao_e_falso_positivo():
-    from orchestrator.synth.injectors import PagamentoAgregado
-
     pares = generate_clean_pairs(seed=9, n=3)
     inj = PagamentoAgregado().apply_many(Random(0), pares)
     ds = build_dataset(pares, injections=[inj])
@@ -97,8 +95,6 @@ def test_agregado_resolvido_por_l3_nao_e_falso_positivo():
 
 
 def test_falso_negativo_quando_camada_nao_resolve_o_que_deveria():
-    from orchestrator.synth.injectors import PagamentoAgregado
-
     pares = generate_clean_pairs(seed=9, n=3)
     inj = PagamentoAgregado().apply_many(Random(0), pares)
     ds = build_dataset(pares, injections=[inj])

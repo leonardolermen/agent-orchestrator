@@ -50,6 +50,9 @@ class InjectionResult:
     `bank` e `ledger` são listas porque um injetor pode devolver mais de um
     lançamento bancário (DEVOLUCAO_FUNDOS) ou mais de um contábil
     (PAGAMENTO_AGREGADO).
+
+    Mesma imutabilidade rasa de `Dataset`: `frozen=True` não torna estas
+    listas imutáveis.
     """
 
     consumed: tuple[Pair, ...]
@@ -60,7 +63,13 @@ class InjectionResult:
 
 @dataclass(frozen=True)
 class Dataset:
-    """Um extrato, um razão, e o gabarito do que foi injetado."""
+    """Um extrato, um razão, e o gabarito do que foi injetado.
+
+    `frozen=True` impede reatribuir os campos, mas as listas em si continuam
+    mutáveis — imutabilidade rasa. Sem bug hoje porque `reconcile` copia
+    defensivamente antes de filtrar; se algum código futuro mutar estas
+    listas in-place, o dataset compartilhado muda por baixo de quem o segura.
+    """
 
     bank: list[BankEntry]
     ledger: list[LedgerEntry]

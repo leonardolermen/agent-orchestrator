@@ -1,5 +1,7 @@
 """Camada L1: documento, valor e data idênticos."""
 
+from datetime import date
+
 from orchestrator.models import BankEntry, LedgerEntry, MatchResult
 
 
@@ -7,7 +9,7 @@ class ExactMatcher:
     layer = "L1"
 
     def match(self, bank: list[BankEntry], ledger: list[LedgerEntry]) -> list[MatchResult]:
-        indice: dict[tuple[str, int, object], list[LedgerEntry]] = {}
+        indice: dict[tuple[str, int, date], list[LedgerEntry]] = {}
         for le in ledger:
             if le.document is None or le.cash_date is None:
                 continue

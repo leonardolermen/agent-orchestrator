@@ -39,7 +39,7 @@ def generate_clean_pairs(seed: int, n: int) -> list[Pair]:
 
     for i in range(n):
         fornecedor = rng.choice(_FORNECEDORES)
-        valor = rng.randrange(5_000, 5_000_000)  # R$ 50,00 a R$ 50.000,00
+        valor = rng.randrange(5_000, 5_000_000)  # R$ 50,00 a R$ 49.999,99
         competencia = _BASE + timedelta(days=rng.randrange(0, 90))
         caixa = add_business_days(competencia, rng.randrange(0, 5))
         documento = f"NF-{10_000 + i}"
