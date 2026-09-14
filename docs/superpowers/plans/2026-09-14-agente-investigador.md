@@ -614,6 +614,21 @@ def test_busca_limita_o_numero_de_resultados():
     assert len(achados) <= 3
 
 
+def test_limite_invalido_e_rejeitado():
+    # Medido antes da guarda: limite=-3 devolvia 197 de 200 lançamentos,
+    # porque a fatia `achados[:-3]` devolve tudo menos os últimos três.
+    ctx = _contexto()
+    with pytest.raises(ValueError):
+        ctx.buscar_lancamentos(limite=0)
+    with pytest.raises(ValueError):
+        ctx.buscar_lancamentos(limite=-3)
+
+
+def test_limite_maior_que_o_padrao_e_respeitado():
+    ctx = _contexto()
+    assert len(ctx.buscar_lancamentos(limite=15)) <= 15
+
+
 def test_busca_sem_criterio_nenhum_e_rejeitada():
     ctx = _contexto()
     with pytest.raises(ValueError):
@@ -743,6 +758,16 @@ class ToolContext:
         if valor is None and fornecedor is None and documento is None and limite is None:
             raise ValueError("buscar_lancamentos exige pelo menos um critério")
 
+        # `limite or _LIMITE_PADRAO` seria armadilha: 0 é falsy e viraria 10, e
+        # um limite negativo entraria na fatia como `achados[:-3]`, devolvendo
+        # tudo menos os últimos três. Medido: limite=-3 devolveu 197 de 200
+        # lançamentos — exatamente o "vira o dataset inteiro no contexto" que
+        # esta guarda existe para impedir.
+        if limite is None:
+            limite = _LIMITE_PADRAO
+        if limite < 1:
+            raise ValueError(f"limite deve ser pelo menos 1: {limite}")
+
         achados = [
             le
             for le in self.ledger
@@ -750,7 +775,7 @@ class ToolContext:
             and (fornecedor is None or le.supplier == fornecedor)
             and (documento is None or le.document == documento)
         ]
-        return [self._ledger_dict(le) for le in achados[: limite or _LIMITE_PADRAO]]
+        return [self._ledger_dict(le) for le in achados[:limite]]
 
     def buscar_documento_fiscal(self, documento: str) -> dict[str, Any] | None:
         """Dados do lançamento que carrega este documento."""
@@ -810,12 +835,17 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     _schema(
         "buscar_lancamentos",
         "Busca lançamentos contábeis por valor líquido em centavos, fornecedor "
-        "ou documento. Devolve no máximo 10 resultados.",
+        "ou documento. Devolve no máximo `limite` resultados, ou 10 se `limite` "
+        "for omitido. Enviar os quatro campos como null é erro.",
         {
             "valor": {"type": ["integer", "null"], "description": "valor líquido em centavos"},
             "fornecedor": {"type": ["string", "null"]},
             "documento": {"type": ["string", "null"]},
-            "limite": {"type": ["integer", "null"], "description": "máximo de resultados"},
+            "limite": {
+                "type": ["integer", "null"],
+                "minimum": 1,
+                "description": "máximo de resultados; pelo menos 1",
+            },
         },
         ["valor", "fornecedor", "documento", "limite"],
     ),
@@ -856,7 +886,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
 - [ ] **Step 4: Rodar e confirmar que passa**
 
 Run: `.venv/Scripts/pytest tests/agent/test_tools.py -v`
-Expected: 12 passed
+Expected: 14 passed
 
 - [ ] **Step 5: Commit**
 
