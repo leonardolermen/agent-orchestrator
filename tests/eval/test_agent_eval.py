@@ -4,14 +4,13 @@ from orchestrator.agent.llm import FakeLLMClient, LLMResponse
 from orchestrator.agent.proposal import Cost
 from orchestrator.eval.agent_eval import EvalResult, avaliar
 
-# Preenchido com os valores MEDIDOS na semente 1, n=40. Rode `avaliar` uma vez
-# e copie a saída; não invente os números.
+# Valores MEDIDOS com n=100 na semente 1. A amostra de n=40 foi descartada de
+# propósito: ela dava 2 corretas de 2 arriscadas, e 2/2 é 1,0 tanto com a
+# fórmula certa quanto com ela invertida — pinar contadores numa amostra que não
+# distingue a fórmula é teatro.
 #
-# Medido com:
-#   avaliar(model="claude-opus-5", seed=1, n=40, taxa_divergencia=0.15,
-#           client_factory=_fabrica_falsa("claude-opus-5"))
-# -> proposals_total=2, proposals_abstained=0, proposals_correct=2
-PRECISAO_ESPERADA = {"total": 2, "abstidas": 0, "corretas": 2}
+# Com estes números, a fórmula invertida daria 12/6 = 2,0, fora de [0,1].
+PRECISAO_ESPERADA = {"total": 12, "abstidas": 0, "corretas": 6}
 
 
 def _fabrica_falsa(model: str):
@@ -38,16 +37,17 @@ def test_avaliacao_devolve_resultado_completo():
                 client_factory=_fabrica_falsa("claude-opus-5"))
 
     assert isinstance(r, EvalResult)
-    # NOTA (mantida do round anterior, precisão confirmada pelo revisor): o
-    # brief pede `assert r.model == "fake"` aqui. Isso é irrealizável sob
-    # qualquer implementação que combine com o resto do próprio brief —
-    # `avaliar` monta `EvalResult(model=model)` a partir do PARÂMETRO
-    # `model`, nunca de `cliente.model`; `r.model` jamais poderia ser "fake"
-    # com `model="claude-opus-5"` passado explicitamente. O literal "fake" é
-    # resquício de uma versão anterior de `FakeLLMClient`, cujo modelo padrão
-    # foi trocado para um nome real — ver o comentário em
+    # NOTA (mantida de rounds anteriores, precisão da razão confirmada pelo
+    # revisor no round 1): o brief pede `assert r.model == "fake"` aqui. Isso é
+    # irrealizável sob qualquer implementação que combine com o resto do
+    # próprio brief — `avaliar` monta `EvalResult(model=model)` a partir do
+    # PARÂMETRO `model`, nunca de `cliente.model`; `r.model` jamais poderia
+    # ser "fake" com `model="claude-opus-5"` passado explicitamente. O
+    # literal "fake" é resquício de uma versão anterior de `FakeLLMClient`,
+    # cujo modelo padrão foi trocado para um nome real — ver o comentário em
     # `orchestrator/agent/llm.py`. Corrigido para o valor que a própria
-    # `avaliar` sempre produz.
+    # `avaliar` sempre produz. Reportado ao coordenador nos rounds 0 e 1; o
+    # brief regenerado no round 2 ainda cola o literal antigo.
     assert r.model == "claude-opus-5"
     assert r.proposals_total > 0
 
@@ -62,7 +62,7 @@ def test_precisao_pina_os_contadores_e_o_valor():
     # `avaliar` e copie o que sair. Se o benchmark mudar de forma, este teste
     # falha — e esse é exatamente o momento em que alguém deveria olhar para
     # ele.
-    r = avaliar(model="claude-opus-5", seed=1, n=40, taxa_divergencia=0.15,
+    r = avaliar(model="claude-opus-5", seed=1, n=100, taxa_divergencia=0.15,
                 client_factory=_fabrica_falsa("claude-opus-5"))
 
     arriscadas = r.proposals_total - r.proposals_abstained
@@ -70,6 +70,34 @@ def test_precisao_pina_os_contadores_e_o_valor():
     assert r.proposals_abstained == PRECISAO_ESPERADA["abstidas"]
     assert r.proposals_correct == PRECISAO_ESPERADA["corretas"]
     assert r.precision == PRECISAO_ESPERADA["corretas"] / arriscadas
+
+
+def test_so_abstencoes_zera_a_precisao_sem_dividir_por_zero():
+    # Sem este caso, o denominador `total - abstidas` nunca é exercido com
+    # abstenções maiores que zero, e o ramo de denominador zero não é tocado
+    # por teste nenhum. Medido: 12 propostas, todas abstenções.
+    def fabrica():
+        return FakeLLMClient(
+            model="claude-opus-5",
+            respostas=[
+                LLMResponse(
+                    text='{"tipo":"NAO_IDENTIFICADO","explicacao":"nao sei",'
+                         '"evidencia":[],"confianca":"BAIXA",'
+                         '"acao_sugerida":"investigar_manual"}',
+                    tool_calls=[],
+                    cost=Cost(input_tokens=50, output_tokens=20, calls=1),
+                )
+            ]
+            * 500,
+        )
+
+    r = avaliar(model="claude-opus-5", seed=1, n=100, taxa_divergencia=0.15,
+                client_factory=fabrica)
+
+    assert r.proposals_abstained == r.proposals_total
+    assert r.proposals_correct == 0
+    assert r.precision == 0.0
+    assert r.abstention_rate == 1.0
 
 
 def test_fabrica_que_devolve_outro_modelo_e_rejeitada():
