@@ -76,17 +76,22 @@ class RetencaoImposto:
         retido = calcular_retencao(bruto, aliquota)
         liquido = bruto - retido
 
+        # O lançamento contábil NÃO é tocado. A empresa registra a nota pelo
+        # bruto; o banco paga o líquido; e a diferença entre os dois é
+        # exatamente o que o reconciliador enxerga e o agente precisa explicar.
+        # Reescrever o líquido do contábil faria os dois lados baterem, a
+        # camada L1 casaria o caso em cheio, e o gabarito passaria a afirmar
+        # uma divergência que não existe.
         banco = replace(pair.bank, amount=-liquido)
-        contabil = replace(pair.ledger, net_amount=liquido)
 
         return InjectionResult(
             consumed=(pair,),
             bank=[banco],
-            ledger=[contabil],
+            ledger=[pair.ledger],
             truth=GroundTruth(
                 divergence_type=self.divergence_type,
                 bank_ids=frozenset({banco.id}),
-                ledger_ids=frozenset({contabil.id}),
+                ledger_ids=frozenset({pair.ledger.id}),
                 explanation=(
                     f"{nome} retido na fonte a {aliquota / 100:.2f}%: bruto de "
                     f"{bruto} centavos, retenção de {retido}, líquido de {liquido}."

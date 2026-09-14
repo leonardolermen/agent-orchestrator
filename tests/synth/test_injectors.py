@@ -68,13 +68,27 @@ def test_retencao_reduz_o_valor_bancario():
     assert abs(r.bank[0].amount) < par.ledger.gross_amount
 
 
-def test_retencao_mantem_bruto_e_ajusta_liquido():
+def test_retencao_nao_toca_o_lancamento_contabil():
+    # A empresa lança pelo bruto, o banco paga o líquido, e a diferença é a
+    # divergência. Se a contabilidade já registrasse o líquido, os dois lados
+    # bateriam e não haveria divergência nenhuma.
     par = _par()
     r = RetencaoImposto().apply(Random(0), par)
-    contabil = r.ledger[0]
-    assert contabil.gross_amount == par.ledger.gross_amount
-    assert contabil.net_amount == abs(r.bank[0].amount)
-    assert contabil.net_amount < contabil.gross_amount
+    assert r.ledger[0] == par.ledger
+
+
+def test_retencao_sobra_para_o_agente():
+    # A guarda que faltava. Sem ela, o injetor produzia um caso que L1 casava
+    # em cheio enquanto o gabarito afirmava divergência — dois falsos positivos
+    # medidos em benchmark antes de alguém notar.
+    from orchestrator.matching.exact import ExactMatcher
+    from orchestrator.matching.tolerance import ToleranceMatcher
+
+    par = _par()
+    r = RetencaoImposto().apply(Random(0), par)
+
+    assert ExactMatcher().match(r.bank, r.ledger) == []
+    assert ToleranceMatcher().match(r.bank, r.ledger) == []
 
 
 def test_retencao_registra_o_gabarito():
