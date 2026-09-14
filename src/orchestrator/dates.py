@@ -27,6 +27,8 @@ def business_days_between(a: date, b: date) -> int:
 
 def add_business_days(d: date, n: int) -> date:
     """Avança n dias úteis a partir de d."""
+    if n < 0:
+        raise ValueError(f"n não pode ser negativo: {n}")
     atual = d
     restantes = n
     while restantes > 0:

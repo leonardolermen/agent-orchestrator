@@ -1,5 +1,7 @@
 from datetime import date
 
+import pytest
+
 from orchestrator.dates import add_business_days, business_days_between
 
 
@@ -29,3 +31,8 @@ def test_add_business_days_pula_fim_de_semana():
 
 def test_add_business_days_zero():
     assert add_business_days(date(2026, 9, 14), 0) == date(2026, 9, 14)
+
+
+def test_add_business_days_negativo_levanta_erro():
+    with pytest.raises(ValueError):
+        add_business_days(date(2026, 9, 14), -1)
