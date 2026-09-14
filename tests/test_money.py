@@ -24,6 +24,20 @@ def test_parse_brl_rejeita_lixo():
         parse_brl("abc")
 
 
+def test_parse_brl_rejeita_centavos_com_tres_digitos():
+    with pytest.raises(ValueError):
+        parse_brl("10,999")
+
+
+def test_parse_brl_rejeita_separador_decimal_sem_digitos():
+    with pytest.raises(ValueError):
+        parse_brl("10,")
+
+
+def test_parse_brl_completa_centavos_com_um_digito():
+    assert parse_brl("10,5") == 1050
+
+
 def test_format_brl_positivo():
     assert format_brl(123456) == "R$ 1.234,56"
 

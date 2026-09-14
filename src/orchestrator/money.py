@@ -20,7 +20,10 @@ def parse_brl(texto: str) -> int:
 
     if "," in limpo:
         inteiros, _, decimais = limpo.partition(",")
-        decimais = (decimais + "00")[:2]
+        if len(decimais) == 1:
+            decimais = decimais + "0"
+        elif len(decimais) != 2:
+            raise ValueError(f"valor monetário inválido: {texto!r}")
     else:
         inteiros, decimais = limpo, "00"
 
