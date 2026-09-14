@@ -113,6 +113,15 @@ def test_agregado_registra_todos_os_ids_no_gabarito():
     assert len(r.truth.bank_ids) == 1
 
 
+def test_agregado_declara_todos_os_pares_consumidos():
+    # Guarda de regressão do defeito mais caro deste plano: declarar só o
+    # primeiro par deixaria os outros originais órfãos no dataset, somando
+    # dinheiro que não existe. Sem esta asserção, a reversão passa despercebida.
+    pares = _pares(3)
+    r = PagamentoAgregado().apply_many(Random(0), pares)
+    assert r.consumed == tuple(pares)
+
+
 def test_agregado_exige_pelo_menos_dois_pares():
     with pytest.raises(ValueError):
         PagamentoAgregado().apply_many(Random(0), _pares(1))
@@ -177,6 +186,7 @@ def test_devolucao_gabarito_cobre_todas_as_pernas():
     r = DevolucaoFundos().apply(Random(0), par)
     assert r.truth.bank_ids == frozenset(e.id for e in r.bank)
     assert r.truth.divergence_type is DivergenceType.DEVOLUCAO_FUNDOS
+    assert r.consumed == (par,)
 
 
 def test_devolucao_zera_o_documento_das_pernas():
