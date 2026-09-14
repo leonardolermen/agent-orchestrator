@@ -2113,6 +2113,50 @@ def test_rejeita_configuracao_que_nunca_agrupa():
         GroupingMatcher(max_group_size=1)
     with pytest.raises(ValueError):
         GroupingMatcher(max_business_days=-1)
+    with pytest.raises(ValueError):
+        GroupingMatcher(max_candidates=2, max_group_size=4)
+
+
+def test_ignora_pool_de_candidatos_grande_demais():
+    # Sem teto, o custo é O(C^max_group_size) e os dois botões da camada não
+    # limitam nada. Estourou o teto, o lançamento vira divergência.
+    pares = generate_clean_pairs(seed=6, n=3)
+    inj = PagamentoAgregado().apply_many(Random(0), pares)
+
+    assert GroupingMatcher(max_candidates=2).match(inj.bank, inj.ledger) == []
+    assert GroupingMatcher(max_candidates=3).match(inj.bank, inj.ledger) != []
+
+
+def test_ignora_creditos():
+    # A camada casa PAGAMENTOS agregados. Um crédito é recebimento e não
+    # deveria procurar faturas a pagar — é assim que a perna de crédito de uma
+    # devolução entrava na busca.
+    from dataclasses import replace
+
+    pares = generate_clean_pairs(seed=6, n=3)
+    inj = PagamentoAgregado().apply_many(Random(0), pares)
+    credito = [replace(inj.bank[0], amount=abs(inj.bank[0].amount))]
+
+    assert GroupingMatcher().match(credito, inj.ledger) == []
+
+
+def test_nao_consome_o_contabil_de_uma_devolucao_vizinha():
+    # Regressão do caso real: devolução e uma fatura limpa do mesmo fornecedor
+    # liquidando na mesma janela. Com valores que não coincidem, L3 não pode
+    # tocar o contábil da devolução.
+    from dataclasses import replace
+
+    pares = generate_clean_pairs(seed=6, n=2)
+    fornecedor = pares[0].ledger.supplier
+    vizinho = replace(
+        pares[1].ledger, supplier=fornecedor, cash_date=pares[0].ledger.cash_date
+    )
+    inj = DevolucaoFundos().apply(Random(0), pares[0])
+
+    r = GroupingMatcher().match(inj.bank, [inj.ledger[0], vizinho])
+
+    consumidos = {i for m in r for i in m.ledger_ids}
+    assert inj.ledger[0].id not in consumidos
 ```
 
 - [ ] **Step 2: Rodar e confirmar falha**
@@ -2141,6 +2185,7 @@ from orchestrator.models import BankEntry, LedgerEntry, MatchResult
 class GroupingMatcher:
     max_group_size: int = 4
     max_business_days: int = 3
+    max_candidates: int = 24
     layer: str = field(default="L3", init=False)
 
     def __post_init__(self) -> None:
@@ -2153,6 +2198,11 @@ class GroupingMatcher:
         if self.max_business_days < 0:
             raise ValueError(
                 f"max_business_days não pode ser negativo: {self.max_business_days}"
+            )
+        if self.max_candidates < self.max_group_size:
+            raise ValueError(
+                f"teto de candidatos ({self.max_candidates}) não pode ser menor que "
+                f"o tamanho máximo de grupo ({self.max_group_size})"
             )
 
     def match(self, bank: list[BankEntry], ledger: list[LedgerEntry]) -> list[MatchResult]:
@@ -2168,6 +2218,13 @@ class GroupingMatcher:
             if be.counterparty is None:
                 continue
 
+            # Esta camada existe para casar PAGAMENTOS agregados. Um crédito é
+            # recebimento e não deveria sair procurando faturas a pagar — sem
+            # esta guarda, a perna de crédito de uma devolução de fundos entra
+            # na busca e pode casar com faturas por coincidência de soma.
+            if be.amount >= 0:
+                continue
+
             candidatos = [
                 le
                 for le in por_fornecedor.get(be.counterparty, [])
@@ -2176,6 +2233,15 @@ class GroupingMatcher:
                 and business_days_between(be.date, le.cash_date) <= self.max_business_days
             ]
             if len(candidatos) < 2:
+                continue
+
+            # O custo da busca é O(C^max_group_size) no tamanho do pool, então
+            # sem teto os dois botões desta camada não limitam nada: com algumas
+            # centenas de candidatos a busca explode. O teto também reduz falso
+            # positivo, porque pool maior é mais oportunidade de uma soma
+            # coincidir por acaso. Estourou, o lançamento vira divergência — que
+            # é o destino previsto de tudo que a camada barata não resolve.
+            if len(candidatos) > self.max_candidates:
                 continue
 
             alvo = abs(be.amount)
@@ -2218,7 +2284,7 @@ class GroupingMatcher:
 - [ ] **Step 4: Rodar e confirmar que passa**
 
 Run: `.venv/Scripts/pytest tests/matching/test_grouping.py -v`
-Expected: 6 passed
+Expected: 9 passed
 
 - [ ] **Step 5: Commit**
 
