@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from orchestrator.agent.investigator import Investigator
 from orchestrator.agent.llm import FakeLLMClient, LLMResponse, ToolCall
 from orchestrator.agent.proposal import Confidence, Cost
@@ -117,7 +119,11 @@ def test_confianca_alta_sem_evidencia_e_rebaixada_nao_rejeitada():
 
     out = inv.investigate([_div()])
 
+    # Sem checar o tipo, uma abstenção também satisfaria a asserção de
+    # confiança BAIXA — e o teste deixaria de distinguir "rebaixada" de
+    # "rejeitada", que é exatamente o que o nome dele promete.
     assert out.proposals[0].confianca is Confidence.BAIXA
+    assert out.proposals[0].tipo is DivergenceType.RETENCAO_IMPOSTO
 
 
 def test_laco_para_no_limite_de_turnos():
@@ -203,6 +209,59 @@ def test_trace_registra_turno_ferramenta_e_desfecho():
     assert "llm" in tipos
     assert "tool" in tipos
     assert tipos[-1] == "outcome"
+
+
+def test_modelo_sem_preco_falha_na_construcao():
+    # Não é abstenção, é erro de configuração: sem preço o custo por
+    # divergência fica incalculável, e ele é a métrica central do produto.
+    class _SemPreco:
+        model = "modelo-inexistente"
+
+        def complete(self, system, messages, tools):
+            raise AssertionError("não deveria chegar aqui")
+
+    with pytest.raises(ValueError):
+        Investigator(client=_SemPreco(), context=_ctx())
+
+
+def test_evidencia_que_nao_e_lista_nao_vira_lista_de_caracteres():
+    # Medido antes da guarda: "l1: bruto 100" virava 13 strings de um
+    # caractere, evidência "não vazia" o bastante para a confiança ALTA passar.
+    ruim = json.dumps(
+        {
+            "tipo": "RETENCAO_IMPOSTO",
+            "explicacao": "ISS",
+            "evidencia": "l1: bruto 100",
+            "confianca": "ALTA",
+            "acao_sugerida": "conciliar",
+        }
+    )
+    cliente = FakeLLMClient(
+        [LLMResponse(text=ruim, tool_calls=[], cost=Cost(calls=1))] * 4
+    )
+    inv = Investigator(client=cliente, context=_ctx(), max_tentativas_formato=2)
+
+    p = inv.investigate([_div()]).proposals[0]
+
+    assert p.tipo is DivergenceType.NAO_IDENTIFICADO
+    assert p.evidencia == []
+
+
+def test_resposta_malformada_nao_derruba_o_lote_inteiro():
+    # `investigate` não tem try próprio: uma exceção escapando de uma
+    # divergência levaria as outras junto.
+    ruim = json.dumps(
+        {"tipo": "ESTORNO", "explicacao": "x", "evidencia": 5,
+         "confianca": "MEDIA", "acao_sugerida": "y"}
+    )
+    cliente = FakeLLMClient(
+        [LLMResponse(text=ruim, tool_calls=[], cost=Cost(calls=1))] * 12
+    )
+    inv = Investigator(client=cliente, context=_ctx(), max_tentativas_formato=2)
+
+    out = inv.investigate([_div("d1"), _div("d2")])
+
+    assert len(out.proposals) == 2
 
 
 def test_cada_divergencia_comeca_com_contexto_limpo():

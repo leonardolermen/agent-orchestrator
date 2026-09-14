@@ -51,6 +51,13 @@ class Investigator:
     budget_microcents: int = 100_000  # ~US$ 0,001 por divergência
     name: str = field(default="investigador", init=False)
 
+    def __post_init__(self) -> None:
+        # Modelo sem preço conhecido não é abstenção, é erro de configuração.
+        # Abster em toda divergência gastaria a execução inteira sem produzir
+        # nada, e o custo — que é a métrica central do produto — ficaria
+        # incalculável. Falhar aqui, uma vez, é o comportamento certo.
+        Cost.zero().microcents(self.client.model)
+
     def investigate(self, divergences: list[Divergence]) -> InvestigationOutput:
         propostas, total = [], Cost.zero()
         for d in divergences:
@@ -72,73 +79,69 @@ class Investigator:
                 resposta = self.client.complete(
                     system=SYSTEM, messages=mensagens, tools=TOOL_SCHEMAS
                 )
-
-                custo = custo + resposta.cost
-                trace.append(
-                    TraceEvent(
-                        kind="llm",
-                        detail={
-                            "turno": turno,
-                            "tokens_entrada": resposta.cost.input_tokens,
-                            "tokens_saida": resposta.cost.output_tokens,
-                            "ferramentas_pedidas": [c.name for c in resposta.tool_calls],
-                        },
-                    )
-                )
-
-                if custo.microcents(self.client.model) > self.budget_microcents:
-                    trace.append(TraceEvent(kind="outcome", detail={"motivo": "orçamento"}))
-                    return Proposal.abstencao(
-                        divergencia.id, "orçamento da divergência esgotado", custo, trace
-                    )
-
-                if resposta.tool_calls:
-                    resultados = self._executar(resposta.tool_calls)
-                    for c in resposta.tool_calls:
-                        trace.append(
-                            TraceEvent(
-                                kind="tool", detail={"nome": c.name, "argumentos": c.arguments}
-                            )
-                        )
-                    mensagens.append({"role": "assistant", "content": resposta.text or ""})
-                    mensagens.append({"role": "user", "content": resultados})
-                    continue
-
-                proposta = self._interpretar(divergencia.id, resposta.text, custo, trace)
-                if proposta is not None:
-                    return proposta
-
-                tentativas_formato += 1
-                if tentativas_formato > self.max_tentativas_formato:
-                    break
-                mensagens.append({"role": "assistant", "content": resposta.text})
-                mensagens.append(
-                    {
-                        "role": "user",
-                        "content": "Resposta inválida. Responda APENAS o objeto JSON pedido.",
-                    }
-                )
-            except AssertionError:
-                # Sinal do FakeLLMClient de que o laço pediu mais turnos do
-                # que o teste preparou — bug de teste ou laço descontrolado,
-                # não falha "do modelo". Abafar isso esconderia o defeito que
-                # o assert existe para denunciar (ver docstring de
-                # FakeLLMClient), então deixa propagar.
-                raise
             except Exception as erro:  # noqa: BLE001
-                # Timeout, rede caída, 500 da API, modelo sem preço conhecido
-                # na tabela de custo, ou qualquer outra falha ao processar a
-                # resposta — nada disso pode escapar. O SDK já tenta de novo
-                # por conta própria; se chegou aqui, acabou. Abster é a saída
-                # certa: derrubar o processo inteiro (ou só esta divergência)
-                # por causa de um item transformaria uma falha isolada em
-                # conciliação não entregue.
+                # A captura envolve SÓ a chamada ao modelo, de propósito.
+                # Alargá-la para o corpo do turno inteiro transformaria bug do
+                # próprio investigador — um AttributeError, um nome errado — em
+                # abstenção plausível com suíte verde, que é a falha oposta e
+                # pior da que esta guarda previne.
+                #
+                # Timeout, rede caída, 500 da API. O SDK já tenta de novo por
+                # conta própria; se chegou aqui, acabou. Abster é a saída certa:
+                # derrubar o processo inteiro por causa de um item transformaria
+                # falha de rede em conciliação não entregue.
                 trace.append(
                     TraceEvent(kind="erro", detail={"turno": turno, "erro": str(erro)})
                 )
                 return Proposal.abstencao(
-                    divergencia.id, f"falha ao investigar: {erro}", custo, trace
+                    divergencia.id, f"falha de API ao investigar: {erro}", custo, trace
                 )
+
+            custo = custo + resposta.cost
+            trace.append(
+                TraceEvent(
+                    kind="llm",
+                    detail={
+                        "turno": turno,
+                        "tokens_entrada": resposta.cost.input_tokens,
+                        "tokens_saida": resposta.cost.output_tokens,
+                        "ferramentas_pedidas": [c.name for c in resposta.tool_calls],
+                    },
+                )
+            )
+
+            if custo.microcents(self.client.model) > self.budget_microcents:
+                trace.append(TraceEvent(kind="outcome", detail={"motivo": "orçamento"}))
+                return Proposal.abstencao(
+                    divergencia.id, "orçamento da divergência esgotado", custo, trace
+                )
+
+            if resposta.tool_calls:
+                resultados = self._executar(resposta.tool_calls)
+                for c in resposta.tool_calls:
+                    trace.append(
+                        TraceEvent(
+                            kind="tool", detail={"nome": c.name, "argumentos": c.arguments}
+                        )
+                    )
+                mensagens.append({"role": "assistant", "content": resposta.text or ""})
+                mensagens.append({"role": "user", "content": resultados})
+                continue
+
+            proposta = self._interpretar(divergencia.id, resposta.text, custo, trace)
+            if proposta is not None:
+                return proposta
+
+            tentativas_formato += 1
+            if tentativas_formato > self.max_tentativas_formato:
+                break
+            mensagens.append({"role": "assistant", "content": resposta.text})
+            mensagens.append(
+                {
+                    "role": "user",
+                    "content": "Resposta inválida. Responda APENAS o objeto JSON pedido.",
+                }
+            )
 
         trace.append(TraceEvent(kind="outcome", detail={"motivo": "sem conclusão"}))
         return Proposal.abstencao(
@@ -188,7 +191,11 @@ class Investigator:
             try:
                 argumentos = {k: v for k, v in c.arguments.items() if v is not None}
                 resultados.append({"ferramenta": c.name, "resultado": metodo(**argumentos)})
-            except (ValueError, TypeError) as erro:
+            except Exception as erro:  # noqa: BLE001
+                # Aqui a captura larga É o requisito, e é a inversão exata da
+                # guarda estreita em volta de `complete`: o spec manda que erro
+                # de ferramenta volte ao modelo como texto, sempre. O modelo se
+                # corrige sozinho; o processo não se recupera de um estouro.
                 resultados.append({"ferramenta": c.name, "erro": str(erro)})
         return json.dumps(resultados, ensure_ascii=False, default=str)
 
@@ -205,13 +212,18 @@ class Investigator:
         try:
             tipo = DivergenceType(dados.get("tipo", ""))
             confianca = Confidence(dados.get("confianca", ""))
-            evidencia = [str(e) for e in dados.get("evidencia", [])]
-        except (ValueError, TypeError):
-            # ValueError: tipo/confiança fora da taxonomia. TypeError: campo
-            # "evidencia" veio como algo não iterável (um int, por exemplo) —
-            # mesma categoria de "resposta não utilizável": o modelo ainda tem
-            # chance de tentar de novo antes de virar abstenção.
+        except ValueError:
             return None
+
+        evidencia_bruta = dados.get("evidencia", [])
+        if not isinstance(evidencia_bruta, list):
+            # String onde se pediu lista é erro de forma comum do modelo, e
+            # iterar sobre ela produz uma lista de CARACTERES. Medido:
+            # "l1: bruto 100" virava 13 itens — evidência "não vazia" que não
+            # sustenta nada, e que fazia uma confiança ALTA passar sem
+            # rebaixamento. Rejeitar manda para o caminho de retry.
+            return None
+        evidencia = [str(e) for e in evidencia_bruta]
         # Afirmar com confiança sem citar nada acontece. Rebaixar é mais útil
         # que descartar: a hipótese ainda ajuda o humano, com o peso certo.
         if confianca is Confidence.ALTA and not evidencia:
