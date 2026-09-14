@@ -22,9 +22,12 @@ def _resposta_sdk(blocos, uso):
     return SimpleNamespace(content=blocos, usage=uso)
 
 
-def _uso(entrada=100, saida=50, cache=0):
+def _uso(entrada=100, saida=50, cache=0, escrita=0):
     return SimpleNamespace(
-        input_tokens=entrada, output_tokens=saida, cache_read_input_tokens=cache
+        input_tokens=entrada,
+        output_tokens=saida,
+        cache_read_input_tokens=cache,
+        cache_creation_input_tokens=escrita,
     )
 
 
@@ -60,6 +63,16 @@ def test_contabiliza_tokens_de_cache_separado():
 
     assert r.cost.cached_tokens == 990
     assert r.cost.input_tokens == 10
+
+
+def test_contabiliza_escrita_de_cache():
+    sdk = _SDKFalso(_resposta_sdk([SimpleNamespace(type="text", text="oi")],
+                                  _uso(entrada=10, escrita=2000)))
+    c = AnthropicClient(model="claude-opus-5", sdk=sdk)
+
+    r = c.complete(system="s", messages=[], tools=[])
+
+    assert r.cost.cache_creation_tokens == 2000
 
 
 def test_marca_o_system_para_cache():

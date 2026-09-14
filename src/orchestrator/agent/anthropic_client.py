@@ -69,6 +69,12 @@ class AnthropicClient:
                 input_tokens=getattr(uso, "input_tokens", 0),
                 output_tokens=getattr(uso, "output_tokens", 0),
                 cached_tokens=getattr(uso, "cache_read_input_tokens", 0) or 0,
+                # Tokens gastos para POPULAR o cache. Não aparecem em
+                # input_tokens nem em cache_read_input_tokens, e custam mais que
+                # entrada normal — ignorá-los subcontaria toda primeira chamada
+                # de cada janela de cache.
+                cache_creation_tokens=getattr(uso, "cache_creation_input_tokens", 0)
+                or 0,
                 calls=1,
             ),
         )

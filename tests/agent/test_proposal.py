@@ -11,13 +11,31 @@ from orchestrator.taxonomy import DivergenceType
 
 
 def _custo() -> Cost:
-    return Cost(input_tokens=1000, output_tokens=200, cached_tokens=500, calls=2)
+    return Cost(
+        input_tokens=1000,
+        output_tokens=200,
+        cached_tokens=500,
+        cache_creation_tokens=300,
+        calls=2,
+    )
 
 
 def test_custo_soma_tokens_ao_preco_do_modelo():
-    # opus-5: 500 micro-cents por token de entrada, 2500 de saída, 50 de cache.
+    # opus-5: 500 por token de entrada, 2500 de saída, 50 de leitura de cache,
+    # 625 de escrita de cache.
     c = _custo()
-    assert c.microcents("claude-opus-5") == 1000 * 500 + 200 * 2500 + 500 * 50
+    assert c.microcents("claude-opus-5") == (
+        1000 * 500 + 200 * 2500 + 500 * 50 + 300 * 625
+    )
+
+
+def test_escrita_de_cache_entra_no_custo():
+    # Escrita de cache custa mais que entrada normal e não aparece em nenhum dos
+    # outros campos da resposta da API. Ignorá-la subcontaria toda primeira
+    # chamada de cada janela.
+    sem = Cost(input_tokens=1000)
+    com = Cost(input_tokens=1000, cache_creation_tokens=100)
+    assert com.microcents("claude-opus-5") > sem.microcents("claude-opus-5")
 
 
 def test_custo_de_modelo_mais_barato_e_menor():
