@@ -1,5 +1,6 @@
 from random import Random
 
+from orchestrator.agent.proposal import Confidence, Cost, InvestigationOutput, Proposal
 from orchestrator.matching.engine import reconcile
 from orchestrator.metrics import evaluate
 from orchestrator.models import MatchResult
@@ -179,3 +180,112 @@ def test_separa_casos_do_gabarito_por_destino():
 
     assert m.truth_deterministic == 1
     assert m.truth_for_agent == 1
+
+
+class _InvestigadorQueAcerta:
+    """Propõe sempre o tipo que o gabarito diz."""
+
+    name = "acerta"
+
+    def __init__(self, truth):
+        self._por_id = {}
+        for gt in truth:
+            for i in gt.bank_ids | gt.ledger_ids:
+                self._por_id[i] = gt.divergence_type
+
+    def investigate(self, divergences):
+        propostas = []
+        for d in divergences:
+            ids = d.bank_ids | d.ledger_ids
+            tipo = next((self._por_id[i] for i in ids if i in self._por_id), None)
+            if tipo is None:
+                propostas.append(Proposal.abstencao(d.id, "fora do gabarito"))
+            else:
+                propostas.append(
+                    Proposal(
+                        divergence_id=d.id,
+                        tipo=tipo,
+                        explicacao="acertou",
+                        evidencia=["evidência"],
+                        confianca=Confidence.ALTA,
+                        acao_sugerida="conciliar",
+                        cost=Cost(input_tokens=100, calls=1),
+                    )
+                )
+        return InvestigationOutput(propostas, Cost(input_tokens=100 * len(propostas),
+                                                   calls=len(propostas)))
+
+
+def test_conta_matches_por_camada():
+    pares = generate_clean_pairs(seed=9, n=20)
+    ds = build_dataset(pares, injections=[])
+
+    m = evaluate(ds, reconcile(ds.bank, ds.ledger))
+
+    assert m.matches_by_layer["L1"] == 20
+    assert "L2" not in m.matches_by_layer or m.matches_by_layer["L2"] == 0
+
+
+def test_sem_investigador_as_metricas_de_proposta_ficam_zeradas():
+    pares = generate_clean_pairs(seed=9, n=10)
+    ds = build_dataset(pares, injections=[])
+
+    m = evaluate(ds, reconcile(ds.bank, ds.ledger))
+
+    assert m.proposals_total == 0
+    assert m.proposals_correct == 0
+    assert m.agent_cost_microcents == 0
+
+
+def test_precisao_das_propostas_contra_o_gabarito():
+    pares = generate_clean_pairs(seed=9, n=20)
+    inj = DefasagemTemporal().apply(Random(0), pares[0])
+    ds = build_dataset(pares, injections=[inj])
+
+    r = reconcile(ds.bank, ds.ledger, investigator=_InvestigadorQueAcerta(ds.truth))
+    m = evaluate(ds, r)
+
+    assert m.proposals_total == len(r.divergences)
+    assert m.proposals_correct >= 1
+
+
+def test_abstencao_nao_conta_como_acerto_nem_como_erro():
+    pares = generate_clean_pairs(seed=9, n=10)
+    inj = DefasagemTemporal().apply(Random(0), pares[0])
+    ds = build_dataset(pares, injections=[inj])
+
+    class _SempreAbstem:
+        name = "abstem"
+
+        def investigate(self, divergences):
+            ps = [Proposal.abstencao(d.id, "não sei") for d in divergences]
+            return InvestigationOutput(ps, Cost.zero())
+
+    m = evaluate(ds, reconcile(ds.bank, ds.ledger, investigator=_SempreAbstem()))
+
+    assert m.proposals_abstained == m.proposals_total
+    assert m.proposals_correct == 0
+
+
+def test_custo_do_agente_aparece_em_microcents():
+    pares = generate_clean_pairs(seed=9, n=20)
+    inj = DefasagemTemporal().apply(Random(0), pares[0])
+    ds = build_dataset(pares, injections=[inj])
+
+    r = reconcile(ds.bank, ds.ledger, investigator=_InvestigadorQueAcerta(ds.truth))
+    m = evaluate(ds, r, model="claude-opus-5")
+
+    assert m.agent_cost_microcents == r.agent_cost.microcents("claude-opus-5")
+
+
+def test_render_mostra_camadas_e_propostas():
+    pares = generate_clean_pairs(seed=9, n=20)
+    inj = DefasagemTemporal().apply(Random(0), pares[0])
+    ds = build_dataset(pares, injections=[inj])
+
+    saida = evaluate(
+        ds, reconcile(ds.bank, ds.ledger, investigator=_InvestigadorQueAcerta(ds.truth))
+    ).render()
+
+    assert "L1" in saida
+    assert "Propostas" in saida
