@@ -2,7 +2,7 @@ import pytest
 
 from orchestrator.agent.llm import FakeLLMClient, LLMResponse
 from orchestrator.agent.proposal import Cost
-from orchestrator.eval.agent_eval import EvalResult, avaliar
+from orchestrator.eval.agent_eval import EvalResult, _tabela, avaliar
 
 # Valores MEDIDOS com n=100 na semente 1. A amostra de n=40 foi descartada de
 # propósito: ela dava 2 corretas de 2 arriscadas, e 2/2 é 1,0 tanto com a
@@ -131,3 +131,30 @@ def test_render_nomeia_o_modelo_e_a_precisao():
 
     assert "claude-opus-5" in saida
     assert "Precisão" in saida
+
+
+def test_tabela_compara_todos_os_modelos_lado_a_lado():
+    # O entregável declarado é uma DECISÃO entre modelos. Blocos empilhados
+    # (um `render()` por modelo) obrigam o leitor a comparar de cabeça; a
+    # tabela bota as colunas que importam lado a lado.
+    a = avaliar(model="claude-opus-5", seed=1, n=40, taxa_divergencia=0.15,
+                client_factory=_fabrica_falsa("claude-opus-5"))
+    b = avaliar(model="claude-haiku-4-5", seed=1, n=40, taxa_divergencia=0.15,
+                client_factory=_fabrica_falsa("claude-haiku-4-5"))
+
+    saida = _tabela([a, b])
+    linhas = saida.splitlines()
+
+    assert "claude-opus-5" in saida
+    assert "claude-haiku-4-5" in saida
+    # uma linha de modelo não pode vir antes do cabeçalho
+    cabecalho = next(i for i, linha in enumerate(linhas) if "Modelo" in linha)
+    linha_opus = next(i for i, linha in enumerate(linhas) if "claude-opus-5" in linha)
+    assert linha_opus > cabecalho
+
+
+def test_tabela_com_um_unico_modelo_nao_estoura():
+    a = avaliar(model="claude-opus-5", seed=1, n=40, taxa_divergencia=0.15,
+                client_factory=_fabrica_falsa("claude-opus-5"))
+
+    assert "claude-opus-5" in _tabela([a])

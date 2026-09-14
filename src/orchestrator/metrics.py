@@ -1,8 +1,9 @@
-"""Avaliação do núcleo determinístico contra o gabarito.
+"""Avaliação do núcleo determinístico e das propostas do agente contra o gabarito.
 
-Mede o sistema, não o agente — não há agente neste plano. A métrica que
-importa aqui é a taxa de resolução determinística (spec 2.3, critério F1) e,
-tão importante quanto, o falso positivo: casar errado é pior que não casar.
+A métrica central aqui é a taxa de resolução determinística (spec 2.3,
+critério F1) e, tão importante quanto, o falso positivo: casar errado é pior
+que não casar. Também mede a precisão das propostas do agente contra o mesmo
+gabarito — ver `proposals_correct` e `agent_cost_microcents`.
 """
 
 from collections import Counter
@@ -127,6 +128,10 @@ def evaluate(
     conciliado = sum(abs(e.amount) for e in dataset.bank if e.id in casados_banco)
     divergente = sum(abs(e.amount) for e in dataset.bank if e.id not in casados_banco)
 
+    # Conta MatchResults, não lançamentos casados — um único MatchResult pode
+    # cobrir vários ids de uma vez (ex.: PAGAMENTO_AGREGADO casa 1 bancário +
+    # N contábeis num resultado só). Unidade correta, deixada assim de
+    # propósito: contar ids infla camadas que resolvem casos agregados.
     por_camada = dict(Counter(m.layer for m in result.matches))
 
     # A precisão das propostas sai de graça: o gabarito da plano 1 já carrega o
@@ -143,8 +148,11 @@ def evaluate(
         if p.tipo is DivergenceType.NAO_IDENTIFICADO:
             abstencoes += 1
             continue
-        ids = divergencia_por_id.get(p.divergence_id, frozenset())
-        if any(tipo_por_id.get(i) is p.tipo for i in ids):
+        # Nome diferente da função `ids` acima de propósito: a mesma
+        # divergência aqui não é o `gt` que a função recebe, e reusar o nome
+        # sombreava a função dentro deste laço.
+        ids_tocados = divergencia_por_id.get(p.divergence_id, frozenset())
+        if any(tipo_por_id.get(i) is p.tipo for i in ids_tocados):
             corretas += 1
 
     return Metrics(

@@ -1,3 +1,5 @@
+import re
+
 import pytest
 
 from orchestrator.agent.llm import FakeLLMClient, LLMResponse, ToolCall
@@ -67,3 +69,42 @@ def test_reprise_estoura_quando_pedem_mais_do_que_foi_gravado(tmp_path):
 def test_reprise_de_arquivo_inexistente_e_erro_claro(tmp_path):
     with pytest.raises(FileNotFoundError):
         ReplayClient(tmp_path / "nao-existe.jsonl")
+
+
+def test_gravador_recusa_sobrescrever_arquivo_existente_por_padrao(tmp_path):
+    # Antes desta guarda, `RecordingClient.__init__` truncava o arquivo antes
+    # da primeira chamada incondicionalmente — apontar um gravador para uma
+    # gravação já existente destruía o histórico sem aviso.
+    destino = tmp_path / "sessao.jsonl"
+    destino.write_text("conteúdo pré-existente\n", encoding="utf-8")
+
+    with pytest.raises(FileExistsError):
+        RecordingClient(FakeLLMClient(_respostas()), destino)
+
+    assert destino.read_text(encoding="utf-8") == "conteúdo pré-existente\n"
+
+
+def test_gravador_sobrescreve_quando_pedido_explicitamente(tmp_path):
+    destino = tmp_path / "sessao.jsonl"
+    destino.write_text("conteúdo antigo\n", encoding="utf-8")
+
+    gravador = RecordingClient(FakeLLMClient(_respostas()), destino, overwrite=True)
+    gravador.complete(system="s", messages=[], tools=[])
+
+    assert "conteúdo antigo" not in destino.read_text(encoding="utf-8")
+
+
+def test_reprise_de_arquivo_vazio_e_erro_claro_nomeando_o_arquivo(tmp_path):
+    destino = tmp_path / "vazio.jsonl"
+    destino.write_text("", encoding="utf-8")
+
+    with pytest.raises(ValueError, match=re.escape(str(destino))):
+        ReplayClient(destino)
+
+
+def test_reprise_de_arquivo_corrompido_e_erro_claro_nomeando_o_arquivo(tmp_path):
+    destino = tmp_path / "corrompido.jsonl"
+    destino.write_text("isto não é json\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match=re.escape(str(destino))):
+        ReplayClient(destino)

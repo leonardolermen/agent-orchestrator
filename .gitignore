@@ -26,6 +26,9 @@ data/real/
 data/scratch/
 *.ofx
 *.ret
+# Gravações de sessão do modelo (eval/replay.py): dado de terceiro, o spec
+# proíbe versionar.
+*.jsonl
 
 # Editor / SO
 .vscode/

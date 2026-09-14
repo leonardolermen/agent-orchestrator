@@ -1,3 +1,5 @@
+import inspect
+
 import pytest
 
 from orchestrator.agent.tools import TOOL_SCHEMAS, ToolContext
@@ -35,6 +37,10 @@ def test_busca_limita_o_numero_de_resultados():
 
     achados = ctx.buscar_lancamentos(limite=3)
 
+    # Sem isto, um resultado sempre vazio também satisfaria "len <= 3" — o
+    # teste passaria mesmo se a busca estivesse quebrada e não devolvesse
+    # nada.
+    assert achados
     assert len(achados) <= 3
 
 
@@ -117,6 +123,15 @@ def test_todo_schema_tem_nome_descricao_e_e_estrito():
 
 
 def test_todo_schema_tem_metodo_correspondente_no_contexto():
+    # Só checar que o método existe deixava passar um schema com um campo a
+    # mais, a menos, ou com nome diferente do parâmetro real — e uma chamada
+    # estrita do modelo falharia em runtime com TypeError, não em teste.
     ctx = _contexto()
     for s in TOOL_SCHEMAS:
-        assert callable(getattr(ctx, s["name"]))
+        metodo = getattr(ctx, s["name"])
+        assert callable(metodo)
+        parametros = set(inspect.signature(metodo).parameters)
+        propriedades = set(s["input_schema"]["properties"])
+        assert propriedades == parametros, (
+            f"{s['name']}: schema declara {propriedades}, método aceita {parametros}"
+        )

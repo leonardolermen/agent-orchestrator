@@ -104,6 +104,36 @@ def avaliar(
     )
 
 
+def _tabela(resultados: list[EvalResult]) -> str:
+    """Compara os modelos lado a lado numa tabela.
+
+    O entregável desta avaliação é uma DECISÃO — qual modelo usar —, e blocos
+    empilhados (um `render()` por modelo) obrigam quem lê a fazer a
+    comparação de cabeça. Colunas lado a lado fazem isso por ele.
+    """
+    cabecalho = ("Modelo", "Precisão", "Abstenção", "US$/divergência", "US$ total")
+    linhas = [cabecalho]
+    for r in resultados:
+        linhas.append(
+            (
+                r.model,
+                f"{r.precision:.1%}",
+                f"{r.abstention_rate:.1%}",
+                f"{r.microcents_per_divergence / 100_000_000:.6f}",
+                f"{r.total_microcents / 100_000_000:.4f}",
+            )
+        )
+    larguras = [max(len(linha[i]) for linha in linhas) for i in range(len(cabecalho))]
+
+    def _formatar(linha: tuple[str, ...]) -> str:
+        pares = zip(linha, larguras, strict=True)
+        return "  ".join(valor.ljust(largura) for valor, largura in pares)
+
+    saida = [_formatar(cabecalho), "  ".join("-" * largura for largura in larguras)]
+    saida.extend(_formatar(linha) for linha in linhas[1:])
+    return "\n".join(saida)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Avalia o investigador contra o gabarito sintético. GASTA DINHEIRO."
@@ -118,9 +148,16 @@ def main(argv: list[str] | None = None) -> int:
     modelos = args.model or list(MODELOS_PADRAO)
     print(f"Avaliação ao vivo — GASTA DINHEIRO. Modelos: {', '.join(modelos)}")
     print()
+    resultados = []
     for modelo in modelos:
-        print(avaliar(modelo, args.seed, args.n, args.taxa_divergencia).render())
+        r = avaliar(modelo, args.seed, args.n, args.taxa_divergencia)
+        print(r.render())
         print()
+        resultados.append(r)
+
+    if len(resultados) > 1:
+        print("Comparação entre modelos:")
+        print(_tabela(resultados))
     return 0
 
 
