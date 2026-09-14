@@ -104,12 +104,32 @@ Adiada, sem papel definido:
 
 | Fase | Critério objetivo |
 |---|---|
-| F1 — Núcleo funcionando | Matching determinístico resolve ≥85% dos casos sintéticos; agente produz proposta com evidência nos demais |
+| F1 — Núcleo funcionando | **MEDIDO em 2026-09-14:** matching determinístico resolve 87,2% em média (desvio 2,7%, faixa 83,0–92,3% em 12 sementes), com **zero falso positivo e zero falso negativo em 24 execuções**. O alvo de ≥85% era estimativa; a medição mostra que ele é aproximadamente o percentil 25, atendido na média mas não por execução. |
 | F2 — Qualidade medida | Precisão ≥90% nas propostas aceitas; taxa de abstenção explícita e estável; custo <R$0,50 por divergência investigada |
 | F3 — Validação externa | 3 profissionais de backoffice avaliam saídas sobre dado sintético e concordam que economizaria tempo real |
 | F4 — Primeiro cliente | Alguém assina contrato pago |
 
 Validação sem alguém assinando cheque engana. F3 não substitui F4.
+
+> **Nota de medição (2026-09-14).** Os números desta seção nasceram como
+> estimativas, e a própria seção dizia que seriam corrigidos por medição. Esta
+> é a medição.
+>
+> A média ficou acima do alvo: 87,2% contra os 85% assumidos. Mas a
+> **dispersão** não era esperada — a taxa varia de 83,0% a 92,3% conforme a
+> semente, então 85% é aproximadamente o percentil 25 da distribuição, não um
+> piso. Prometer "85% de resolução automática" a um cliente seria errar em
+> uma execução a cada quatro.
+>
+> O resultado que mais importa, porém, não é a taxa: é que as camadas **não
+> erram**. Falso positivo e falso negativo foram zero em todas as 24
+> execuções medidas. Conciliar errado é pior que não conciliar, e nesse eixo
+> o núcleo é limpo.
+>
+> Consequência prática: a tese do produto se sustenta, e o que muda é o que
+> se promete. O número honesto para uma conversa comercial é "cerca de 85 a
+> 90% do volume resolvido sem IA, e o que sobra nunca vem errado" — não um
+> piso fixo.
 
 ---
 
