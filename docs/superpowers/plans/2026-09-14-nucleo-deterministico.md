@@ -1231,10 +1231,16 @@ git commit -m "feat: protocolo de injeção e injetor de defasagem temporal"
 
 - [ ] **Step 1: Escrever o teste que falha**
 
-Acrescentar a `tests/synth/test_injectors.py`:
+Acrescentar a `tests/synth/test_injectors.py`. **O import vai no bloco de
+imports no topo do arquivo, junto com os existentes** — colocá-lo no meio do
+arquivo, onde o texto abaixo o mostra, viola E402 e deixa `ruff check`
+vermelho. Os testes é que são acrescentados ao final.
 
 ```python
+# No topo do arquivo, junto dos imports já existentes:
 from orchestrator.synth.injectors import RetencaoImposto, calcular_retencao
+
+# Os testes abaixo vão ao final do arquivo:
 
 
 def test_calcular_retencao_iss_cinco_por_cento():
@@ -1351,10 +1357,16 @@ Este injetor é diferente dos anteriores: consome vários pares de uma vez, porq
 
 - [ ] **Step 1: Escrever o teste que falha**
 
-Acrescentar a `tests/synth/test_injectors.py`:
+Acrescentar a `tests/synth/test_injectors.py`. **O import vai no bloco de
+imports no topo do arquivo, junto com os existentes** — colocá-lo no meio do
+arquivo viola E402 e deixa `ruff check` vermelho. Os testes é que são
+acrescentados ao final.
 
 ```python
+# No topo do arquivo, junto dos imports já existentes:
 from orchestrator.synth.injectors import PagamentoAgregado
+
+# Os testes abaixo vão ao final do arquivo:
 
 
 def _pares(n: int):
@@ -1504,10 +1516,16 @@ Este é o caso difícil confirmado em campo: uma cadeia de duas ou três pernas 
 
 - [ ] **Step 1: Escrever o teste que falha**
 
-Acrescentar a `tests/synth/test_injectors.py`:
+Acrescentar a `tests/synth/test_injectors.py`. **O import vai no bloco de
+imports no topo do arquivo, junto com os existentes** — colocá-lo no meio do
+arquivo viola E402 e deixa `ruff check` vermelho. Os testes é que são
+acrescentados ao final.
 
 ```python
+# No topo do arquivo, junto dos imports já existentes:
 from orchestrator.synth.injectors import DevolucaoFundos
+
+# Os testes abaixo vão ao final do arquivo:
 
 
 def test_devolucao_produz_tres_pernas_bancarias():
