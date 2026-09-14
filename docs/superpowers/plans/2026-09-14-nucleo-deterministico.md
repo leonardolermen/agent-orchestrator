@@ -731,8 +731,9 @@ def test_injection_result_pode_devolver_varias_pernas():
         ledger_ids=frozenset({"l1"}),
         explanation="TED devolvida",
     )
-    r = InjectionResult(bank=[p.bank, extra], ledger=[p.ledger], truth=gt)
+    r = InjectionResult(consumed=(p,), bank=[p.bank, extra], ledger=[p.ledger], truth=gt)
     assert len(r.bank) == 2
+    assert r.consumed == (p,)
 ```
 
 - [ ] **Step 2: Rodar e confirmar falha**
@@ -792,11 +793,19 @@ class GroundTruth:
 class InjectionResult:
     """Saída de um injetor.
 
-    As listas SUBSTITUEM o par original. Um injetor pode devolver mais de um
+    `consumed` são os pares que este resultado SUBSTITUI, declarados
+    explicitamente. Não dá para inferi-los do que o injetor devolveu: a
+    devolução de fundos renomeia as três pernas, e o pagamento agregado funde
+    N pares num lançamento só — em ambos os casos ids consumidos desaparecem
+    da saída. Inferir por id deixaria os originais órfãos no dataset, somando
+    dinheiro que não existe.
+
+    `bank` e `ledger` são listas porque um injetor pode devolver mais de um
     lançamento bancário (DEVOLUCAO_FUNDOS) ou mais de um contábil
     (PAGAMENTO_AGREGADO).
     """
 
+    consumed: tuple[Pair, ...]
     bank: list[BankEntry]
     ledger: list[LedgerEntry]
     truth: GroundTruth
@@ -890,6 +899,65 @@ def test_generate_rejeita_n_invalido():
         generate_clean_pairs(seed=1, n=0)
     with pytest.raises(ValueError):
         generate_clean_pairs(seed=1, n=-5)
+
+
+def test_build_dataset_remove_originais_em_fan_out():
+    # Devolução de fundos: um par consumido, três pernas devolvidas com ids
+    # novos. Se o original sobreviver, vira divergência sem gabarito.
+    from dataclasses import replace
+
+    from orchestrator.synth.dataset import GroundTruth, InjectionResult
+    from orchestrator.taxonomy import DivergenceType
+
+    pares = generate_clean_pairs(seed=8, n=3)
+    p = pares[0]
+    pernas = [replace(p.bank, id=f"{p.bank.id}-{s}") for s in ("a", "b", "c")]
+    inj = InjectionResult(
+        consumed=(p,),
+        bank=pernas,
+        ledger=[p.ledger],
+        truth=GroundTruth(
+            divergence_type=DivergenceType.DEVOLUCAO_FUNDOS,
+            bank_ids=frozenset(e.id for e in pernas),
+            ledger_ids=frozenset({p.ledger.id}),
+            explanation="devolvida e reenviada",
+        ),
+    )
+
+    ds = build_dataset(pares, injections=[inj])
+
+    assert len(ds.bank) == 5  # dois pares intactos mais as três pernas
+    assert p.bank.id not in {e.id for e in ds.bank}
+
+
+def test_build_dataset_remove_originais_em_fan_in():
+    # Pagamento agregado: três pares consumidos, um lançamento devolvido. Se os
+    # outros dois sobreviverem, o dataset soma dinheiro que não existe.
+    from dataclasses import replace
+
+    from orchestrator.synth.dataset import GroundTruth, InjectionResult
+    from orchestrator.taxonomy import DivergenceType
+
+    pares = generate_clean_pairs(seed=8, n=3)
+    total = sum(p.ledger.net_amount for p in pares)
+    agregado = replace(pares[0].bank, amount=-total)
+    inj = InjectionResult(
+        consumed=tuple(pares),
+        bank=[agregado],
+        ledger=[p.ledger for p in pares],
+        truth=GroundTruth(
+            divergence_type=DivergenceType.PAGAMENTO_AGREGADO,
+            bank_ids=frozenset({agregado.id}),
+            ledger_ids=frozenset(p.ledger.id for p in pares),
+            explanation="lote de três documentos",
+            deterministic_expected=True,
+        ),
+    )
+
+    ds = build_dataset(pares, injections=[inj])
+
+    assert len(ds.bank) == 1
+    assert sum(abs(e.amount) for e in ds.bank) == total
 ```
 
 - [ ] **Step 2: Rodar e confirmar falha**
@@ -941,7 +1009,7 @@ def generate_clean_pairs(seed: int, n: int) -> list[Pair]:
 
     for i in range(n):
         fornecedor = rng.choice(_FORNECEDORES)
-        valor = rng.randrange(5_000, 5_000_000)  # R$ 50,00 a R$ 50.000,00
+        valor = rng.randrange(5_000, 5_000_000)  # R$ 50,00 a R$ 49.999,99
         competencia = _BASE + timedelta(days=rng.randrange(0, 90))
         caixa = add_business_days(competencia, rng.randrange(0, 5))
         documento = f"NF-{10_000 + i}"
@@ -973,11 +1041,16 @@ def generate_clean_pairs(seed: int, n: int) -> list[Pair]:
 def build_dataset(pares: list[Pair], injections: list[InjectionResult]) -> Dataset:
     """Monta o dataset final.
 
-    Os pares cujos ids aparecem em alguma injeção são substituídos pelos
-    lançamentos que o injetor produziu.
+    Os pares que cada injeção declara ter consumido saem do dataset, e os
+    lançamentos que o injetor produziu entram no lugar.
+
+    A substituição usa `inj.consumed`, nunca os ids da saída do injetor: a
+    devolução de fundos renomeia as três pernas e o pagamento agregado funde
+    N pares num lançamento só, então inferir por id deixaria originais órfãos
+    somando dinheiro que não existe.
     """
-    substituidos_banco = {b.id for inj in injections for b in inj.bank}
-    substituidos_contabil = {le.id for inj in injections for le in inj.ledger}
+    substituidos_banco = {p.bank.id for inj in injections for p in inj.consumed}
+    substituidos_contabil = {p.ledger.id for inj in injections for p in inj.consumed}
 
     banco: list[BankEntry] = []
     contabil: list[LedgerEntry] = []
@@ -1001,7 +1074,7 @@ def build_dataset(pares: list[Pair], injections: list[InjectionResult]) -> Datas
 - [ ] **Step 4: Rodar e confirmar que passa**
 
 Run: `.venv/Scripts/pytest tests/synth/test_generator.py -v`
-Expected: 7 passed
+Expected: 9 passed
 
 - [ ] **Step 5: Commit**
 
@@ -1117,6 +1190,7 @@ class DefasagemTemporal:
         banco = replace(pair.bank, date=nova_data)
 
         return InjectionResult(
+            consumed=(pair,),
             bank=[banco],
             ledger=[pair.ledger],
             truth=GroundTruth(
@@ -1234,6 +1308,7 @@ class RetencaoImposto:
         contabil = replace(pair.ledger, net_amount=liquido)
 
         return InjectionResult(
+            consumed=(pair,),
             bank=[banco],
             ledger=[contabil],
             truth=GroundTruth(
@@ -1384,6 +1459,7 @@ class PagamentoAgregado:
         ]
 
         return InjectionResult(
+            consumed=tuple(pairs),
             bank=[banco],
             ledger=contabeis,
             truth=GroundTruth(
@@ -1533,6 +1609,7 @@ class DevolucaoFundos:
         )
 
         return InjectionResult(
+            consumed=(pair,),
             bank=[envio, devolucao, reenvio],
             ledger=[pair.ledger],
             truth=GroundTruth(
