@@ -1830,10 +1830,11 @@ Expected: FAIL com `AttributeError: 'Metrics' object has no attribute 'matches_b
 
 - [ ] **Step 3: Modificar `src/orchestrator/metrics.py`**
 
-Acrescentar aos imports do topo:
+Acrescentar ao topo o único import novo que `metrics.py` de fato usa. **Não
+importe `Confidence` aqui** — quem usa é o arquivo de teste, e um import morto
+faz `ruff check` falhar com F401:
 
 ```python
-from orchestrator.agent.proposal import Confidence
 from orchestrator.taxonomy import DivergenceType
 ```
 
@@ -1876,10 +1877,11 @@ def evaluate(
 
 Acrescentar, antes do `return Metrics(...)`:
 
-```python
-    from collections import Counter as _Counter
+`Counter` já está importado no topo de `metrics.py` — use aquele, sem alias
+local:
 
-    por_camada = dict(_Counter(m.layer for m in result.matches))
+```python
+    por_camada = dict(Counter(m.layer for m in result.matches))
 
     # A precisão das propostas sai de graça: o gabarito da plano 1 já carrega o
     # tipo de cada divergência injetada. Uma proposta está correta quando o tipo
