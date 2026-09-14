@@ -16,6 +16,7 @@ from orchestrator.models import BankEntry, LedgerEntry, MatchResult
 class GroupingMatcher:
     max_group_size: int = 4
     max_business_days: int = 3
+    max_candidates: int = 24
     layer: str = field(default="L3", init=False)
 
     def __post_init__(self) -> None:
@@ -28,6 +29,11 @@ class GroupingMatcher:
         if self.max_business_days < 0:
             raise ValueError(
                 f"max_business_days não pode ser negativo: {self.max_business_days}"
+            )
+        if self.max_candidates < self.max_group_size:
+            raise ValueError(
+                f"teto de candidatos ({self.max_candidates}) não pode ser menor que "
+                f"o tamanho máximo de grupo ({self.max_group_size})"
             )
 
     def match(self, bank: list[BankEntry], ledger: list[LedgerEntry]) -> list[MatchResult]:
@@ -43,6 +49,13 @@ class GroupingMatcher:
             if be.counterparty is None:
                 continue
 
+            # Esta camada existe para casar PAGAMENTOS agregados. Um crédito é
+            # recebimento e não deveria sair procurando faturas a pagar — sem
+            # esta guarda, a perna de crédito de uma devolução de fundos entra
+            # na busca e pode casar com faturas por coincidência de soma.
+            if be.amount >= 0:
+                continue
+
             candidatos = [
                 le
                 for le in por_fornecedor.get(be.counterparty, [])
@@ -51,6 +64,15 @@ class GroupingMatcher:
                 and business_days_between(be.date, le.cash_date) <= self.max_business_days
             ]
             if len(candidatos) < 2:
+                continue
+
+            # O custo da busca é O(C^max_group_size) no tamanho do pool, então
+            # sem teto os dois botões desta camada não limitam nada: com algumas
+            # centenas de candidatos a busca explode. O teto também reduz falso
+            # positivo, porque pool maior é mais oportunidade de uma soma
+            # coincidir por acaso. Estourou, o lançamento vira divergência — que
+            # é o destino previsto de tudo que a camada barata não resolve.
+            if len(candidatos) > self.max_candidates:
                 continue
 
             alvo = abs(be.amount)
