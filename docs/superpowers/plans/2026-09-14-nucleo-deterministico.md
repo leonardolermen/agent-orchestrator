@@ -1278,6 +1278,14 @@ def test_defasagem_e_retencao_nao_sao_deterministicos():
     par = _par()
     assert DefasagemTemporal().apply(Random(0), par).truth.deterministic_expected is False
     assert RetencaoImposto().apply(Random(0), par).truth.deterministic_expected is False
+
+
+def test_agregado_normaliza_fornecedor_e_data():
+    # Sem isto, a camada L3 (que agrupa por fornecedor dentro de uma janela de
+    # dias úteis) nunca encontraria o conjunto.
+    r = PagamentoAgregado().apply_many(Random(0), _pares(3))
+    assert len({le.supplier for le in r.ledger}) == 1
+    assert all(le.cash_date == r.bank[0].date for le in r.ledger)
 ```
 
 - [ ] **Step 2: Rodar e confirmar falha**
@@ -1311,7 +1319,15 @@ class PagamentoAgregado:
             description=f"PAGTO LOTE {len(pairs)} DOCS",
             document=None,
         )
-        contabeis = [p.ledger for p in pairs]
+
+        # Um pagamento em lote é a um único fornecedor e liquida tudo no mesmo
+        # dia. Sem normalizar as duas coisas, a camada L3 — que agrupa por
+        # fornecedor dentro de uma janela de dias úteis — nunca encontraria o
+        # conjunto, e o caso que ela existe para resolver viraria divergência.
+        contabeis = [
+            replace(p.ledger, supplier=primeiro.ledger.supplier, cash_date=banco.date)
+            for p in pairs
+        ]
 
         return InjectionResult(
             bank=[banco],
@@ -1333,7 +1349,7 @@ class PagamentoAgregado:
 - [ ] **Step 4: Rodar e confirmar que passa**
 
 Run: `.venv/Scripts/pytest tests/synth/test_injectors.py -v`
-Expected: 17 passed
+Expected: 18 passed
 
 - [ ] **Step 5: Commit**
 
@@ -1402,6 +1418,14 @@ def test_devolucao_gabarito_cobre_todas_as_pernas():
     r = DevolucaoFundos().apply(Random(0), par)
     assert r.truth.bank_ids == frozenset(e.id for e in r.bank)
     assert r.truth.divergence_type is DivergenceType.DEVOLUCAO_FUNDOS
+
+
+def test_devolucao_zera_o_documento_das_pernas():
+    # L1 e L2 exigem documento não nulo. Sem zerar, L1 casaria a perna de envio
+    # com o lançamento contábil e o caso viraria falso positivo.
+    par = _par()
+    r = DevolucaoFundos().apply(Random(0), par)
+    assert all(e.document is None for e in r.bank)
 ```
 
 - [ ] **Step 2: Rodar e confirmar falha**
@@ -1429,13 +1453,21 @@ class DevolucaoFundos:
         data_devolucao = add_business_days(data_envio, rng.randrange(1, 3))
         data_reenvio = add_business_days(data_devolucao, rng.randrange(1, 5))
 
-        envio = replace(pair.bank, id=f"{pair.bank.id}-a", date=data_envio)
+        # As três pernas perdem a referência do documento. Isso espelha o
+        # extrato real — transferência devolvida aparece como movimentação
+        # genérica — e tem uma consequência de desenho: L1 e L2 exigem
+        # documento não nulo, então nenhuma das duas casa estas pernas. Sem
+        # isso, L1 casaria a perna de envio com o lançamento contábil (mesmo
+        # documento, valor e data do original) e o caso que o spec reserva
+        # para o agente viraria falso positivo.
+        envio = replace(pair.bank, id=f"{pair.bank.id}-a", date=data_envio, document=None)
         devolucao = replace(
             pair.bank,
             id=f"{pair.bank.id}-b",
             date=data_devolucao,
             amount=-valor,
             description="DEVOLUCAO TED",
+            document=None,
         )
         reenvio = replace(
             pair.bank,
@@ -1443,6 +1475,7 @@ class DevolucaoFundos:
             date=data_reenvio,
             amount=valor,
             description=f"{pair.bank.description} REENVIO",
+            document=None,
         )
 
         return InjectionResult(
@@ -1464,7 +1497,7 @@ class DevolucaoFundos:
 - [ ] **Step 4: Rodar e confirmar que passa**
 
 Run: `.venv/Scripts/pytest tests/synth/test_injectors.py -v`
-Expected: 23 passed
+Expected: 25 passed
 
 - [ ] **Step 5: Commit**
 
@@ -2245,6 +2278,26 @@ def test_falso_negativo_quando_camada_nao_resolve_o_que_deveria():
     m = evaluate(ds, reconcile(ds.bank, ds.ledger, matchers=[]))
 
     assert m.false_negatives == 1
+
+
+def test_valores_somam_o_total_do_extrato():
+    pares = generate_clean_pairs(seed=9, n=25)
+    inj = DefasagemTemporal().apply(Random(0), pares[0])
+    ds = build_dataset(pares, injections=[inj])
+
+    m = evaluate(ds, reconcile(ds.bank, ds.ledger))
+
+    assert m.matched_amount + m.divergent_amount == sum(abs(e.amount) for e in ds.bank)
+
+
+def test_render_formata_valores_em_reais():
+    pares = generate_clean_pairs(seed=9, n=10)
+    ds = build_dataset(pares, injections=[])
+
+    saida = evaluate(ds, reconcile(ds.bank, ds.ledger)).render()
+
+    assert "R$" in saida
+    assert "Valor conciliado" in saida
 ```
 
 - [ ] **Step 2: Rodar e confirmar falha**
@@ -2266,6 +2319,7 @@ from collections import Counter
 from dataclasses import dataclass
 
 from orchestrator.matching.engine import ReconcileResult
+from orchestrator.money import format_brl
 from orchestrator.synth.dataset import Dataset
 
 
@@ -2279,6 +2333,8 @@ class Metrics:
     truth_divergences: int
     false_positives: int
     false_negatives: int
+    matched_amount: int
+    divergent_amount: int
     truth_by_type: dict[str, int]
 
     def render(self) -> str:
@@ -2291,6 +2347,9 @@ class Metrics:
             f"Divergências no gabarito:    {self.truth_divergences}",
             f"Falsos positivos:            {self.false_positives}",
             f"Falsos negativos:            {self.false_negatives}",
+            "",
+            f"Valor conciliado:            {format_brl(self.matched_amount)}",
+            f"Valor em divergência:        {format_brl(self.divergent_amount)}",
             "",
             "Gabarito por tipo:",
         ]
@@ -2319,6 +2378,11 @@ def evaluate(dataset: Dataset, result: ReconcileResult) -> Metrics:
         1 for gt in dataset.truth if gt.deterministic_expected and not foi_casado(gt)
     )
 
+    # Valor é o que o comprador entende. Contagem de lançamentos não diz se o
+    # que sobrou foi R$ 300 ou R$ 300 mil.
+    conciliado = sum(abs(e.amount) for e in dataset.bank if e.id in casados_banco)
+    divergente = sum(abs(e.amount) for e in dataset.bank if e.id not in casados_banco)
+
     return Metrics(
         bank_total=bank_total,
         ledger_total=len(dataset.ledger),
@@ -2328,6 +2392,8 @@ def evaluate(dataset: Dataset, result: ReconcileResult) -> Metrics:
         truth_divergences=len(dataset.truth),
         false_positives=falsos_positivos,
         false_negatives=falsos_negativos,
+        matched_amount=conciliado,
+        divergent_amount=divergente,
         truth_by_type=dict(Counter(str(gt.divergence_type) for gt in dataset.truth)),
     )
 ```
@@ -2335,7 +2401,7 @@ def evaluate(dataset: Dataset, result: ReconcileResult) -> Metrics:
 - [ ] **Step 4: Rodar e confirmar que passa**
 
 Run: `.venv/Scripts/pytest tests/test_metrics.py -v`
-Expected: 7 passed
+Expected: 9 passed
 
 - [ ] **Step 5: Rodar ruff e corrigir o que aparecer**
 
@@ -2376,7 +2442,7 @@ from orchestrator.metrics import evaluate
 def test_benchmark_injeta_a_proporcao_pedida():
     ds = build_benchmark(seed=1, n=100, taxa_divergencia=0.2)
     # cada injeção consome um ou mais pares; a contagem é aproximada por desenho
-    assert 10 <= len(ds.truth) <= 30
+    assert 5 <= len(ds.truth) <= 25
 
 
 def test_benchmark_cobre_varios_tipos():
