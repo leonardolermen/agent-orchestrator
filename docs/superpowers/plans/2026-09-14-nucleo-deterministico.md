@@ -2120,11 +2120,21 @@ def test_rejeita_configuracao_que_nunca_agrupa():
 def test_ignora_pool_de_candidatos_grande_demais():
     # Sem teto, o custo é O(C^max_group_size) e os dois botões da camada não
     # limitam nada. Estourou o teto, o lançamento vira divergência.
-    pares = generate_clean_pairs(seed=6, n=3)
-    inj = PagamentoAgregado().apply_many(Random(0), pares)
+    #
+    # O pool aqui tem 6 candidatos e CONTÉM o trio que soma, com max_group_size
+    # no padrão — então o teto é a única coisa que pode causar o retorno vazio.
+    # Um pool menor que o grupo máximo provaria o tamanho do grupo, não o teto.
+    from dataclasses import replace
 
-    assert GroupingMatcher(max_candidates=2).match(inj.bank, inj.ledger) == []
-    assert GroupingMatcher(max_candidates=3).match(inj.bank, inj.ledger) != []
+    pares = generate_clean_pairs(seed=6, n=6)
+    inj = PagamentoAgregado().apply_many(Random(0), pares[:3])
+    fornecedor = inj.ledger[0].supplier
+    data = inj.ledger[0].cash_date
+    ruido = [replace(p.ledger, supplier=fornecedor, cash_date=data) for p in pares[3:]]
+    contabeis = inj.ledger + ruido
+
+    assert GroupingMatcher(max_candidates=4).match(inj.bank, contabeis) == []
+    assert GroupingMatcher(max_candidates=6).match(inj.bank, contabeis) != []
 
 
 def test_ignora_creditos():
