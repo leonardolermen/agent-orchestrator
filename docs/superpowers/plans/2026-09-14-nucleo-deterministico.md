@@ -1911,6 +1911,27 @@ def test_registra_a_diferenca_na_evidencia():
     assert r.evidence["diferenca_centavos"] == 3
 
 
+def test_fronteira_de_valor_e_inclusiva():
+    # A fronteira precisa estar fixada: a taxa de resolução determinística
+    # desloca silenciosamente se a inclusividade mudar, e ela é o número que
+    # este projeto existe para medir.
+    par = _par()
+    no_limite = [replace(par.bank, amount=par.bank.amount + 5)]
+    um_alem = [replace(par.bank, amount=par.bank.amount + 6)]
+
+    assert len(ToleranceMatcher().match(no_limite, [par.ledger])) == 1
+    assert ToleranceMatcher().match(um_alem, [par.ledger]) == []
+
+
+def test_fronteira_de_dias_e_inclusiva():
+    par = _par()
+    no_limite = [replace(par.bank, date=add_business_days(par.bank.date, 3))]
+    um_alem = [replace(par.bank, date=add_business_days(par.bank.date, 4))]
+
+    assert len(ToleranceMatcher().match(no_limite, [par.ledger])) == 1
+    assert ToleranceMatcher().match(um_alem, [par.ledger]) == []
+
+
 def test_rejeita_tolerancia_negativa():
     # Tolerância negativa não casaria nada e pareceria só uma camada sem achados.
     import pytest
@@ -2004,7 +2025,7 @@ class ToleranceMatcher:
 - [ ] **Step 4: Rodar e confirmar que passa**
 
 Run: `.venv/Scripts/pytest tests/matching/test_tolerance.py -v`
-Expected: 7 passed
+Expected: 9 passed
 
 - [ ] **Step 5: Commit**
 
