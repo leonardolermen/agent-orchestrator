@@ -62,6 +62,35 @@ def test_abstencao_e_proposta_valida():
     assert p.acao_sugerida == "investigar_manual"
 
 
+def test_confianca_vinda_como_string_e_coagida_ao_enum():
+    # O plano 3 vai desserializar propostas; sem coerção, uma string crua
+    # contornaria o guard de evidência e toda verificação por identidade.
+    p = Proposal(
+        divergence_id="d1",
+        tipo="RETENCAO_IMPOSTO",
+        explicacao="x",
+        evidencia=["l1"],
+        confianca="ALTA",
+        acao_sugerida="conciliar",
+        cost=Cost.zero(),
+    )
+    assert p.confianca is Confidence.ALTA
+    assert p.tipo is DivergenceType.RETENCAO_IMPOSTO
+
+
+def test_confianca_alta_como_string_tambem_exige_evidencia():
+    with pytest.raises(ValueError):
+        Proposal(
+            divergence_id="d1",
+            tipo="RETENCAO_IMPOSTO",
+            explicacao="x",
+            evidencia=[],
+            confianca="ALTA",
+            acao_sugerida="conciliar",
+            cost=Cost.zero(),
+        )
+
+
 def test_proposta_com_confianca_alta_exige_evidencia():
     # Afirmar com confiança e sem evidência é exatamente o que destrói a
     # credibilidade do produto.

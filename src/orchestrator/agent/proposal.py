@@ -99,6 +99,14 @@ class Proposal:
     trace: list[TraceEvent] = field(default_factory=list)
 
     def __post_init__(self) -> None:
+        # Coage os dois enums antes de qualquer verificação. O projeto compara
+        # por identidade em toda parte (`p.tipo is DivergenceType.X`), e uma
+        # string crua vinda de JSON desserializado passaria batido por todas
+        # elas — inclusive pelo guard de evidência logo abaixo. Coagir uma vez
+        # aqui torna Proposal seguro de construir a partir de dado externo.
+        object.__setattr__(self, "tipo", DivergenceType(self.tipo))
+        object.__setattr__(self, "confianca", Confidence(self.confianca))
+
         # Confiança alta sem evidência é a combinação que destrói a
         # credibilidade do produto mais rápido que qualquer erro.
         if self.confianca is Confidence.ALTA and not self.evidencia:
