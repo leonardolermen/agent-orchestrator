@@ -2,8 +2,9 @@ from random import Random
 
 from orchestrator.matching.engine import reconcile
 from orchestrator.metrics import evaluate
+from orchestrator.models import MatchResult
 from orchestrator.synth.generator import build_dataset, generate_clean_pairs
-from orchestrator.synth.injectors import DefasagemTemporal
+from orchestrator.synth.injectors import DefasagemTemporal, PagamentoAgregado
 
 
 def test_dataset_limpo_tem_taxa_total():
@@ -104,3 +105,46 @@ def test_render_formata_valores_em_reais():
 
     assert "R$" in saida
     assert "Valor conciliado" in saida
+
+
+def test_resolucao_parcial_de_agregado_conta_falso_negativo():
+    # Um agregado só está resolvido se TODOS os seus ids foram casados. Casar
+    # um dos três e deixar dois em divergência é falha parcial, e contar isso
+    # como resolvido esconderia exatamente o que esta métrica existe para expor.
+    class MatcherParcial:
+        layer = "PARCIAL"
+
+        def match(self, bank, ledger):
+            if not bank or not ledger:
+                return []
+            return [
+                MatchResult(
+                    bank_ids=frozenset({bank[0].id}),
+                    ledger_ids=frozenset({ledger[0].id}),
+                    layer=self.layer,
+                    rule="casa só um dos contábeis, de propósito",
+                    evidence={},
+                )
+            ]
+
+    pares = generate_clean_pairs(seed=9, n=3)
+    inj = PagamentoAgregado().apply_many(Random(0), pares)
+    ds = build_dataset(pares, injections=[inj])
+
+    m = evaluate(ds, reconcile(ds.bank, ds.ledger, matchers=[MatcherParcial()]))
+
+    assert m.false_negatives == 1
+
+
+def test_separa_casos_do_gabarito_por_destino():
+    # As duas contagens que o relatório imprime lado a lado precisam ser
+    # separáveis, senão o leitor compara lançamentos órfãos com casos.
+    pares = generate_clean_pairs(seed=9, n=4)
+    agregado = PagamentoAgregado().apply_many(Random(0), pares[:3])
+    defasado = DefasagemTemporal().apply(Random(0), pares[3])
+    ds = build_dataset(pares, injections=[agregado, defasado])
+
+    m = evaluate(ds, reconcile(ds.bank, ds.ledger))
+
+    assert m.truth_deterministic == 1
+    assert m.truth_for_agent == 1
