@@ -40,11 +40,19 @@ class GroundTruth:
 class InjectionResult:
     """Saída de um injetor.
 
-    As listas SUBSTITUEM o par original. Um injetor pode devolver mais de um
+    `consumed` são os pares que este resultado SUBSTITUI, declarados
+    explicitamente. Não dá para inferi-los do que o injetor devolveu: a
+    devolução de fundos renomeia as três pernas, e o pagamento agregado funde
+    N pares num lançamento só — em ambos os casos ids consumidos desaparecem
+    da saída. Inferir por id deixaria os originais órfãos no dataset, somando
+    dinheiro que não existe.
+
+    `bank` e `ledger` são listas porque um injetor pode devolver mais de um
     lançamento bancário (DEVOLUCAO_FUNDOS) ou mais de um contábil
     (PAGAMENTO_AGREGADO).
     """
 
+    consumed: tuple[Pair, ...]
     bank: list[BankEntry]
     ledger: list[LedgerEntry]
     truth: GroundTruth

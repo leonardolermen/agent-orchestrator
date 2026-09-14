@@ -71,11 +71,16 @@ def generate_clean_pairs(seed: int, n: int) -> list[Pair]:
 def build_dataset(pares: list[Pair], injections: list[InjectionResult]) -> Dataset:
     """Monta o dataset final.
 
-    Os pares cujos ids aparecem em alguma injeção são substituídos pelos
-    lançamentos que o injetor produziu.
+    Os pares que cada injeção declara ter consumido saem do dataset, e os
+    lançamentos que o injetor produziu entram no lugar.
+
+    A substituição usa `inj.consumed`, nunca os ids da saída do injetor: a
+    devolução de fundos renomeia as três pernas e o pagamento agregado funde
+    N pares num lançamento só, então inferir por id deixaria originais órfãos
+    somando dinheiro que não existe.
     """
-    substituidos_banco = {b.id for inj in injections for b in inj.bank}
-    substituidos_contabil = {le.id for inj in injections for le in inj.ledger}
+    substituidos_banco = {p.bank.id for inj in injections for p in inj.consumed}
+    substituidos_contabil = {p.ledger.id for inj in injections for p in inj.consumed}
 
     banco: list[BankEntry] = []
     contabil: list[LedgerEntry] = []

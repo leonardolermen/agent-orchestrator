@@ -73,5 +73,6 @@ def test_injection_result_pode_devolver_varias_pernas():
         ledger_ids=frozenset({"l1"}),
         explanation="TED devolvida",
     )
-    r = InjectionResult(bank=[p.bank, extra], ledger=[p.ledger], truth=gt)
+    r = InjectionResult(consumed=(p,), bank=[p.bank, extra], ledger=[p.ledger], truth=gt)
     assert len(r.bank) == 2
+    assert r.consumed == (p,)
