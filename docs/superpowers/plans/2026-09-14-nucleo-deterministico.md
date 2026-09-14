@@ -277,6 +277,14 @@ def test_add_business_days_pula_fim_de_semana():
 
 def test_add_business_days_zero():
     assert add_business_days(date(2026, 9, 14), 0) == date(2026, 9, 14)
+
+
+def test_add_business_days_rejeita_negativo():
+    # Devolver a data de entrada em silêncio seria armadilha.
+    import pytest
+
+    with pytest.raises(ValueError):
+        add_business_days(date(2026, 9, 14), -1)
 ```
 
 - [ ] **Step 2: Rodar e confirmar falha**
@@ -315,7 +323,15 @@ def business_days_between(a: date, b: date) -> int:
 
 
 def add_business_days(d: date, n: int) -> date:
-    """Avança n dias úteis a partir de d."""
+    """Avança n dias úteis a partir de d.
+
+    Não anda para trás. Nenhum chamador deste plano precisa disso, e um n
+    negativo devolvendo a data de entrada em silêncio seria armadilha: quem
+    pedisse um dia útil antes receberia o próprio dia sem nenhum sinal.
+    """
+    if n < 0:
+        raise ValueError(f"n não pode ser negativo: {n}")
+
     atual = d
     restantes = n
     while restantes > 0:
@@ -328,7 +344,7 @@ def add_business_days(d: date, n: int) -> date:
 - [ ] **Step 4: Rodar e confirmar que passa**
 
 Run: `.venv/Scripts/pytest tests/test_dates.py -v`
-Expected: 6 passed
+Expected: 7 passed
 
 - [ ] **Step 5: Commit**
 
