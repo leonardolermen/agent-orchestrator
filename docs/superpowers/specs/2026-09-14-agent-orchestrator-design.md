@@ -439,7 +439,7 @@ O principal risco deste projeto é derivar para construir um workflow engine gen
 
 | Não construir | Desbloqueia quando |
 |---|---|
-| DSL de workflow em YAML | Houver 3 workflows reais e distintos em produção |
+| DSL de workflow em YAML | Houver 3 workflows reais e distintos em produção — o design já existe em [composição de workflows](2026-09-14-composicao-de-workflows-design.md), aprovado e deliberadamente não agendado |
 | Durable execution própria | Nunca. Adotar Temporal/Restate se o Tier 3 chegar. |
 | Marketplace de agentes | 10+ clientes pedirem |
 | Multi-tenant | Houver 2º cliente pagante |
