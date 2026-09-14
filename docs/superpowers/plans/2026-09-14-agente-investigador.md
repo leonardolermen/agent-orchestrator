@@ -914,6 +914,8 @@ Criar `tests/agent/test_investigator.py`:
 ```python
 import json
 
+import pytest
+
 from orchestrator.agent.investigator import Investigator
 from orchestrator.agent.llm import FakeLLMClient, LLMResponse, ToolCall
 from orchestrator.agent.proposal import Confidence, Cost
@@ -1031,7 +1033,11 @@ def test_confianca_alta_sem_evidencia_e_rebaixada_nao_rejeitada():
 
     out = inv.investigate([_div()])
 
+    # Sem checar o tipo, uma abstenção também satisfaria a asserção de
+    # confiança BAIXA — e o teste deixaria de distinguir "rebaixada" de
+    # "rejeitada", que é exatamente o que o nome dele promete.
     assert out.proposals[0].confianca is Confidence.BAIXA
+    assert out.proposals[0].tipo is DivergenceType.RETENCAO_IMPOSTO
 
 
 def test_laco_para_no_limite_de_turnos():
@@ -1118,6 +1124,59 @@ def test_trace_registra_turno_ferramenta_e_desfecho():
     assert tipos[-1] == "outcome"
 
 
+def test_modelo_sem_preco_falha_na_construcao():
+    # Não é abstenção, é erro de configuração: sem preço o custo por
+    # divergência fica incalculável, e ele é a métrica central do produto.
+    class _SemPreco:
+        model = "modelo-inexistente"
+
+        def complete(self, system, messages, tools):
+            raise AssertionError("não deveria chegar aqui")
+
+    with pytest.raises(ValueError):
+        Investigator(client=_SemPreco(), context=_ctx())
+
+
+def test_evidencia_que_nao_e_lista_nao_vira_lista_de_caracteres():
+    # Medido antes da guarda: "l1: bruto 100" virava 13 strings de um
+    # caractere, evidência "não vazia" o bastante para a confiança ALTA passar.
+    ruim = json.dumps(
+        {
+            "tipo": "RETENCAO_IMPOSTO",
+            "explicacao": "ISS",
+            "evidencia": "l1: bruto 100",
+            "confianca": "ALTA",
+            "acao_sugerida": "conciliar",
+        }
+    )
+    cliente = FakeLLMClient(
+        [LLMResponse(text=ruim, tool_calls=[], cost=Cost(calls=1))] * 4
+    )
+    inv = Investigator(client=cliente, context=_ctx(), max_tentativas_formato=2)
+
+    p = inv.investigate([_div()]).proposals[0]
+
+    assert p.tipo is DivergenceType.NAO_IDENTIFICADO
+    assert p.evidencia == []
+
+
+def test_resposta_malformada_nao_derruba_o_lote_inteiro():
+    # `investigate` não tem try próprio: uma exceção escapando de uma
+    # divergência levaria as outras junto.
+    ruim = json.dumps(
+        {"tipo": "ESTORNO", "explicacao": "x", "evidencia": 5,
+         "confianca": "MEDIA", "acao_sugerida": "y"}
+    )
+    cliente = FakeLLMClient(
+        [LLMResponse(text=ruim, tool_calls=[], cost=Cost(calls=1))] * 12
+    )
+    inv = Investigator(client=cliente, context=_ctx(), max_tentativas_formato=2)
+
+    out = inv.investigate([_div("d1"), _div("d2")])
+
+    assert len(out.proposals) == 2
+
+
 def test_cada_divergencia_comeca_com_contexto_limpo():
     # Divergências não podem contaminar umas às outras: o histórico de uma não
     # entra no prompt da seguinte.
@@ -1194,6 +1253,13 @@ class Investigator:
     budget_microcents: int = 100_000  # ~US$ 0,001 por divergência
     name: str = field(default="investigador", init=False)
 
+    def __post_init__(self) -> None:
+        # Modelo sem preço conhecido não é abstenção, é erro de configuração.
+        # Abster em toda divergência gastaria a execução inteira sem produzir
+        # nada, e o custo — que é a métrica central do produto — ficaria
+        # incalculável. Falhar aqui, uma vez, é o comportamento certo.
+        Cost.zero().microcents(self.client.model)
+
     def investigate(self, divergences: list[Divergence]) -> InvestigationOutput:
         propostas, total = [], Cost.zero()
         for d in divergences:
@@ -1216,6 +1282,12 @@ class Investigator:
                     system=SYSTEM, messages=mensagens, tools=TOOL_SCHEMAS
                 )
             except Exception as erro:  # noqa: BLE001
+                # A captura envolve SÓ a chamada ao modelo, de propósito.
+                # Alargá-la para o corpo do turno inteiro transformaria bug do
+                # próprio investigador — um AttributeError, um nome errado — em
+                # abstenção plausível com suíte verde, que é a falha oposta e
+                # pior da que esta guarda previne.
+                #
                 # Timeout, rede caída, 500 da API. O SDK já tenta de novo por
                 # conta própria; se chegou aqui, acabou. Abster é a saída certa:
                 # derrubar o processo inteiro por causa de um item transformaria
@@ -1321,7 +1393,11 @@ class Investigator:
             try:
                 argumentos = {k: v for k, v in c.arguments.items() if v is not None}
                 resultados.append({"ferramenta": c.name, "resultado": metodo(**argumentos)})
-            except (ValueError, TypeError) as erro:
+            except Exception as erro:  # noqa: BLE001
+                # Aqui a captura larga É o requisito, e é a inversão exata da
+                # guarda estreita em volta de `complete`: o spec manda que erro
+                # de ferramenta volte ao modelo como texto, sempre. O modelo se
+                # corrige sozinho; o processo não se recupera de um estouro.
                 resultados.append({"ferramenta": c.name, "erro": str(erro)})
         return json.dumps(resultados, ensure_ascii=False, default=str)
 
@@ -1341,7 +1417,15 @@ class Investigator:
         except ValueError:
             return None
 
-        evidencia = [str(e) for e in dados.get("evidencia", [])]
+        evidencia_bruta = dados.get("evidencia", [])
+        if not isinstance(evidencia_bruta, list):
+            # String onde se pediu lista é erro de forma comum do modelo, e
+            # iterar sobre ela produz uma lista de CARACTERES. Medido:
+            # "l1: bruto 100" virava 13 itens — evidência "não vazia" que não
+            # sustenta nada, e que fazia uma confiança ALTA passar sem
+            # rebaixamento. Rejeitar manda para o caminho de retry.
+            return None
+        evidencia = [str(e) for e in evidencia_bruta]
         # Afirmar com confiança sem citar nada acontece. Rebaixar é mais útil
         # que descartar: a hipótese ainda ajuda o humano, com o peso certo.
         if confianca is Confidence.ALTA and not evidencia:
@@ -1362,7 +1446,7 @@ class Investigator:
 - [ ] **Step 4: Rodar e confirmar que passa**
 
 Run: `.venv/Scripts/pytest tests/agent/test_investigator.py -v`
-Expected: 12 passed
+Expected: 15 passed
 
 - [ ] **Step 5: Commit**
 
