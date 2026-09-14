@@ -1,6 +1,17 @@
+import pytest
+
 from orchestrator.agent.llm import FakeLLMClient, LLMResponse
 from orchestrator.agent.proposal import Cost
 from orchestrator.eval.agent_eval import EvalResult, avaliar
+
+# Preenchido com os valores MEDIDOS na semente 1, n=40. Rode `avaliar` uma vez
+# e copie a saída; não invente os números.
+#
+# Medido com:
+#   avaliar(model="claude-opus-5", seed=1, n=40, taxa_divergencia=0.15,
+#           client_factory=_fabrica_falsa("claude-opus-5"))
+# -> proposals_total=2, proposals_abstained=0, proposals_correct=2
+PRECISAO_ESPERADA = {"total": 2, "abstidas": 0, "corretas": 2}
 
 
 def _fabrica_falsa(model: str):
@@ -27,26 +38,46 @@ def test_avaliacao_devolve_resultado_completo():
                 client_factory=_fabrica_falsa("claude-opus-5"))
 
     assert isinstance(r, EvalResult)
-    # NOTA: o brief original pedia `assert r.model == "fake"` aqui. Essa
-    # asserção é irreconciliável com `test_render_nomeia_o_modelo_e_a_precisao`
-    # logo abaixo — as duas chamam `avaliar` do mesmo jeito (mesmo `model=`,
-    # mesma `_fabrica_falsa`), mas uma exigia `self.model == "fake"` e a outra
-    # exige `"claude-opus-5" in render()`, que só é possível se `self.model ==
-    # "claude-opus-5"`. Nenhuma implementação de `avaliar`/`EvalResult`
-    # satisfaz as duas ao mesmo tempo. O literal "fake" é resquício de uma
-    # versão anterior de `FakeLLMClient` cujo modelo padrão era "fake" — ver o
-    # comentário em `orchestrator/agent/llm.py` ("O modelo padrão é um de
-    # verdade, não 'fake'"), que documenta exatamente essa mudança. Corrigido
-    # para o valor que o restante do arquivo já pressupõe.
+    # NOTA (mantida do round anterior, precisão confirmada pelo revisor): o
+    # brief pede `assert r.model == "fake"` aqui. Isso é irrealizável sob
+    # qualquer implementação que combine com o resto do próprio brief —
+    # `avaliar` monta `EvalResult(model=model)` a partir do PARÂMETRO
+    # `model`, nunca de `cliente.model`; `r.model` jamais poderia ser "fake"
+    # com `model="claude-opus-5"` passado explicitamente. O literal "fake" é
+    # resquício de uma versão anterior de `FakeLLMClient`, cujo modelo padrão
+    # foi trocado para um nome real — ver o comentário em
+    # `orchestrator/agent/llm.py`. Corrigido para o valor que a própria
+    # `avaliar` sempre produz.
     assert r.model == "claude-opus-5"
     assert r.proposals_total > 0
 
 
-def test_precisao_fica_entre_zero_e_um():
+def test_precisao_pina_os_contadores_e_o_valor():
+    # Uma asserção de faixa (0 <= x <= 1) é satisfeita por qualquer
+    # implementação, inclusive uma com numerador e denominador trocados. Com os
+    # três contadores brutos E o valor resultante fixos, trocar a fórmula
+    # quebra o teste.
+    #
+    # Os números abaixo são MEDIDOS nesta semente, não escolhidos: rode
+    # `avaliar` e copie o que sair. Se o benchmark mudar de forma, este teste
+    # falha — e esse é exatamente o momento em que alguém deveria olhar para
+    # ele.
     r = avaliar(model="claude-opus-5", seed=1, n=40, taxa_divergencia=0.15,
                 client_factory=_fabrica_falsa("claude-opus-5"))
 
-    assert 0.0 <= r.precision <= 1.0
+    arriscadas = r.proposals_total - r.proposals_abstained
+    assert r.proposals_total == PRECISAO_ESPERADA["total"]
+    assert r.proposals_abstained == PRECISAO_ESPERADA["abstidas"]
+    assert r.proposals_correct == PRECISAO_ESPERADA["corretas"]
+    assert r.precision == PRECISAO_ESPERADA["corretas"] / arriscadas
+
+
+def test_fabrica_que_devolve_outro_modelo_e_rejeitada():
+    # Pedir um modelo e medir outro produziria um relatório precificado numa
+    # tabela e rotulado como outra.
+    with pytest.raises(ValueError):
+        avaliar(model="claude-opus-5", seed=1, n=40, taxa_divergencia=0.15,
+                client_factory=_fabrica_falsa("claude-haiku-4-5"))
 
 
 def test_custo_por_divergencia_e_inteiro_em_microcents():

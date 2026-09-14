@@ -77,6 +77,16 @@ def avaliar(
 ) -> EvalResult:
     dataset = build_benchmark(seed=seed, n=n, taxa_divergencia=taxa_divergencia)
     cliente = (client_factory or _fabrica_real(model))()
+
+    # O rótulo do resultado vem do modelo PEDIDO; o preço vem do modelo que o
+    # cliente REPORTA. Se divergirem, o relatório sai precificado numa tabela e
+    # rotulado como outra — corrupção silenciosa que derrota exatamente o
+    # propósito desta avaliação, que é transformar escolha de modelo em medição.
+    if cliente.model != model:
+        raise ValueError(
+            f"a fábrica devolveu um cliente de {cliente.model!r} quando "
+            f"{model!r} foi pedido; o custo sairia precificado errado"
+        )
     investigador = Investigator(
         client=cliente, context=ToolContext(bank=dataset.bank, ledger=dataset.ledger)
     )
