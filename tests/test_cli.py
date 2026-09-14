@@ -32,12 +32,18 @@ def test_camadas_nao_erram_e_taxa_e_estavel_entre_sementes():
     # entre n=300 e n=500 sem uma única ocorrência. Este é o sinal que importa:
     # casar errado é pior que não casar.
     #
-    # DISTRIBUIÇÃO (piso frouxo, sobre a média): a taxa determinística medida
-    # foi 87,2% de média com desvio de 2,7% a n=300, variando de 83,0% a 92,3%.
-    # O piso de 80% fica abaixo da média com folga para a dispersão observada,
-    # de modo a pegar regressão real sem oscilar. Fixar o piso em 85% faria o
-    # teste falhar em 3 de 12 sementes — o alvo do spec era estimativa, e a
-    # medição diz que ele é aproximadamente o percentil 25, não um piso.
+    # DISTRIBUIÇÃO (piso sobre o MÍNIMO, não sobre a média): a taxa medida a
+    # n=300 nas sementes 1-5 é 86,8 / 83,0 / 85,3 / 89,7 / 90,1, e em 12
+    # sementes vai de 83,0% a 92,3% com média 87,2%.
+    #
+    # A asserção é sobre o mínimo de propósito. O que um teste de regressão
+    # precisa pegar é ALGUMA semente colapsar, e a média esconde exatamente
+    # esse caso: uma semente caindo de 85% para 40% mal move a média de cinco.
+    # Um piso sobre a média também não falsifica — com 0,85 sobre a média este
+    # teste continuaria passando, o que o tornaria decorativo.
+    #
+    # Piso em 78%, cinco pontos abaixo do mínimo medido de 83,0%: folga para a
+    # dispersão observada sem virar teste instável.
     taxas = []
     for semente in range(1, 6):
         ds = build_benchmark(seed=semente, n=300, taxa_divergencia=0.15)
@@ -47,8 +53,12 @@ def test_camadas_nao_erram_e_taxa_e_estavel_entre_sementes():
         assert m.false_negatives == 0, f"semente {semente}: {m.render()}"
         taxas.append(m.deterministic_rate)
 
+    pior = min(taxas)
     media = sum(taxas) / len(taxas)
-    assert media >= 0.80, f"média {media:.1%} em {len(taxas)} sementes: {taxas}"
+    assert pior >= 0.78, (
+        f"pior semente {pior:.1%}, média {media:.1%} em {len(taxas)} sementes: "
+        f"{[f'{t:.1%}' for t in taxas]}"
+    )
 
 
 def test_main_roda_e_retorna_zero(capsys):
