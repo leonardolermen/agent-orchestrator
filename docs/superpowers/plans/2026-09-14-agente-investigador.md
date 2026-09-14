@@ -155,6 +155,35 @@ def test_abstencao_e_proposta_valida():
     assert p.acao_sugerida == "investigar_manual"
 
 
+def test_confianca_vinda_como_string_e_coagida_ao_enum():
+    # O plano 3 vai desserializar propostas; sem coerção, uma string crua
+    # contornaria o guard de evidência e toda verificação por identidade.
+    p = Proposal(
+        divergence_id="d1",
+        tipo="RETENCAO_IMPOSTO",
+        explicacao="x",
+        evidencia=["l1"],
+        confianca="ALTA",
+        acao_sugerida="conciliar",
+        cost=Cost.zero(),
+    )
+    assert p.confianca is Confidence.ALTA
+    assert p.tipo is DivergenceType.RETENCAO_IMPOSTO
+
+
+def test_confianca_alta_como_string_tambem_exige_evidencia():
+    with pytest.raises(ValueError):
+        Proposal(
+            divergence_id="d1",
+            tipo="RETENCAO_IMPOSTO",
+            explicacao="x",
+            evidencia=[],
+            confianca="ALTA",
+            acao_sugerida="conciliar",
+            cost=Cost.zero(),
+        )
+
+
 def test_proposta_com_confianca_alta_exige_evidencia():
     # Afirmar com confiança e sem evidência é exatamente o que destrói a
     # credibilidade do produto.
@@ -299,6 +328,14 @@ class Proposal:
     trace: list[TraceEvent] = field(default_factory=list)
 
     def __post_init__(self) -> None:
+        # Coage os dois enums antes de qualquer verificação. O projeto compara
+        # por identidade em toda parte (`p.tipo is DivergenceType.X`), e uma
+        # string crua vinda de JSON desserializado passaria batido por todas
+        # elas — inclusive pelo guard de evidência logo abaixo. Coagir uma vez
+        # aqui torna Proposal seguro de construir a partir de dado externo.
+        object.__setattr__(self, "tipo", DivergenceType(self.tipo))
+        object.__setattr__(self, "confianca", Confidence(self.confianca))
+
         # Confiança alta sem evidência é a combinação que destrói a
         # credibilidade do produto mais rápido que qualquer erro.
         if self.confianca is Confidence.ALTA and not self.evidencia:
@@ -337,7 +374,7 @@ class InvestigationOutput:
 - [ ] **Step 5: Rodar e confirmar que passa**
 
 Run: `.venv/Scripts/pytest tests/agent/test_proposal.py -v`
-Expected: 10 passed
+Expected: 13 passed
 
 - [ ] **Step 6: Commit**
 
