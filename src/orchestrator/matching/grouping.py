@@ -1,0 +1,90 @@
+"""Camada L3: um lançamento bancário cobrindo N contábeis do mesmo fornecedor.
+
+A busca por subconjuntos é exponencial, então é limitada por max_group_size e
+por janela de data. Isso é deliberado: a camada determinística deve ser barata.
+O que ela não alcançar é trabalho do agente, não motivo para relaxar o limite.
+"""
+
+from dataclasses import dataclass, field
+from itertools import combinations
+
+from orchestrator.dates import business_days_between
+from orchestrator.models import BankEntry, LedgerEntry, MatchResult
+
+
+@dataclass
+class GroupingMatcher:
+    max_group_size: int = 4
+    max_business_days: int = 3
+    layer: str = field(default="L3", init=False)
+
+    def __post_init__(self) -> None:
+        # Tamanho menor que 2 esvazia o range de combinações e a camada nunca
+        # agrupa nada, sem erro e sem aviso.
+        if self.max_group_size < 2:
+            raise ValueError(
+                f"agrupamento exige tamanho mínimo 2: {self.max_group_size}"
+            )
+        if self.max_business_days < 0:
+            raise ValueError(
+                f"max_business_days não pode ser negativo: {self.max_business_days}"
+            )
+
+    def match(self, bank: list[BankEntry], ledger: list[LedgerEntry]) -> list[MatchResult]:
+        por_fornecedor: dict[str, list[LedgerEntry]] = {}
+        for le in ledger:
+            if le.cash_date is not None:
+                por_fornecedor.setdefault(le.supplier, []).append(le)
+
+        resultados: list[MatchResult] = []
+        usados: set[str] = set()
+
+        for be in bank:
+            if be.counterparty is None:
+                continue
+
+            candidatos = [
+                le
+                for le in por_fornecedor.get(be.counterparty, [])
+                if le.id not in usados
+                and le.cash_date is not None
+                and business_days_between(be.date, le.cash_date) <= self.max_business_days
+            ]
+            if len(candidatos) < 2:
+                continue
+
+            alvo = abs(be.amount)
+            grupo = self._encontrar_grupo(candidatos, alvo)
+            if grupo is None:
+                continue
+
+            usados.update(le.id for le in grupo)
+            resultados.append(
+                MatchResult(
+                    bank_ids=frozenset({be.id}),
+                    ledger_ids=frozenset(le.id for le in grupo),
+                    layer=self.layer,
+                    rule=(
+                        f"agrupamento: soma de {len(grupo)} líquidos do mesmo "
+                        f"fornecedor iguala o lançamento bancário"
+                    ),
+                    evidence={
+                        "fornecedor": be.counterparty,
+                        "quantidade": len(grupo),
+                        "soma": alvo,
+                        "documentos": sorted(le.document or le.id for le in grupo),
+                    },
+                )
+            )
+
+        return resultados
+
+    def _encontrar_grupo(
+        self, candidatos: list[LedgerEntry], alvo: int
+    ) -> tuple[LedgerEntry, ...] | None:
+        limite = min(self.max_group_size, len(candidatos))
+        for tamanho in range(2, limite + 1):
+            for combinacao in combinations(candidatos, tamanho):
+                if sum(le.net_amount for le in combinacao) == alvo:
+                    return combinacao
+        return None
