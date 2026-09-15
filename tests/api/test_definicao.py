@@ -48,7 +48,14 @@ def test_json_da_definicao_bate_com_a_definicao_real():
     assert corpo["id"] == esperado.id
     assert [s["name"] for s in corpo["stages"]] == [s.name for s in esperado.stages]
     for stage_body, stage in zip(corpo["stages"], esperado.stages, strict=True):
-        assert [r["name"] for r in stage_body["cascade"]] == [r.name for r in stage.ordered()]
+        # Comparação por registro completo, não só por nome: `name` sozinho
+        # não pegaria um `cost_class` (ou `summary`) hardcodado no schema, e
+        # `cost_class` é justamente o campo do qual a ordenação da cascata
+        # depende para ser confiável na tela.
+        descricoes = [r.describe() for r in stage.ordered()]
+        assert [(r["name"], r["cost_class"], r["summary"]) for r in stage_body["cascade"]] == [
+            (d.name, d.cost_class.name, d.summary) for d in descricoes
+        ]
 
 
 def test_stage_json_ordena_pela_ordem_de_execucao_nao_pela_de_declaracao():
@@ -73,6 +80,11 @@ def test_stage_json_ordena_pela_ordem_de_execucao_nao_pela_de_declaracao():
         "regra-declarada-depois",
         "agente-declarado-primeiro",
     ]
+    # A ordenação só é digna de confiança na tela se o `cost_class` de cada
+    # posição também vier correto — do contrário a sequência de nomes acima
+    # poderia estar certa por acaso enquanto o campo que a cascata inteira
+    # existe para ordenar estivesse hardcodado ou trocado.
+    assert [r.cost_class for r in corpo.cascade] == ["REGRA", "AGENTE"]
 
 
 def test_workflow_inexistente_da_404():
