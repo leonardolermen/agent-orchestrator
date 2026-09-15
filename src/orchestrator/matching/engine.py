@@ -28,7 +28,10 @@ class ReconcileResult:
     matches: list[MatchResult]
     divergences: list[Divergence]
     proposals: list[Proposal] = field(default_factory=list)
-    agent_cost: Cost = field(default_factory=Cost.zero)
+    # Custo por resolver, não do sistema. Um resolver que rodou e não custou
+    # nada aparece com Cost.zero(); um que não rodou não aparece. A diferença
+    # importa na tela: "de graça" e "não rodou" são coisas diferentes.
+    cost_by_resolver: dict[str, Cost] = field(default_factory=dict)
 
 
 def default_resolvers() -> list[Resolver]:
@@ -49,7 +52,7 @@ def reconcile(
     work = WorkSet(bank=list(bank), ledger=list(ledger))
     todos: list[MatchResult] = []
     propostas: list[Proposal] = []
-    custo_total = Cost.zero()
+    custos: dict[str, Cost] = {}
 
     # A ordenação é POR STAGE, não global: um stage posterior não pode ter
     # seus resolvers embaralhados com os de um anterior. Com um stage só — o
@@ -59,11 +62,11 @@ def reconcile(
             saida = resolver.resolve(work)
             todos.extend(saida.matches)
             propostas.extend(saida.proposals)
-            # `saida.cost` é o único jeito de o custo do agente chegar ao
-            # resultado agora que não há mais parâmetro `investigator`
-            # separado — descartá-lo aqui zeraria `agent_cost` mesmo com
-            # propostas não vazias.
-            custo_total = custo_total + saida.cost
+            # Uma entrada por resolver que RODOU, mesmo que o custo seja
+            # Cost.zero() — a ausência da chave é que sinaliza "não rodou".
+            # Chave, não soma: cada resolver aparece com o PRÓPRIO custo, e um
+            # selo na tela não teria como decompor um total do sistema.
+            custos[resolver.name] = saida.cost
             # Só `matches` encolhe o pool. `saida.proposals` não aparece
             # nesta expressão, e é essa ausência que torna a invariante
             # estrutural em vez de uma regra que alguém precisa lembrar.
@@ -73,5 +76,5 @@ def reconcile(
         matches=todos,
         divergences=work.as_divergences(),
         proposals=propostas,
-        agent_cost=custo_total,
+        cost_by_resolver=custos,
     )

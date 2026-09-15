@@ -9,6 +9,7 @@ gabarito — ver `proposals_correct` e `agent_cost_microcents`.
 from collections import Counter
 from dataclasses import dataclass
 
+from orchestrator.agent.proposal import Cost
 from orchestrator.matching.engine import ReconcileResult
 from orchestrator.money import format_brl
 from orchestrator.synth.dataset import Dataset
@@ -39,6 +40,7 @@ class Metrics:
     proposals_total: int
     proposals_correct: int
     proposals_abstained: int
+    cost_by_resolver_microcents: dict[str, int]
     agent_cost_microcents: int
 
     def render(self) -> str:
@@ -71,6 +73,9 @@ class Metrics:
         linhas.append("Resoluções por camada:")
         for camada, n in sorted(self.matches_by_layer.items()):
             linhas.append(f"  {camada:<24} {n}")
+        linhas.append("Custo por resolver:")
+        for nome, micro in sorted(self.cost_by_resolver_microcents.items()):
+            linhas.append(f"  {nome:<24} US$ {micro / 100_000_000:.6f}")
         if self.proposals_total:
             linhas.append("")
             linhas.append(f"Propostas do agente:           {self.proposals_total}")
@@ -90,11 +95,12 @@ def evaluate(
     ids_banco = {e.id for e in dataset.bank}
     ids_contabil = {e.id for e in dataset.ledger}
 
-    # `matchers` é um ponto de extensão anunciado (reconcile aceita qualquer
-    # lista de Matcher). Um matcher com bug — ou hostil — pode devolver ids
-    # que não existem no dataset; sem intersectar, esses ids fantasma inflam
-    # o numerador sem limite e a taxa passa de 1.0. A interseção com os ids
-    # reais do dataset é a garantia de domínio que o tipo por si só não dá.
+    # `definition` é um ponto de extensão anunciado (reconcile aceita
+    # qualquer WorkflowDefinition, com qualquer Resolver). Um resolver com bug
+    # — ou hostil — pode devolver ids que não existem no dataset; sem
+    # intersectar, esses ids fantasma inflam o numerador sem limite e a taxa
+    # passa de 1.0. A interseção com os ids reais do dataset é a garantia de
+    # domínio que o tipo por si só não dá.
     casados_banco = {i for m in result.matches for i in m.bank_ids} & ids_banco
     casados_todos = ({i for m in result.matches for i in m.bank_ids | m.ledger_ids}
                       & (ids_banco | ids_contabil))
@@ -155,6 +161,18 @@ def evaluate(
         if any(tipo_por_id.get(i) is p.tipo for i in ids_tocados):
             corretas += 1
 
+    # Zero custo não precisa de preço: um resolver que não gastou token
+    # nenhum converte para 0 microcents em qualquer modelo, e não é justo
+    # travar essa conversão porque `model` não está na tabela de preços — a
+    # cascata pode ser só de regras, sem agente algum, e nesse caso o
+    # chamador nunca deveria precisar de um `model` válido para ler "zero"
+    # por resolver. Um resolver que de fato gastou token exige preço de
+    # verdade, e `Cost.microcents` continua estourando `ValueError` para ele.
+    custos = {
+        nome: custo.microcents(model) if custo != Cost.zero() else 0
+        for nome, custo in result.cost_by_resolver.items()
+    }
+
     return Metrics(
         bank_total=bank_total,
         ledger_total=len(dataset.ledger),
@@ -173,7 +191,8 @@ def evaluate(
         proposals_total=len(result.proposals),
         proposals_correct=corretas,
         proposals_abstained=abstencoes,
-        agent_cost_microcents=result.agent_cost.microcents(model)
-        if result.proposals
-        else 0,
+        cost_by_resolver_microcents=custos,
+        # A soma, não um campo próprio: um número que discorda da soma das
+        # partes é a pior espécie de métrica.
+        agent_cost_microcents=sum(custos.values()),
     )

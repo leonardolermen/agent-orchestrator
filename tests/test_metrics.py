@@ -1,6 +1,7 @@
 from random import Random
 
 from orchestrator.agent.proposal import Confidence, Cost, InvestigationOutput, Proposal
+from orchestrator.cli import build_benchmark
 from orchestrator.matching.engine import default_resolvers, reconcile
 from orchestrator.metrics import evaluate
 from orchestrator.models import MatchResult
@@ -19,6 +20,33 @@ def _definicao(cascade: list[Resolver]) -> WorkflowDefinition:
     return WorkflowDefinition(
         id="teste", name="teste", stages=(Stage(name="teste", cascade=tuple(cascade)),)
     )
+
+
+class _ResolverInvestigadorFalso:
+    """Cobra um custo fixo por divergência recebida, sem investigar de
+    verdade — só para o custo por resolver aparecer não-zero na métrica."""
+
+    name = "investigador"
+    cost_class = CostClass.AGENTE
+
+    def resolve(self, work: WorkSet) -> ResolverOutput:
+        divergencias = work.as_divergences()
+        return ResolverOutput(
+            proposals=[Proposal.abstencao(d.id, "teste") for d in divergencias],
+            cost=Cost(input_tokens=100 * len(divergencias), calls=len(divergencias)),
+        )
+
+    def describe(self) -> ResolverDescription:
+        return ResolverDescription(self.name, self.cost_class, "investigador falso")
+
+
+def _investigador_falso() -> Resolver:
+    return _ResolverInvestigadorFalso()
+
+
+def _com_agente(investigador: Resolver) -> WorkflowDefinition:
+    """A cascata padrão de regras com um investigador acoplado no fim."""
+    return _definicao([*default_resolvers(), investigador])
 
 
 def test_dataset_limpo_tem_taxa_total():
@@ -326,7 +354,9 @@ def test_custo_do_agente_aparece_em_microcents():
     )
     m = evaluate(ds, r, model="claude-opus-5")
 
-    assert m.agent_cost_microcents == r.agent_cost.microcents("claude-opus-5")
+    assert m.agent_cost_microcents == sum(
+        c.microcents("claude-opus-5") for c in r.cost_by_resolver.values()
+    )
 
 
 def test_render_mostra_camadas_e_propostas():
@@ -345,3 +375,29 @@ def test_render_mostra_camadas_e_propostas():
 
     assert "L1" in saida
     assert "Propostas" in saida
+
+
+def test_custo_e_reportado_por_resolver_nao_so_no_total():
+    # Um selo por resolver na tela precisa do custo DAQUELE resolver. Um
+    # número só do sistema inteiro não responde "a camada L2 vale o que custa".
+    dataset = build_benchmark(seed=1, n=100, taxa_divergencia=0.15)
+    investigador = _investigador_falso()
+    resultado = reconcile(dataset.bank, dataset.ledger, definition=_com_agente(investigador))
+
+    m = evaluate(dataset, resultado, model="claude-opus-5")
+
+    assert m.cost_by_resolver_microcents["L1"] == 0
+    assert m.cost_by_resolver_microcents["investigador"] > 0
+    assert m.agent_cost_microcents == sum(m.cost_by_resolver_microcents.values())
+
+
+def test_resolver_que_nao_custou_nada_aparece_com_zero_e_nao_some():
+    # Um resolver ausente do dicionário e um resolver de custo zero são
+    # coisas diferentes na tela: um é "não rodou", o outro é "de graça".
+    dataset = build_benchmark(seed=1, n=100, taxa_divergencia=0.15)
+    resultado = reconcile(dataset.bank, dataset.ledger)
+
+    m = evaluate(dataset, resultado)
+
+    assert set(m.cost_by_resolver_microcents) == {"L1", "L2", "L3"}
+    assert all(v == 0 for v in m.cost_by_resolver_microcents.values())

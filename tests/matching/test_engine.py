@@ -136,7 +136,7 @@ def test_sem_investigador_nao_ha_propostas():
     r = reconcile(ds.bank, ds.ledger)
 
     assert r.proposals == []
-    assert r.agent_cost == Cost.zero()
+    assert all(custo == Cost.zero() for custo in r.cost_by_resolver.values())
 
 
 def test_investigador_recebe_apenas_o_que_sobrou():
@@ -176,7 +176,7 @@ def test_custo_do_agente_e_agregado_no_resultado():
         ds.bank, ds.ledger, definition=_definicao([*default_resolvers(), _InvestigadorFalso()])
     )
 
-    assert r.agent_cost.calls == len(r.divergences)
+    assert r.cost_by_resolver["falso"].calls == len(r.divergences)
 
 
 def test_custo_de_dois_resolvers_na_cascata_e_somado_nao_sobrescrito_no_agent_cost():
@@ -189,8 +189,10 @@ def test_custo_de_dois_resolvers_na_cascata_e_somado_nao_sobrescrito_no_agent_co
     # implementações.
     #
     # Aqui são DOIS resolvers, os dois com custo não-zero e DISTINTO nos três
-    # campos (input_tokens, output_tokens, calls). Só a soma de verdade bate
-    # com o valor esperado — overwrite faria o último resolver da cascata
+    # campos (input_tokens, output_tokens, calls). Cada um precisa aparecer em
+    # `cost_by_resolver` com o PRÓPRIO custo, sem se misturar com o do outro; e
+    # a soma dos dois (o que a tela usaria como total do sistema) só bate com o
+    # valor esperado se for soma de verdade — overwrite faria um dos dois
     # "vencer" sozinho — e um bug parcial em `Cost.__add__` (um campo que
     # deixasse de ser somado) também apareceria, porque os três campos têm
     # valores diferentes entre A e B.
@@ -220,9 +222,16 @@ def test_custo_de_dois_resolvers_na_cascata_e_somado_nao_sobrescrito_no_agent_co
         definition=_definicao([_AgenteFalsoA(), _AgenteFalsoB()]),
     )
 
-    assert r.agent_cost.input_tokens == 321 + 100
-    assert r.agent_cost.output_tokens == 64 + 7
-    assert r.agent_cost.calls == 6 + 2
+    assert r.cost_by_resolver["agente_falso_a"] == Cost(
+        input_tokens=321, output_tokens=64, calls=6
+    )
+    assert r.cost_by_resolver["agente_falso_b"] == Cost(
+        input_tokens=100, output_tokens=7, calls=2
+    )
+    soma = sum(r.cost_by_resolver.values(), Cost.zero())
+    assert soma.input_tokens == 321 + 100
+    assert soma.output_tokens == 64 + 7
+    assert soma.calls == 6 + 2
 
 
 def test_agente_na_cascata_recebe_as_mesmas_divergencias_que_recebia_por_parametro():
