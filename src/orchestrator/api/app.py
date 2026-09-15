@@ -9,8 +9,9 @@ import inspect
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
 
 from orchestrator.api.schemas import (
@@ -31,7 +32,7 @@ from orchestrator.metrics import evaluate
 from orchestrator.review.decision import Decision, Veredito, ids_de_conciliar_com
 from orchestrator.review.fila import Fila, caminho_da_fila, dataset_id
 from orchestrator.taxonomy import DivergenceType
-from orchestrator.workflow.definition import default_definition
+from orchestrator.workflow.definition import WorkflowDefinition, default_definition
 
 app = FastAPI(title="Agent Orchestrator — canvas")
 
@@ -43,7 +44,13 @@ def obter_workflow(workflow_id: str) -> WorkflowJSON:
     fabrica = _WORKFLOWS.get(workflow_id)
     if fabrica is None:
         raise HTTPException(status_code=404, detail=f"workflow desconhecido: {workflow_id}")
-    return workflow_json(fabrica())
+    # Mesma construção de `_executar_memoizado`, nunca uma segunda via direto
+    # por `fabrica()`: `definition.py` declara que não existe "definição
+    # servida" separada da "definição executada", e duas chamadas para o
+    # mesmo objeto são exatamente o jeito de esse invariante parar de ser
+    # estrutural. A fila vazia é inofensiva aqui — esta rota só descreve a
+    # FORMA da cascata, que não muda com o conteúdo da fila.
+    return workflow_json(_construir_definicao(fabrica, Fila.vazia()))
 
 
 @app.post("/api/workflows/{workflow_id}/runs", response_model=RunJSON)
@@ -57,16 +64,30 @@ def executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
     return _executar_memoizado(workflow_id, pedido.seed, pedido.n, pedido.taxa_divergencia)
 
 
-def _construir_definicao(fabrica, fila: Fila):
+def _construir_definicao(fabrica, fila: Fila) -> WorkflowDefinition:
     """Repassa a fila só para fábricas que a declaram no próprio parâmetro.
 
     `_WORKFLOWS["conciliacao"]` é `default_definition(fila=...)`, que lê a
     fila para aplicar decisões humanas. Testes registram fábricas de zero
     argumentos direto em `_WORKFLOWS` (ver `test_execucao.py`); chamar essas
     com `fila` estouraria `TypeError` sem esta checagem de assinatura.
+
+    O nome `fila` é o único contrato entre este módulo e `default_definition`
+    — não há import de tipo nem checagem estrutural que os amarre. Uma
+    fábrica cuja assinatura não seja "aceita `fila`" nem "não aceita nada" é
+    um caso não previsto: levanta em vez de cair silenciosamente para
+    `fabrica()`, que aplicaria o argumento errado a um parâmetro qualquer ou
+    simplesmente ignoraria a fila sem avisar ninguém.
     """
     parametros = inspect.signature(fabrica).parameters
-    return fabrica(fila) if "fila" in parametros else fabrica()
+    if "fila" in parametros:
+        return fabrica(fila)
+    if not parametros:
+        return fabrica()
+    raise TypeError(
+        f"fábrica de workflow com assinatura não reconhecida: esperado um "
+        f"parâmetro `fila` ou nenhum parâmetro, recebido {list(parametros)}"
+    )
 
 
 @lru_cache(maxsize=64)
@@ -207,10 +228,18 @@ def _item(proposta, decisao, por_id) -> ItemFilaJSON:
 @app.get("/api/fila/{workflow_id}", response_model=FilaJSON)
 def ler_fila(
     workflow_id: str,
-    seed: int = 1,
-    n: int = 300,
-    taxa_divergencia: float = 0.15,
-    estado: str = "pendente",
+    # Mesmos limites de `RunRequest` (schemas.py), pelo mesmo motivo: sem
+    # eles, `build_benchmark` recebe um valor fora de faixa e levanta
+    # `ValueError`, que o FastAPI transforma em 500 — em vez do 422 que um
+    # parâmetro de query inválido deveria produzir.
+    seed: int = Query(1, ge=0),
+    n: int = Query(300, ge=1, le=5000),
+    taxa_divergencia: float = Query(0.15, ge=0.0, le=1.0),
+    # `Literal`, não `str`: um valor que não seja exatamente "pendente" fazia
+    # a rota tratar QUALQUER outra coisa — inclusive um typo como
+    # "pendentes" — como "decidida", devolvendo os itens já resolvidos sem
+    # aviso nenhum.
+    estado: Literal["pendente", "decidida"] = "pendente",
 ) -> FilaJSON:
     if workflow_id not in _WORKFLOWS:
         raise HTTPException(status_code=404, detail=f"workflow desconhecido: {workflow_id}")
@@ -237,9 +266,9 @@ def decidir(
     workflow_id: str,
     divergence_id: str,
     pedido: DecisaoRequest,
-    seed: int = 1,
-    n: int = 300,
-    taxa_divergencia: float = 0.15,
+    seed: int = Query(1, ge=0),
+    n: int = Query(300, ge=1, le=5000),
+    taxa_divergencia: float = Query(0.15, ge=0.0, le=1.0),
 ) -> ItemFilaJSON:
     if workflow_id not in _WORKFLOWS:
         raise HTTPException(status_code=404, detail=f"workflow desconhecido: {workflow_id}")
@@ -261,18 +290,29 @@ def decidir(
                    f"agente está fora do escopo desta fatia",
         )
 
+    # Construído ANTES de qualquer escrita, de propósito: `seed`/`n`/
+    # `taxa_divergencia` já são validados pelos limites de `Query` acima, mas
+    # se algo mesmo assim levantasse aqui, ele precisa levantar antes de
+    # `gravar_decisao` — nunca depois. Uma exceção depois da escrita chega ao
+    # cliente como falha, e a escrita já é durável (append-only); um retry
+    # razoável do cliente grava uma SEGUNDA decisão para o mesmo clique.
+    # `por_id` também é reusado no fim da função, então só monta uma vez.
+    ds = build_benchmark(seed=seed, n=n, taxa_divergencia=taxa_divergencia)
+    por_id = {e.id: ("banco", e) for e in ds.bank}
+    por_id.update({e.id: ("contabil", e) for e in ds.ledger})
+
     if pedido.veredito is Veredito.ACEITAR:
         tipo = proposta.tipo
         ids = ids_de_conciliar_com(proposta.acao_sugerida)
         # `acao_sugerida` só é validada, antes de chegar aqui, por
         # `startswith` (ver `investigator.py`) — um prefixo correto com forma
-        # quebrada, como
-        # `"conciliar_com:l1"` (faltam os parênteses), passa por aquela
-        # checagem e chega até aqui. Aceitar isso em silêncio gravaria uma
-        # decisão "aceita" que concilia ZERO lançamentos: o item some da tela
-        # de pendentes, mas nenhum vínculo é criado, e ninguém percebe. Uma
-        # ação que LEGITIMAMENTE concilia nada (`investigar_manual`,
-        # `ajustar(...)`) não começa com `conciliar_com` e não cai aqui.
+        # quebrada, como `"conciliar_com:l1"` (faltam os parênteses), passa
+        # por aquela checagem e chega até aqui. Aceitar isso em silêncio
+        # gravaria uma decisão "aceita" que concilia ZERO lançamentos: o item
+        # some da tela de pendentes, mas nenhum vínculo é criado, e ninguém
+        # percebe. Uma ação que LEGITIMAMENTE concilia nada
+        # (`investigar_manual`, `ajustar(...)`) não começa com
+        # `conciliar_com` e não cai aqui.
         if proposta.acao_sugerida.startswith("conciliar_com") and not ids:
             raise HTTPException(
                 status_code=422,
@@ -285,6 +325,20 @@ def decidir(
     elif pedido.veredito is Veredito.CORRIGIR:
         tipo = pedido.tipo
         ids = frozenset(pedido.conciliar_com or [])
+        # Mesma falha que o guard de `aceitar` acima, só que do lado humano:
+        # um id que não existe em NENHUM dos dois lados do dataset chega
+        # intacto até `revisor.py`, que marca a decisão inteira "obsoleta" e
+        # a descarta — sem match, sem erro. O reviewer vê 200, o item some de
+        # `pendentes()`, `divergiu` acusa divergência do agente, o log de
+        # auditoria registra uma "correção aprovada", e nenhum vínculo é
+        # criado. Uma lista VAZIA continua legítima: corrigir só o tipo, sem
+        # conciliar nada, é a mesma abstenção que `investigar_manual` já é.
+        desconhecidos = sorted(ids - por_id.keys())
+        if desconhecidos:
+            raise HTTPException(
+                status_code=422,
+                detail=f"ids inexistentes neste dataset: {desconhecidos}",
+            )
     else:
         tipo, ids = None, frozenset()
 
@@ -301,9 +355,6 @@ def decidir(
     # concluiria que a aprovação não funcionou.
     _executar_memoizado.cache_clear()
 
-    ds = build_benchmark(seed=seed, n=n, taxa_divergencia=taxa_divergencia)
-    por_id = {e.id: ("banco", e) for e in ds.bank}
-    por_id.update({e.id: ("contabil", e) for e in ds.ledger})
     return _item(proposta, fila.decisao(divergence_id), por_id)
 
 

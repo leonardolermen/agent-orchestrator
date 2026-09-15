@@ -1,3 +1,5 @@
+import inspect
+
 from orchestrator.workflow.cost_class import CostClass
 from orchestrator.workflow.definition import default_definition
 
@@ -41,6 +43,17 @@ def test_definicao_padrao_sem_fila_nao_resolve_nada_pelo_revisor():
 
     assert r.matches_by_class.get(C.HUMANO, []) == []
     assert r.matches_by_resolver["revisor"] == 0
+
+
+def test_a_fabrica_padrao_declara_o_parametro_fila():
+    # `orchestrator.api.app._construir_definicao` decide se repassa a fila
+    # olhando o NOME literal `fila` na assinatura desta função — não há
+    # import nem type check que amarre os dois lados. Renomear este parâmetro
+    # faz a suíte inteira continuar verde (nenhum teste chama
+    # `default_definition` por nome de parâmetro) enquanto `/runs` volta a
+    # servir sempre uma fila vazia, silenciosamente — o mesmo defeito que a
+    # Task 8 corrigiu. Este teste existe só para travar esse nome.
+    assert "fila" in inspect.signature(default_definition).parameters
 
 
 def test_stage_expoe_a_cascata_ordenada_por_classe_de_custo():
