@@ -401,3 +401,106 @@ def test_resolver_que_nao_custou_nada_aparece_com_zero_e_nao_some():
 
     assert set(m.cost_by_resolver_microcents) == {"L1", "L2", "L3"}
     assert all(v == 0 for v in m.cost_by_resolver_microcents.values())
+
+
+class _ResolverHumanoFalso:
+    """Casa o primeiro bancário com o primeiro contábil, como um humano faria."""
+
+    name = "revisor"
+    cost_class = CostClass.HUMANO
+
+    def resolve(self, work):
+        if not work.bank or not work.ledger:
+            return ResolverOutput()
+        return ResolverOutput(
+            matches=[
+                MatchResult(
+                    bank_ids=frozenset({work.bank[0].id}),
+                    ledger_ids=frozenset({work.ledger[0].id}),
+                    layer="revisor",
+                    rule="decisão humana",
+                )
+            ]
+        )
+
+    def describe(self):
+        return ResolverDescription(self.name, self.cost_class, "humano falso")
+
+
+def _com_humano():
+    from orchestrator.matching.engine import default_resolvers
+    from orchestrator.workflow.definition import Stage, WorkflowDefinition
+
+    return WorkflowDefinition(
+        id="com-humano",
+        name="com humano",
+        stages=(
+            Stage("conciliar", (*default_resolvers(), _ResolverHumanoFalso())),
+        ),
+    )
+
+
+def test_match_humano_nao_conta_como_falso_positivo():
+    """O defeito que esta tarefa corrige.
+
+    A regra de falso positivo conta QUALQUER toque num caso reservado ao
+    agente. Escrita quando todo match era determinístico, ela estava certa.
+    Com um humano na cascata ela se volta contra o produto: um controller
+    aprovando o que o agente propôs seria registrado como erro.
+    """
+    dataset = build_benchmark(seed=1, n=300, taxa_divergencia=0.15)
+    so_regras = evaluate(dataset, reconcile(dataset.bank, dataset.ledger))
+    com_humano = evaluate(
+        dataset, reconcile(dataset.bank, dataset.ledger, definition=_com_humano())
+    )
+
+    assert com_humano.false_positives == so_regras.false_positives
+
+
+def test_match_humano_nao_move_a_taxa_deterministica():
+    # "Determinística" está no nome. Somar trabalho humano ali faria o número
+    # que vende o produto — quanto as REGRAS resolvem — subir sem que nenhuma
+    # regra tivesse melhorado.
+    dataset = build_benchmark(seed=1, n=300, taxa_divergencia=0.15)
+    so_regras = evaluate(dataset, reconcile(dataset.bank, dataset.ledger))
+    com_humano = evaluate(
+        dataset, reconcile(dataset.bank, dataset.ledger, definition=_com_humano())
+    )
+
+    assert com_humano.deterministic_rate == so_regras.deterministic_rate
+    assert com_humano.bank_matched == so_regras.bank_matched
+
+
+def test_match_humano_sobe_a_taxa_de_resolucao_total():
+    dataset = build_benchmark(seed=1, n=300, taxa_divergencia=0.15)
+    so_regras = evaluate(dataset, reconcile(dataset.bank, dataset.ledger))
+    com_humano = evaluate(
+        dataset, reconcile(dataset.bank, dataset.ledger, definition=_com_humano())
+    )
+
+    assert com_humano.bank_matched_total == so_regras.bank_matched_total + 1
+    assert com_humano.resolution_rate > so_regras.resolution_rate
+
+
+def test_dinheiro_conciliado_conta_o_trabalho_humano():
+    # `divergent_amount` responde "quanto ainda está em aberto". Dinheiro que
+    # um humano conciliou não está em aberto.
+    dataset = build_benchmark(seed=1, n=300, taxa_divergencia=0.15)
+    so_regras = evaluate(dataset, reconcile(dataset.bank, dataset.ledger))
+    com_humano = evaluate(
+        dataset, reconcile(dataset.bank, dataset.ledger, definition=_com_humano())
+    )
+
+    assert com_humano.matched_amount > so_regras.matched_amount
+    assert com_humano.divergent_amount < so_regras.divergent_amount
+
+
+def test_so_regras_o_total_e_o_deterministico_coincidem():
+    # Enquanto a cascata é só de regras, os dois números são o mesmo — é isso
+    # que mantém o golden intacto.
+    dataset = build_benchmark(seed=1, n=300, taxa_divergencia=0.15)
+
+    m = evaluate(dataset, reconcile(dataset.bank, dataset.ledger))
+
+    assert m.bank_matched_total == m.bank_matched
+    assert m.resolution_rate == m.deterministic_rate
