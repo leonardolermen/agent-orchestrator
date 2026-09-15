@@ -284,9 +284,9 @@ não um mock imaginado antes de existir front:
 
 ```
 ┌─ conciliar lançamentos ─────────────────────────────┐
-│  ① L1   REGRA    R$ 0      84,1% ●                  │
-│  ② L2   REGRA    R$ 0       0,0% ●                  │
-│  ③ L3   REGRA    R$ 0       2,6% ●                  │
+│  ① L1   REGRA    US$ 0     84,1% ●                  │
+│  ② L2   REGRA    US$ 0      0,0% ●                  │
+│  ③ L3   REGRA    US$ 0      2,6% ●                  │
 │  —  sem resolver configurado  LACUNA   13,2% ◌      │
 └─────────────────────────────────────────────────────┘
 ```

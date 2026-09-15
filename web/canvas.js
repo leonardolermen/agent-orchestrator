@@ -46,8 +46,9 @@ async function carregar() {
 
 function formatarCusto(medida) {
   if (!medida) return "não medido";
+  // Sempre USD: `microcents` nunca é reais, nem quando o valor é zero.
   return medida.microcents === 0
-    ? "R$ 0"
+    ? "US$ 0"
     : `US$ ${(medida.microcents / 100000000).toFixed(6)}`;
 }
 
