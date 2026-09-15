@@ -49,7 +49,10 @@ def test_workflow_gerado_tem_a_cascata_desenhavel(tmp_path):
 
     dados = cliente.get("/api/workflows/acme").json()
 
-    assert [r["name"] for r in dados["resolvers"]] == ["L1", "L2", "revisor"]
+    # `stages[0]["cascade"]` é o caminho que a API de fato expõe (`WorkflowJSON`,
+    # `schemas.py`) e que `web/canvas.js` de fato lê para desenhar a cascata —
+    # não existe um campo `resolvers` paralelo no nível raiz.
+    assert [r["name"] for r in dados["stages"][0]["cascade"]] == ["L1", "L2", "revisor"]
 
 
 def test_workflow_gerado_executa_e_fecha_a_lacuna(tmp_path):

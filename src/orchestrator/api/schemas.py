@@ -26,11 +26,6 @@ class WorkflowJSON(BaseModel):
     id: str
     name: str
     stages: list[StageJSON]
-    # Achatado de `stages` para que a tela desenhe a cascata sem reimplementar
-    # o achatamento: toda definição hoje (embutida ou vinda de receita) tem
-    # exatamente um stage, mas o campo não assume isso — é a concatenação de
-    # `cascade` de cada stage, na mesma ordem de execução.
-    resolvers: list[ResolverJSON]
 
 
 class WorkflowResumoJSON(BaseModel):
@@ -162,10 +157,8 @@ def stage_json(stage: Stage) -> StageJSON:
 
 
 def workflow_json(definicao: WorkflowDefinition) -> WorkflowJSON:
-    stages = [stage_json(s) for s in definicao.stages]
     return WorkflowJSON(
         id=definicao.id,
         name=definicao.name,
-        stages=stages,
-        resolvers=[r for s in stages for r in s.cascade],
+        stages=[stage_json(s) for s in definicao.stages],
     )
