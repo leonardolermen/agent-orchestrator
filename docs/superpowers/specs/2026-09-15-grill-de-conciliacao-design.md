@@ -406,8 +406,13 @@ chamadas** a `ClienteAusente.complete` — todas engolidas pelo `except Exceptio
 de `Investigator._uma`, que as converte em abstenções. Nenhum centavo é gasto,
 mas nada aparece.
 
-Consequência para o desenho: a tranca garante **não gastar**, não garante
-**avisar**. Quem torna o caso visível é o 409, e é por isso que as duas metades
+Uma ressalva à ressalva: o erro engolido **não some**. A mensagem do
+`RuntimeError` entra no `TraceEvent` e na explicação de cada proposta abstida,
+então quem abre o detalhe de uma execução consegue ver que a tranca disparou.
+O que falta é sinal no nível de cima — o status da resposta continua 200.
+
+Consequência para o desenho: a tranca garante **não gastar**, e avisa apenas
+quem for olhar o detalhe. Quem torna o caso visível é o 409, e é por isso que as duas metades
 existem — não como redundância, mas porque cada uma cobre o que a outra não
 cobre. É o mesmo `except Exception` amplo que, na fatia 2, tornou vazio um teste
 de dinheiro inteiro.
