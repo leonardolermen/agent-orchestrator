@@ -8,7 +8,7 @@ processo inteiro por causa de um item.
 
 import json
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from orchestrator.agent.llm import LLMClient, LLMResponse
 from orchestrator.agent.proposal import (
@@ -25,6 +25,13 @@ from orchestrator.taxonomy import DivergenceType
 from orchestrator.workflow.cost_class import CostClass
 from orchestrator.workflow.resolver import ResolverDescription, ResolverOutput
 from orchestrator.workflow.workset import WorkSet
+
+if TYPE_CHECKING:
+    # Só para o type checker: um import em tempo de execução aqui não seria
+    # circular hoje, mas manteria o pacote `agent` dependendo do pacote
+    # `review` só para uma anotação — o mesmo cuidado que `matching/engine.py`
+    # já toma com `WorkflowDefinition`.
+    from orchestrator.review.fila import Fila
 
 # I3: vocabulário fechado de ações. O plano 3 (fila de revisão humana) precisa
 # despachar por este campo — texto livre não dá para despachar.
@@ -115,6 +122,11 @@ class Investigator:
     # demais para um operador não perceber antes de acontecer de novo.
     budget_total_microcents: int = 400_000_000
 
+    # Idempotência: divergência que já tem proposta na fila não é
+    # reinvestigada. O agente roda antes do revisor em toda passagem, então
+    # sem isto a passagem 2 pagaria de novo por tudo.
+    fila: "Fila | None" = None
+
     name: str = field(default="investigador", init=False)
     cost_class: CostClass = field(default=CostClass.AGENTE, init=False)
 
@@ -161,6 +173,11 @@ class Investigator:
         return InvestigationOutput(proposals=propostas, cost=total)
 
     def _uma(self, divergencia: Divergence) -> Proposal:
+        if self.fila is not None:
+            guardada = self.fila.proposta(divergencia.id)
+            if guardada is not None:
+                return guardada
+
         entrada = descrever_divergencia(self.context, divergencia)
         mensagens: list[dict[str, Any]] = [{"role": "user", "content": entrada}]
         custo, tentativas_formato = Cost.zero(), 0

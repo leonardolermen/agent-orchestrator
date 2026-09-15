@@ -4,7 +4,7 @@ import pytest
 
 from orchestrator.agent.investigator import SYSTEM, Investigator
 from orchestrator.agent.llm import FakeLLMClient, LLMResponse, ToolCall
-from orchestrator.agent.proposal import _PRECOS, Confidence, Cost, TraceKind
+from orchestrator.agent.proposal import _PRECOS, Confidence, Cost, Proposal, TraceKind
 from orchestrator.agent.tools import TOOL_SCHEMAS, ToolContext
 from orchestrator.models import Divergence
 from orchestrator.synth.generator import build_dataset, generate_clean_pairs
@@ -588,3 +588,85 @@ def test_descrever_divergencia_e_funcao_de_modulo_reusavel():
     assert dados["divergencia_id"] == "d-1"
     assert [e["id"] for e in dados["lancamentos_bancarios"]] == [pares[0].bank.id]
     assert dados["lancamentos_contabeis"] == []
+
+
+# ---------------------------------------------------------------------------
+# Idempotência — a guarda contra reinvestigar o que já está na fila.
+# ---------------------------------------------------------------------------
+
+
+def test_divergencia_ja_proposta_nao_chama_o_modelo_de_novo():
+    """Idempotência do Tier 1, aplicada à chamada mais cara do sistema.
+
+    O agente é classe AGENTE e o revisor é HUMANO, então o agente roda ANTES
+    em toda passagem. Sem esta guarda, a passagem 2 reinvestigaria tudo o que
+    a passagem 1 já investigou — e pagaria de novo por respostas que já estão
+    na fila.
+    """
+    from orchestrator.review.fila import Fila
+    from orchestrator.workflow.workset import WorkSet
+
+    pares = generate_clean_pairs(seed=2, n=1)
+    work = WorkSet(bank=[pares[0].bank], ledger=[])
+    ja_proposta = work.as_divergences()[0]
+
+    fila = Fila.vazia()
+    fila.gravar_proposta(
+        Proposal(
+            divergence_id=ja_proposta.id,
+            tipo=DivergenceType.DEFASAGEM_TEMPORAL,
+            explicacao="da passagem anterior",
+            evidencia=["e"],
+            confianca=Confidence.MEDIA,
+            acao_sugerida="conciliar_com(l1)",
+        )
+    )
+
+    class _ClienteQueAcusa:
+        model = "claude-haiku-4-5"
+
+        def complete(self, system, messages, tools):
+            raise AssertionError("o agente reinvestigou o que já estava na fila")
+
+    saida = Investigator(
+        client=_ClienteQueAcusa(), context=CONTEXTO_DE_TESTE, fila=fila
+    ).resolve(work)
+
+    assert len(saida.proposals) == 1
+    assert saida.proposals[0].explicacao == "da passagem anterior"
+    assert saida.cost.calls == 0
+
+
+def test_divergencia_sem_proposta_na_fila_e_investigada_normalmente():
+    """A guarda precisa ser seletiva por id, não um interruptor de tudo-ou-nada.
+
+    Uma fila que cobre A mas não B: A vem da fila, B é investigado de
+    verdade. Um guard que só é exercitado quando a fila cobre 100% do lote
+    não testa o caso em que ele de fato precisa discriminar.
+    """
+    from orchestrator.review.fila import Fila
+
+    fila = Fila.vazia()
+    fila.gravar_proposta(
+        Proposal(
+            divergence_id="a",
+            tipo=DivergenceType.DEFASAGEM_TEMPORAL,
+            explicacao="da passagem anterior",
+            evidencia=["e"],
+            confianca=Confidence.MEDIA,
+            acao_sugerida="conciliar_com(l1)",
+        )
+    )
+
+    cliente = FakeLLMClient([RESPOSTA_VALIDA])
+    inv = Investigator(client=cliente, context=CONTEXTO_DE_TESTE, fila=fila)
+
+    out = inv.investigate([_div("a"), _div("b")])
+
+    assert len(out.proposals) == 2
+    por_id = {p.divergence_id: p for p in out.proposals}
+    assert por_id["a"].explicacao == "da passagem anterior"
+    assert por_id["b"].tipo is DivergenceType.RETENCAO_IMPOSTO
+    # só "b" gerou chamada ao modelo
+    assert len(cliente.chamadas) == 1
+    assert out.cost.calls == 1
