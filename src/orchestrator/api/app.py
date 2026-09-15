@@ -170,6 +170,23 @@ def _executar_memoizado(workflow_id: str, seed: int, n: int, taxa: float) -> Run
     dataset = build_benchmark(seed=seed, n=n, taxa_divergencia=taxa)
     fila, _ = _abrir_fila(workflow_id, seed, n, taxa)
     definicao = _construir_definicao(_fabricas()[workflow_id], fila)
+
+    # A regra deste módulo — nenhum endpoint gasta dinheiro — aplicada a
+    # cascatas que a API não escreveu. `lru_cache` NÃO memoiza exceções, então
+    # levantar aqui dentro é seguro: a chave nunca recebe valor.
+    #
+    # Esta é a porta educada. A tranca é `ClienteAusente`, que `construir`
+    # injeta por default e que levanta se alguém chegar ao modelo por aqui.
+    classes = {r.cost_class for s in definicao.stages for r in s.cascade}
+    if CostClass.AGENTE in classes:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"o workflow {workflow_id!r} tem uma etapa paga e não pode ser "
+                f"executado pela web. rode pela CLI."
+            ),
+        )
+
     resultado = reconcile(dataset.bank, dataset.ledger, definition=definicao)
     m = evaluate(dataset, resultado)
 
