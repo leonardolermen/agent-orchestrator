@@ -455,6 +455,43 @@ def test_match_humano_nao_conta_como_falso_positivo():
     )
 
     assert com_humano.false_positives == so_regras.false_positives
+    # A mesma separação por classe vale para falso negativo: um match humano
+    # completando um caso parcialmente casado por regra mudaria esta contagem
+    # se a separação REGRA-only fosse removida — mesmo raciocínio do brief,
+    # agora com cobertura própria.
+    assert com_humano.false_negatives == so_regras.false_negatives
+
+
+def _so_humano():
+    """Cascata com SÓ o revisor humano — nenhum resolver REGRA na definição.
+
+    É o cenário que o Finding 1 da revisão descobriu: um stage só de revisão
+    humana, sem nenhuma regra, é a forma óbvia que a cascata assume assim que
+    o revisor humano for ligado antes de qualquer regra ou sem regra nenhuma.
+    `matches_by_class` nunca ganha a chave REGRA nesse caso — não porque uma
+    regra rodou e não casou nada, mas porque nenhuma rodou.
+    """
+    from orchestrator.workflow.definition import Stage, WorkflowDefinition
+
+    return WorkflowDefinition(
+        id="so-humano", name="só humano", stages=(Stage("revisar", (_ResolverHumanoFalso(),)),)
+    )
+
+
+def test_cascata_sem_regra_nenhuma_nao_finge_determinismo():
+    """O fallback de `de_regra` precisa ser `[]`, não `result.matches`.
+
+    Sem nenhum resolver REGRA na cascata, `matches_by_class` nunca cria a
+    chave REGRA. Cair para `result.matches` nesse caso contaria a aprovação
+    humana como determinística — o mesmo defeito desta tarefa, só que por uma
+    porta diferente da que os outros testes cobrem.
+    """
+    dataset = build_benchmark(seed=1, n=300, taxa_divergencia=0.15)
+
+    m = evaluate(dataset, reconcile(dataset.bank, dataset.ledger, definition=_so_humano()))
+
+    assert m.false_positives == 0
+    assert m.deterministic_rate == 0.0
 
 
 def test_match_humano_nao_move_a_taxa_deterministica():
@@ -493,6 +530,15 @@ def test_dinheiro_conciliado_conta_o_trabalho_humano():
 
     assert com_humano.matched_amount > so_regras.matched_amount
     assert com_humano.divergent_amount < so_regras.divergent_amount
+    # Direção sozinha passa para qualquer deslocamento não-nulo, incluindo um
+    # errado (contar o lado contábil, contar em dobro, errar por N). Os dois
+    # extratos bancários são o mesmo dataset, então a soma dos dois valores
+    # tem que ser a mesma nos dois cenários — dinheiro só muda de coluna,
+    # nunca de total.
+    assert (
+        com_humano.matched_amount + com_humano.divergent_amount
+        == so_regras.matched_amount + so_regras.divergent_amount
+    )
 
 
 def test_so_regras_o_total_e_o_deterministico_coincidem():

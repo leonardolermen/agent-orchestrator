@@ -74,8 +74,9 @@ class Metrics:
             f"Falsos positivos:              {self.false_positives}",
             f"Falsos negativos:              {self.false_negatives}",
             "",
-            f"Valor conciliado:              {format_brl(self.matched_amount)}",
-            f"Valor em divergência (lado bancário): {format_brl(self.divergent_amount)}",
+            f"Valor conciliado (todas as classes): {format_brl(self.matched_amount)}",
+            f"Valor em divergência (lado bancário, todas as classes): "
+            f"{format_brl(self.divergent_amount)}",
             "",
             "Gabarito por tipo:",
         ]
@@ -117,7 +118,15 @@ def evaluate(
     # positivo/negativo medem o CATÁLOGO DE REGRAS. Somar trabalho humano
     # aqui faria o número subir sem que nenhuma regra tivesse melhorado, e
     # transformaria uma aprovação correta em falso positivo.
-    de_regra = result.matches_by_class.get(CostClass.REGRA, result.matches)
+    #
+    # O default é `[]`, não `result.matches`. Uma cascata sem resolver REGRA
+    # nenhum — um stage só de revisão humana, por exemplo — legitimamente não
+    # tem match determinístico algum; cair para `result.matches` contaria
+    # trabalho humano como determinístico, exatamente o defeito que esta
+    # tarefa corrige. `matches_by_class` sempre tem a chave quando ALGUM
+    # resolver REGRA rodou (mesmo sem casar nada, a chave existe com lista
+    # vazia); ela só falta quando nenhum rodou, e aí `[]` é a resposta certa.
+    de_regra = result.matches_by_class.get(CostClass.REGRA, [])
     casados_banco = {i for m in de_regra for i in m.bank_ids} & ids_banco
     casados_todos = ({i for m in de_regra for i in m.bank_ids | m.ledger_ids}
                       & (ids_banco | ids_contabil))
