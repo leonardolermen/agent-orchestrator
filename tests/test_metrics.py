@@ -8,8 +8,17 @@ from orchestrator.money import format_brl
 from orchestrator.synth.generator import build_dataset, generate_clean_pairs
 from orchestrator.synth.injectors import DefasagemTemporal, PagamentoAgregado
 from orchestrator.workflow.cost_class import CostClass
-from orchestrator.workflow.resolver import ResolverDescription, ResolverOutput
+from orchestrator.workflow.definition import Stage, WorkflowDefinition
+from orchestrator.workflow.resolver import Resolver, ResolverDescription, ResolverOutput
 from orchestrator.workflow.workset import WorkSet
+
+
+def _definicao(cascade: list[Resolver]) -> WorkflowDefinition:
+    """Uma WorkflowDefinition de um stage só, para os testes que antes
+    passavam `resolvers=` direto para `reconcile`."""
+    return WorkflowDefinition(
+        id="teste", name="teste", stages=(Stage(name="teste", cascade=tuple(cascade)),)
+    )
 
 
 def test_dataset_limpo_tem_taxa_total():
@@ -40,7 +49,9 @@ def test_falso_positivo_quando_casa_o_que_deveria_divergir():
     inj = DefasagemTemporal().apply(Random(0), pares[0])
     ds = build_dataset(pares, injections=[inj])
 
-    r = reconcile(ds.bank, ds.ledger, resolvers=[ToleranceMatcher(max_business_days=999)])
+    r = reconcile(
+        ds.bank, ds.ledger, definition=_definicao([ToleranceMatcher(max_business_days=999)])
+    )
     m = evaluate(ds, r)
 
     assert m.false_positives == 1
@@ -77,7 +88,7 @@ def test_taxa_fica_entre_zero_e_um():
     pares = generate_clean_pairs(seed=9, n=2)
     ds = build_dataset(pares, injections=[])
 
-    m = evaluate(ds, reconcile(ds.bank, ds.ledger, resolvers=[ResolverHostil()]))
+    m = evaluate(ds, reconcile(ds.bank, ds.ledger, definition=_definicao([ResolverHostil()])))
 
     assert 0.0 <= m.deterministic_rate <= 1.0
 
@@ -109,7 +120,7 @@ def test_falso_negativo_quando_camada_nao_resolve_o_que_deveria():
     ds = build_dataset(pares, injections=[inj])
 
     # sem nenhuma camada, o agregado deixa de ser resolvido
-    m = evaluate(ds, reconcile(ds.bank, ds.ledger, resolvers=[]))
+    m = evaluate(ds, reconcile(ds.bank, ds.ledger, definition=_definicao([])))
 
     assert m.false_negatives == 1
 
@@ -174,7 +185,7 @@ def test_resolucao_parcial_de_agregado_conta_falso_negativo():
     inj = PagamentoAgregado().apply_many(Random(0), pares)
     ds = build_dataset(pares, injections=[inj])
 
-    m = evaluate(ds, reconcile(ds.bank, ds.ledger, resolvers=[ResolverParcial()]))
+    m = evaluate(ds, reconcile(ds.bank, ds.ledger, definition=_definicao([ResolverParcial()])))
 
     assert m.false_negatives == 1
 
@@ -262,7 +273,9 @@ def test_precisao_das_propostas_contra_o_gabarito():
     ds = build_dataset(pares, injections=[inj])
 
     r = reconcile(
-        ds.bank, ds.ledger, resolvers=[*default_resolvers(), _InvestigadorQueAcerta(ds.truth)]
+        ds.bank,
+        ds.ledger,
+        definition=_definicao([*default_resolvers(), _InvestigadorQueAcerta(ds.truth)]),
     )
     m = evaluate(ds, r)
 
@@ -291,7 +304,10 @@ def test_abstencao_nao_conta_como_acerto_nem_como_erro():
             return ResolverDescription(self.name, self.cost_class, "sempre abstém")
 
     m = evaluate(
-        ds, reconcile(ds.bank, ds.ledger, resolvers=[*default_resolvers(), _SempreAbstem()])
+        ds,
+        reconcile(
+            ds.bank, ds.ledger, definition=_definicao([*default_resolvers(), _SempreAbstem()])
+        ),
     )
 
     assert m.proposals_abstained == m.proposals_total
@@ -304,7 +320,9 @@ def test_custo_do_agente_aparece_em_microcents():
     ds = build_dataset(pares, injections=[inj])
 
     r = reconcile(
-        ds.bank, ds.ledger, resolvers=[*default_resolvers(), _InvestigadorQueAcerta(ds.truth)]
+        ds.bank,
+        ds.ledger,
+        definition=_definicao([*default_resolvers(), _InvestigadorQueAcerta(ds.truth)]),
     )
     m = evaluate(ds, r, model="claude-opus-5")
 
@@ -319,7 +337,9 @@ def test_render_mostra_camadas_e_propostas():
     saida = evaluate(
         ds,
         reconcile(
-            ds.bank, ds.ledger, resolvers=[*default_resolvers(), _InvestigadorQueAcerta(ds.truth)]
+            ds.bank,
+            ds.ledger,
+            definition=_definicao([*default_resolvers(), _InvestigadorQueAcerta(ds.truth)]),
         ),
     ).render()
 

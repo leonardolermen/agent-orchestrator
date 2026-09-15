@@ -18,6 +18,7 @@ from orchestrator.agent.tools import ToolContext
 from orchestrator.cli import build_benchmark
 from orchestrator.matching.engine import default_resolvers, reconcile
 from orchestrator.metrics import evaluate
+from orchestrator.workflow.definition import Stage, WorkflowDefinition
 
 MODELOS_PADRAO = ("claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5")
 
@@ -123,9 +124,17 @@ def avaliar(
         client=cliente, context=ToolContext(bank=dataset.bank, ledger=dataset.ledger)
     )
 
-    resultado = reconcile(
-        dataset.bank, dataset.ledger, resolvers=[*default_resolvers(), investigador]
+    definicao = WorkflowDefinition(
+        id="conciliacao-com-agente",
+        name="Conciliação bancária com investigador",
+        stages=(
+            Stage(
+                name="conciliar lançamentos",
+                cascade=(*default_resolvers(), investigador),
+            ),
+        ),
     )
+    resultado = reconcile(dataset.bank, dataset.ledger, definition=definicao)
     metricas = evaluate(dataset, resultado, model=cliente.model)
     falhas_api = sum(
         1

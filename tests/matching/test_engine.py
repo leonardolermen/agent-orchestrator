@@ -6,7 +6,8 @@ from orchestrator.matching.engine import default_resolvers, reconcile
 from orchestrator.synth.generator import build_dataset, generate_clean_pairs
 from orchestrator.synth.injectors import DefasagemTemporal, DevolucaoFundos
 from orchestrator.workflow.cost_class import CostClass
-from orchestrator.workflow.resolver import ResolverDescription, ResolverOutput
+from orchestrator.workflow.definition import Stage, WorkflowDefinition
+from orchestrator.workflow.resolver import Resolver, ResolverDescription, ResolverOutput
 from orchestrator.workflow.workset import WorkSet
 
 # Benchmark pequeno com divergências garantidas: n=60 na semente 1 produz 6
@@ -14,6 +15,14 @@ from orchestrator.workflow.workset import WorkSet
 _DATASET_DE_TESTE = build_benchmark(seed=1, n=60, taxa_divergencia=0.15)
 BANCO_DE_TESTE = _DATASET_DE_TESTE.bank
 CONTABIL_DE_TESTE = _DATASET_DE_TESTE.ledger
+
+
+def _definicao(cascade: list[Resolver]) -> WorkflowDefinition:
+    """Uma WorkflowDefinition de um stage só, para os testes que antes
+    passavam `resolvers=` direto para `reconcile`."""
+    return WorkflowDefinition(
+        id="teste", name="teste", stages=(Stage(name="teste", cascade=tuple(cascade)),)
+    )
 
 
 def test_dataset_limpo_nao_gera_divergencia():
@@ -74,7 +83,7 @@ def test_resolvers_sao_injetaveis():
     pares = generate_clean_pairs(seed=8, n=5)
     ds = build_dataset(pares, injections=[])
 
-    r = reconcile(ds.bank, ds.ledger, resolvers=[])
+    r = reconcile(ds.bank, ds.ledger, definition=_definicao([]))
 
     assert r.matches == []
     assert len(r.divergences) > 0
@@ -136,7 +145,7 @@ def test_investigador_recebe_apenas_o_que_sobrou():
     ds = build_dataset(pares, injections=[inj])
     espiao = _InvestigadorFalso()
 
-    r = reconcile(ds.bank, ds.ledger, resolvers=[*default_resolvers(), espiao])
+    r = reconcile(ds.bank, ds.ledger, definition=_definicao([*default_resolvers(), espiao]))
 
     assert espiao.recebeu == r.divergences
     assert len(r.proposals) == len(r.divergences)
@@ -150,7 +159,9 @@ def test_proposta_nao_resolve_a_divergencia():
     ds = build_dataset(pares, injections=[inj])
 
     sem = reconcile(ds.bank, ds.ledger)
-    com = reconcile(ds.bank, ds.ledger, resolvers=[*default_resolvers(), _InvestigadorFalso()])
+    com = reconcile(
+        ds.bank, ds.ledger, definition=_definicao([*default_resolvers(), _InvestigadorFalso()])
+    )
 
     assert len(com.divergences) == len(sem.divergences)
     assert len(com.matches) == len(sem.matches)
@@ -161,7 +172,9 @@ def test_custo_do_agente_e_agregado_no_resultado():
     inj = DefasagemTemporal().apply(Random(0), pares[0])
     ds = build_dataset(pares, injections=[inj])
 
-    r = reconcile(ds.bank, ds.ledger, resolvers=[*default_resolvers(), _InvestigadorFalso()])
+    r = reconcile(
+        ds.bank, ds.ledger, definition=_definicao([*default_resolvers(), _InvestigadorFalso()])
+    )
 
     assert r.agent_cost.calls == len(r.divergences)
 
@@ -202,7 +215,9 @@ def test_custo_de_dois_resolvers_na_cascata_e_somado_nao_sobrescrito_no_agent_co
             return ResolverDescription(self.name, self.cost_class, "agente falso B")
 
     r = reconcile(
-        BANCO_DE_TESTE, CONTABIL_DE_TESTE, resolvers=[_AgenteFalsoA(), _AgenteFalsoB()]
+        BANCO_DE_TESTE,
+        CONTABIL_DE_TESTE,
+        definition=_definicao([_AgenteFalsoA(), _AgenteFalsoB()]),
     )
 
     assert r.agent_cost.input_tokens == 321 + 100
@@ -231,7 +246,7 @@ def test_agente_na_cascata_recebe_as_mesmas_divergencias_que_recebia_por_paramet
     reconcile(
         BANCO_DE_TESTE,
         CONTABIL_DE_TESTE,
-        resolvers=[*default_resolvers(), _RegistraDivergencias()],
+        definition=_definicao([*default_resolvers(), _RegistraDivergencias()]),
     )
 
     assert registro == [[d.id for d in esperado.divergences]]
@@ -263,7 +278,7 @@ def test_agente_roda_depois_da_regra_mesmo_declarado_antes():
         _ResolverEspiao("regra", CostClass.REGRA, registro),
     ]
 
-    reconcile([], [], resolvers=cascata)
+    reconcile([], [], definition=_definicao(cascata))
 
     assert registro == ["regra", "agente"]
 
@@ -282,9 +297,32 @@ def test_ordem_entre_e_dentro_das_classes_e_preservada():
         _ResolverEspiao("regra_a", CostClass.REGRA, registro),
     ]
 
-    reconcile([], [], resolvers=cascata)
+    reconcile([], [], definition=_definicao(cascata))
 
     assert registro == ["regra_b", "regra_a", "agente_b", "agente_a"]
+
+
+def test_ordenacao_e_por_stage_nao_global():
+    # O stage 1 só tem um AGENTE; o stage 2 só tem uma REGRA. Uma ordenação
+    # GLOBAL (sort sobre todos os resolvers da definição de uma vez, ignorando
+    # os limites de stage) colocaria a regra do stage 2 — cost_class mais
+    # barata — na frente do agente do stage 1, produzindo
+    # ["s2_regra", "s1_agente"]. A ordenação correta é POR STAGE: dentro de
+    # cada stage a cascata é ordenada por custo, mas um stage roda inteiro
+    # antes do próximo começa, então o agente do stage 1 sempre roda primeiro.
+    registro: list[str] = []
+    definicao = WorkflowDefinition(
+        id="teste",
+        name="teste",
+        stages=(
+            Stage(name="s1", cascade=(_ResolverEspiao("s1_agente", CostClass.AGENTE, registro),)),
+            Stage(name="s2", cascade=(_ResolverEspiao("s2_regra", CostClass.REGRA, registro),)),
+        ),
+    )
+
+    reconcile([], [], definition=definicao)
+
+    assert registro == ["s1_agente", "s2_regra"]
 
 
 def test_proposta_nao_remove_nada_do_pool():
@@ -315,8 +353,8 @@ def test_proposta_nao_remove_nada_do_pool():
         def describe(self) -> ResolverDescription:
             return ResolverDescription(self.name, self.cost_class, "só propõe")
 
-    sem = reconcile(BANCO_DE_TESTE, CONTABIL_DE_TESTE, resolvers=[])
-    com = reconcile(BANCO_DE_TESTE, CONTABIL_DE_TESTE, resolvers=[_SoPropoe()])
+    sem = reconcile(BANCO_DE_TESTE, CONTABIL_DE_TESTE, definition=_definicao([]))
+    com = reconcile(BANCO_DE_TESTE, CONTABIL_DE_TESTE, definition=_definicao([_SoPropoe()]))
 
     assert len(com.divergences) == len(sem.divergences)
     assert len(com.proposals) == len(sem.divergences)
