@@ -184,8 +184,29 @@ duas: `d-b-b00003` (órfão bancário) e `d-l-l00003` (órfão contábil do mesm
 caso). Aceitar em `d-b-b00003` casa `{b00003}×{l00003}` — e **os dois saem do
 pool**. `d-l-l00003` deixa de existir na passagem seguinte.
 
-Uma decisão tardia sobre o meio-item encontra `l00003` fora do pool e é
-ignorada pela guarda do §3.4. Consistente sem código especial.
+**Entre passagens** isso é automático: `WorkSet.without()` roda depois que
+`resolve()` retorna, e a passagem seguinte já recebe um `work` sem `b00003`
+nem `l00003`. Uma decisão tardia sobre o meio-item encontra `l00003` fora do
+pool e é ignorada pela guarda do §3.4.
+
+**Dentro da mesma passagem** isso NÃO é automático — e a primeira versão deste
+resolver errou exatamente aqui. `work` não encolhe durante o laço de
+`resolve()`: `no_banco`/`no_contabil` são calculados uma vez, no início, a
+partir do pool que a passagem recebeu. Se o operador aceita `d-b-b00003` e
+`d-l-l00003` na mesma leva — o fluxo natural de quem vê as duas metades do
+mesmo caso na fila e resolve as duas — as duas decisões ainda encontram
+`l00003` (e `b00003`) no pool, porque nenhuma delas removeu nada de lá.
+Sem guarda própria isso produzia dois matches para um único par, inflando
+`bank_matched_total`/`ledger_matched_total` e quebrando o invariante
+`sum(rate) + gap == 1.0`.
+
+A guarda é o mesmo padrão que `ExactMatcher._casar` já usa entre lançamentos
+bancários (`usados: set[str]`), aplicado agora entre decisões: o resolver
+mantém um `consumidos: set[str]` que cresce a cada match emitido nesta
+passagem, e trata qualquer id — o da própria divergência ou um citado em
+`conciliar_com` — que já esteja em `consumidos` como decisão obsoleta, pulando
+o caso inteiro. Consistente com a guarda do §3.4, mas não decorre dela: é
+código à parte, porque o pool por si só não basta dentro de uma passagem.
 
 Isto não substitui o pareamento no domínio, que continua sendo corte próprio.
 Mas significa que a fila não precisa esperar por ele.

@@ -119,6 +119,45 @@ def test_decidir_duas_vezes_nao_duplica_o_match():
     assert len(RevisorHumano(fila=fila).resolve(work).matches) == 1
 
 
+def test_decisao_sobre_d_l_vira_match_com_os_ids_classificados_pelo_pool():
+    # Toda decisão em `test_aceitar_...` decide em cima de `d-b-<id banco>`.
+    # O lado contábil nunca foi exercitado como a divergência EM SI — só como
+    # id de `conciliar_com` do lado bancário. Uma decisão sobre `d-l-<id>`
+    # citando o id bancário em `conciliar_com` é o mesmo caminho de código
+    # pelo lado oposto, e é onde os dois lados se encontram.
+    work, id_banco, id_contabil = _work()
+    fila = Fila.vazia()
+    fila.gravar_decisao(_decisao(f"d-l-{id_contabil}", {id_banco}))
+
+    saida = RevisorHumano(fila=fila).resolve(work)
+
+    assert len(saida.matches) == 1
+    m = saida.matches[0]
+    assert m.bank_ids == frozenset({id_banco})
+    assert m.ledger_ids == frozenset({id_contabil})
+
+
+def test_duas_decisoes_sobre_o_mesmo_par_emitem_um_unico_match():
+    # O fantasma do §3.5 do spec: uma divergência real chega ao agente
+    # partida em `d-b-<id banco>` e `d-l-<id contábil>`. Se o operador aceita
+    # as duas na mesma leva, `work` não encolheu entre as duas decisões — só
+    # encolhe entre passagens, via `WorkSet.without()`, depois que `resolve()`
+    # já retornou. Sem um `consumidos` local ao laço (o `usados` de
+    # `ExactMatcher._casar` aplicado aqui), as duas decisões carimbam o mesmo
+    # par e o motor conta o dinheiro duas vezes.
+    work, id_banco, id_contabil = _work()
+    fila = Fila.vazia()
+    fila.gravar_decisao(_decisao(f"d-b-{id_banco}", {id_contabil}))
+    fila.gravar_decisao(_decisao(f"d-l-{id_contabil}", {id_banco}))
+
+    saida = RevisorHumano(fila=fila).resolve(work)
+
+    assert len(saida.matches) == 1
+    m = saida.matches[0]
+    assert m.bank_ids == frozenset({id_banco})
+    assert m.ledger_ids == frozenset({id_contabil})
+
+
 def test_o_resolver_nao_custa_nada():
     # Trabalho humano custa, mas não em tokens. `Cost.zero()` aqui significa
     # "esta cascata não gastou API", que é a única coisa que Cost mede.
