@@ -1,8 +1,9 @@
-"""Avaliação do núcleo determinístico contra o gabarito.
+"""Avaliação do núcleo determinístico e das propostas do agente contra o gabarito.
 
-Mede o sistema, não o agente — não há agente neste plano. A métrica que
-importa aqui é a taxa de resolução determinística (spec 2.3, critério F1) e,
-tão importante quanto, o falso positivo: casar errado é pior que não casar.
+A métrica central aqui é a taxa de resolução determinística (spec 2.3,
+critério F1) e, tão importante quanto, o falso positivo: casar errado é pior
+que não casar. Também mede a precisão das propostas do agente contra o mesmo
+gabarito — ver `proposals_correct` e `agent_cost_microcents`.
 """
 
 from collections import Counter
@@ -11,6 +12,7 @@ from dataclasses import dataclass
 from orchestrator.matching.engine import ReconcileResult
 from orchestrator.money import format_brl
 from orchestrator.synth.dataset import Dataset
+from orchestrator.taxonomy import DivergenceType
 
 
 @dataclass(frozen=True)
@@ -33,6 +35,11 @@ class Metrics:
     truth_deterministic: int
     truth_for_agent: int
     truth_by_type: dict[str, int]
+    matches_by_layer: dict[str, int]
+    proposals_total: int
+    proposals_correct: int
+    proposals_abstained: int
+    agent_cost_microcents: int
 
     def render(self) -> str:
         # As duas contagens abaixo medem unidades diferentes: uma conta
@@ -60,10 +67,25 @@ class Metrics:
         ]
         for tipo, n in sorted(self.truth_by_type.items()):
             linhas.append(f"  {tipo:<24} {n}")
+        linhas.append("")
+        linhas.append("Resoluções por camada:")
+        for camada, n in sorted(self.matches_by_layer.items()):
+            linhas.append(f"  {camada:<24} {n}")
+        if self.proposals_total:
+            linhas.append("")
+            linhas.append(f"Propostas do agente:           {self.proposals_total}")
+            linhas.append(f"  corretas contra o gabarito:  {self.proposals_correct}")
+            linhas.append(f"  abstenções:                  {self.proposals_abstained}")
+            linhas.append(
+                f"  custo:                       "
+                f"US$ {self.agent_cost_microcents / 100_000_000:.4f}"
+            )
         return "\n".join(linhas)
 
 
-def evaluate(dataset: Dataset, result: ReconcileResult) -> Metrics:
+def evaluate(
+    dataset: Dataset, result: ReconcileResult, model: str = "claude-opus-5"
+) -> Metrics:
     bank_total = len(dataset.bank)
     ids_banco = {e.id for e in dataset.bank}
     ids_contabil = {e.id for e in dataset.ledger}
@@ -106,6 +128,33 @@ def evaluate(dataset: Dataset, result: ReconcileResult) -> Metrics:
     conciliado = sum(abs(e.amount) for e in dataset.bank if e.id in casados_banco)
     divergente = sum(abs(e.amount) for e in dataset.bank if e.id not in casados_banco)
 
+    # Conta MatchResults, não lançamentos casados — um único MatchResult pode
+    # cobrir vários ids de uma vez (ex.: PAGAMENTO_AGREGADO casa 1 bancário +
+    # N contábeis num resultado só). Unidade correta, deixada assim de
+    # propósito: contar ids infla camadas que resolvem casos agregados.
+    por_camada = dict(Counter(m.layer for m in result.matches))
+
+    # A precisão das propostas sai de graça: o gabarito da plano 1 já carrega o
+    # tipo de cada divergência injetada. Uma proposta está correta quando o tipo
+    # que ela propõe é o tipo que o gabarito registra para algum id que ela toca.
+    tipo_por_id: dict[str, DivergenceType] = {}
+    for gt in dataset.truth:
+        for i in gt.bank_ids | gt.ledger_ids:
+            tipo_por_id[i] = gt.divergence_type
+
+    divergencia_por_id = {d.id: (d.bank_ids | d.ledger_ids) for d in result.divergences}
+    corretas = abstencoes = 0
+    for p in result.proposals:
+        if p.tipo is DivergenceType.NAO_IDENTIFICADO:
+            abstencoes += 1
+            continue
+        # Nome diferente da função `ids` acima de propósito: a mesma
+        # divergência aqui não é o `gt` que a função recebe, e reusar o nome
+        # sombreava a função dentro deste laço.
+        ids_tocados = divergencia_por_id.get(p.divergence_id, frozenset())
+        if any(tipo_por_id.get(i) is p.tipo for i in ids_tocados):
+            corretas += 1
+
     return Metrics(
         bank_total=bank_total,
         ledger_total=len(dataset.ledger),
@@ -120,4 +169,11 @@ def evaluate(dataset: Dataset, result: ReconcileResult) -> Metrics:
         truth_deterministic=sum(1 for gt in dataset.truth if gt.deterministic_expected),
         truth_for_agent=sum(1 for gt in dataset.truth if not gt.deterministic_expected),
         truth_by_type=dict(Counter(str(gt.divergence_type) for gt in dataset.truth)),
+        matches_by_layer=por_camada,
+        proposals_total=len(result.proposals),
+        proposals_correct=corretas,
+        proposals_abstained=abstencoes,
+        agent_cost_microcents=result.agent_cost.microcents(model)
+        if result.proposals
+        else 0,
     )

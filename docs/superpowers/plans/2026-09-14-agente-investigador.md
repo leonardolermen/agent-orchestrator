@@ -10,6 +10,40 @@
 
 **Spec:** [`2026-09-14-agent-orchestrator-design.md`](../specs/2026-09-14-agent-orchestrator-design.md) seção 4.6 e 5, mais [`2026-09-14-composicao-de-workflows-design.md`](../specs/2026-09-14-composicao-de-workflows-design.md) seção 6.
 
+## ⚠️ Correções pós-execução — leia antes de reexecutar este plano
+
+O review final de branch encontrou **dois defeitos críticos no texto deste
+plano** que sobreviveram a nove tarefas e a todas as revisões por tarefa,
+porque nenhuma camada do desenho de teste em três níveis consegue pegá-los —
+o cliente falso e a reprise ignoram `messages` por completo.
+
+**C1 — o orçamento padrão era 9x menor que um único turno real.** O plano
+especificava `budget_microcents = 100_000` enquanto o próprio plano definia o
+`SYSTEM` e os `TOOL_SCHEMAS` que somam ~792 tokens de entrada, custando 896.000
+micro-cents por turno no opus-5. Toda divergência pagaria uma chamada e
+abstiria com "orçamento esgotado". Ninguém multiplicou o tamanho do prompt pela
+tabela de preços que o plano definira duas tarefas antes. Corrigido para
+4.000.000, derivado e com teste que recalcula o turno realista a cada execução.
+
+**C2 — o laço de ferramentas não falava o protocolo da Messages API.** O plano
+mandava `mensagens.append({"role": "assistant", "content": resposta.text or ""})`,
+que produz mensagem de assistant VAZIA quando o modelo só emite `tool_use` — a
+API rejeita com 400 — e devolvia resultados como texto solto em vez de blocos
+`tool_result` com `tool_use_id`. Era por isso que `ToolCall.id` foi
+especificado na Task 2 e nunca consumido: é a metade faltante do protocolo.
+
+**I1 — o plano largou um requisito do spec sem registrar.** O spec exige teto em
+DOIS níveis, por divergência e por execução; o plano só previa o primeiro.
+
+**A verificação final deste plano não pegava nenhum dos dois.** Os cinco itens
+dela passavam nesta branch com o agente quebrado. Falta um item: uma chamada
+real, uma vez, contra o modelo mais barato.
+
+O código na branch está corrigido. **Os blocos de código deste documento não
+foram reescritos** — reexecutar este plano literalmente reproduziria C1 e C2.
+
+---
+
 ## Global Constraints
 
 - **Valores monetários são `int` em centavos.** Ponto flutuante em dinheiro é proibido, inclusive em testes. Custo de API é contabilizado em **micro-cents de USD** (`int`), convertido para centavos de BRL só na renderização.
@@ -104,13 +138,31 @@ from orchestrator.taxonomy import DivergenceType
 
 
 def _custo() -> Cost:
-    return Cost(input_tokens=1000, output_tokens=200, cached_tokens=500, calls=2)
+    return Cost(
+        input_tokens=1000,
+        output_tokens=200,
+        cached_tokens=500,
+        cache_creation_tokens=300,
+        calls=2,
+    )
 
 
 def test_custo_soma_tokens_ao_preco_do_modelo():
-    # opus-5: 500 micro-cents por token de entrada, 2500 de saída, 50 de cache.
+    # opus-5: 500 por token de entrada, 2500 de saída, 50 de leitura de cache,
+    # 625 de escrita de cache.
     c = _custo()
-    assert c.microcents("claude-opus-5") == 1000 * 500 + 200 * 2500 + 500 * 50
+    assert c.microcents("claude-opus-5") == (
+        1000 * 500 + 200 * 2500 + 500 * 50 + 300 * 625
+    )
+
+
+def test_escrita_de_cache_entra_no_custo():
+    # Escrita de cache custa mais que entrada normal e não aparece em nenhum dos
+    # outros campos da resposta da API. Ignorá-la subcontaria toda primeira
+    # chamada de cada janela.
+    sem = Cost(input_tokens=1000)
+    com = Cost(input_tokens=1000, cache_creation_tokens=100)
+    assert com.microcents("claude-opus-5") > sem.microcents("claude-opus-5")
 
 
 def test_custo_de_modelo_mais_barato_e_menor():
@@ -153,6 +205,35 @@ def test_abstencao_e_proposta_valida():
     assert p.tipo is DivergenceType.NAO_IDENTIFICADO
     assert p.confianca is Confidence.BAIXA
     assert p.acao_sugerida == "investigar_manual"
+
+
+def test_confianca_vinda_como_string_e_coagida_ao_enum():
+    # O plano 3 vai desserializar propostas; sem coerção, uma string crua
+    # contornaria o guard de evidência e toda verificação por identidade.
+    p = Proposal(
+        divergence_id="d1",
+        tipo="RETENCAO_IMPOSTO",
+        explicacao="x",
+        evidencia=["l1"],
+        confianca="ALTA",
+        acao_sugerida="conciliar",
+        cost=Cost.zero(),
+    )
+    assert p.confianca is Confidence.ALTA
+    assert p.tipo is DivergenceType.RETENCAO_IMPOSTO
+
+
+def test_confianca_alta_como_string_tambem_exige_evidencia():
+    with pytest.raises(ValueError):
+        Proposal(
+            divergence_id="d1",
+            tipo="RETENCAO_IMPOSTO",
+            explicacao="x",
+            evidencia=[],
+            confianca="ALTA",
+            acao_sugerida="conciliar",
+            cost=Cost.zero(),
+        )
 
 
 def test_proposta_com_confianca_alta_exige_evidencia():
@@ -226,11 +307,18 @@ class Confidence(StrEnum):
 #   opus-5     $5,00 entrada / $25,00 saída
 #   sonnet-5   $2,00 / $10,00
 #   haiku-4.5  $1,00 / $5,00
-# Leitura de cache custa ~10% da entrada.
+#
+# Ler do cache custa ~10% da entrada. ESCREVER no cache custa ~125% — e esses
+# tokens de escrita não aparecem nem em input_tokens nem em cached_tokens na
+# resposta da API. Ignorá-los subcontaria o custo real em toda primeira chamada
+# de cada janela de cache, e custo por divergência é o número comercial deste
+# produto.
+#
+# Ordem: entrada, saída, leitura de cache, escrita de cache.
 _PRECOS = {
-    "claude-opus-5": (500, 2500, 50),
-    "claude-sonnet-5": (200, 1000, 20),
-    "claude-haiku-4-5": (100, 500, 10),
+    "claude-opus-5": (500, 2500, 50, 625),
+    "claude-sonnet-5": (200, 1000, 20, 250),
+    "claude-haiku-4-5": (100, 500, 10, 125),
 }
 
 
@@ -242,6 +330,7 @@ class Cost:
     input_tokens: int = 0
     output_tokens: int = 0
     cached_tokens: int = 0
+    cache_creation_tokens: int = 0
     calls: int = 0
 
     @staticmethod
@@ -253,6 +342,8 @@ class Cost:
             input_tokens=self.input_tokens + outro.input_tokens,
             output_tokens=self.output_tokens + outro.output_tokens,
             cached_tokens=self.cached_tokens + outro.cached_tokens,
+            cache_creation_tokens=self.cache_creation_tokens
+            + outro.cache_creation_tokens,
             calls=self.calls + outro.calls,
         )
 
@@ -260,11 +351,12 @@ class Cost:
         """Custo em micro-cents de USD para o modelo dado."""
         if model not in _PRECOS:
             raise ValueError(f"modelo sem preço conhecido: {model!r}")
-        entrada, saida, cache = _PRECOS[model]
+        entrada, saida, leitura, escrita = _PRECOS[model]
         return (
             self.input_tokens * entrada
             + self.output_tokens * saida
-            + self.cached_tokens * cache
+            + self.cached_tokens * leitura
+            + self.cache_creation_tokens * escrita
         )
 
 
@@ -299,6 +391,14 @@ class Proposal:
     trace: list[TraceEvent] = field(default_factory=list)
 
     def __post_init__(self) -> None:
+        # Coage os dois enums antes de qualquer verificação. O projeto compara
+        # por identidade em toda parte (`p.tipo is DivergenceType.X`), e uma
+        # string crua vinda de JSON desserializado passaria batido por todas
+        # elas — inclusive pelo guard de evidência logo abaixo. Coagir uma vez
+        # aqui torna Proposal seguro de construir a partir de dado externo.
+        object.__setattr__(self, "tipo", DivergenceType(self.tipo))
+        object.__setattr__(self, "confianca", Confidence(self.confianca))
+
         # Confiança alta sem evidência é a combinação que destrói a
         # credibilidade do produto mais rápido que qualquer erro.
         if self.confianca is Confidence.ALTA and not self.evidencia:
@@ -337,7 +437,7 @@ class InvestigationOutput:
 - [ ] **Step 5: Rodar e confirmar que passa**
 
 Run: `.venv/Scripts/pytest tests/agent/test_proposal.py -v`
-Expected: 10 passed
+Expected: 14 passed
 
 - [ ] **Step 6: Commit**
 
@@ -577,6 +677,21 @@ def test_busca_limita_o_numero_de_resultados():
     assert len(achados) <= 3
 
 
+def test_limite_invalido_e_rejeitado():
+    # Medido antes da guarda: limite=-3 devolvia 197 de 200 lançamentos,
+    # porque a fatia `achados[:-3]` devolve tudo menos os últimos três.
+    ctx = _contexto()
+    with pytest.raises(ValueError):
+        ctx.buscar_lancamentos(limite=0)
+    with pytest.raises(ValueError):
+        ctx.buscar_lancamentos(limite=-3)
+
+
+def test_limite_maior_que_o_padrao_e_respeitado():
+    ctx = _contexto()
+    assert len(ctx.buscar_lancamentos(limite=15)) <= 15
+
+
 def test_busca_sem_criterio_nenhum_e_rejeitada():
     ctx = _contexto()
     with pytest.raises(ValueError):
@@ -706,6 +821,16 @@ class ToolContext:
         if valor is None and fornecedor is None and documento is None and limite is None:
             raise ValueError("buscar_lancamentos exige pelo menos um critério")
 
+        # `limite or _LIMITE_PADRAO` seria armadilha: 0 é falsy e viraria 10, e
+        # um limite negativo entraria na fatia como `achados[:-3]`, devolvendo
+        # tudo menos os últimos três. Medido: limite=-3 devolveu 197 de 200
+        # lançamentos — exatamente o "vira o dataset inteiro no contexto" que
+        # esta guarda existe para impedir.
+        if limite is None:
+            limite = _LIMITE_PADRAO
+        if limite < 1:
+            raise ValueError(f"limite deve ser pelo menos 1: {limite}")
+
         achados = [
             le
             for le in self.ledger
@@ -713,7 +838,7 @@ class ToolContext:
             and (fornecedor is None or le.supplier == fornecedor)
             and (documento is None or le.document == documento)
         ]
-        return [self._ledger_dict(le) for le in achados[: limite or _LIMITE_PADRAO]]
+        return [self._ledger_dict(le) for le in achados[:limite]]
 
     def buscar_documento_fiscal(self, documento: str) -> dict[str, Any] | None:
         """Dados do lançamento que carrega este documento."""
@@ -773,12 +898,17 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     _schema(
         "buscar_lancamentos",
         "Busca lançamentos contábeis por valor líquido em centavos, fornecedor "
-        "ou documento. Devolve no máximo 10 resultados.",
+        "ou documento. Devolve no máximo `limite` resultados, ou 10 se `limite` "
+        "for omitido. Enviar os quatro campos como null é erro.",
         {
             "valor": {"type": ["integer", "null"], "description": "valor líquido em centavos"},
             "fornecedor": {"type": ["string", "null"]},
             "documento": {"type": ["string", "null"]},
-            "limite": {"type": ["integer", "null"], "description": "máximo de resultados"},
+            "limite": {
+                "type": ["integer", "null"],
+                "minimum": 1,
+                "description": "máximo de resultados; pelo menos 1",
+            },
         },
         ["valor", "fornecedor", "documento", "limite"],
     ),
@@ -819,7 +949,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
 - [ ] **Step 4: Rodar e confirmar que passa**
 
 Run: `.venv/Scripts/pytest tests/agent/test_tools.py -v`
-Expected: 12 passed
+Expected: 14 passed
 
 - [ ] **Step 5: Commit**
 
@@ -846,6 +976,8 @@ Criar `tests/agent/test_investigator.py`:
 
 ```python
 import json
+
+import pytest
 
 from orchestrator.agent.investigator import Investigator
 from orchestrator.agent.llm import FakeLLMClient, LLMResponse, ToolCall
@@ -964,7 +1096,11 @@ def test_confianca_alta_sem_evidencia_e_rebaixada_nao_rejeitada():
 
     out = inv.investigate([_div()])
 
+    # Sem checar o tipo, uma abstenção também satisfaria a asserção de
+    # confiança BAIXA — e o teste deixaria de distinguir "rebaixada" de
+    # "rejeitada", que é exatamente o que o nome dele promete.
     assert out.proposals[0].confianca is Confidence.BAIXA
+    assert out.proposals[0].tipo is DivergenceType.RETENCAO_IMPOSTO
 
 
 def test_laco_para_no_limite_de_turnos():
@@ -1051,6 +1187,59 @@ def test_trace_registra_turno_ferramenta_e_desfecho():
     assert tipos[-1] == "outcome"
 
 
+def test_modelo_sem_preco_falha_na_construcao():
+    # Não é abstenção, é erro de configuração: sem preço o custo por
+    # divergência fica incalculável, e ele é a métrica central do produto.
+    class _SemPreco:
+        model = "modelo-inexistente"
+
+        def complete(self, system, messages, tools):
+            raise AssertionError("não deveria chegar aqui")
+
+    with pytest.raises(ValueError):
+        Investigator(client=_SemPreco(), context=_ctx())
+
+
+def test_evidencia_que_nao_e_lista_nao_vira_lista_de_caracteres():
+    # Medido antes da guarda: "l1: bruto 100" virava 13 strings de um
+    # caractere, evidência "não vazia" o bastante para a confiança ALTA passar.
+    ruim = json.dumps(
+        {
+            "tipo": "RETENCAO_IMPOSTO",
+            "explicacao": "ISS",
+            "evidencia": "l1: bruto 100",
+            "confianca": "ALTA",
+            "acao_sugerida": "conciliar",
+        }
+    )
+    cliente = FakeLLMClient(
+        [LLMResponse(text=ruim, tool_calls=[], cost=Cost(calls=1))] * 4
+    )
+    inv = Investigator(client=cliente, context=_ctx(), max_tentativas_formato=2)
+
+    p = inv.investigate([_div()]).proposals[0]
+
+    assert p.tipo is DivergenceType.NAO_IDENTIFICADO
+    assert p.evidencia == []
+
+
+def test_resposta_malformada_nao_derruba_o_lote_inteiro():
+    # `investigate` não tem try próprio: uma exceção escapando de uma
+    # divergência levaria as outras junto.
+    ruim = json.dumps(
+        {"tipo": "ESTORNO", "explicacao": "x", "evidencia": 5,
+         "confianca": "MEDIA", "acao_sugerida": "y"}
+    )
+    cliente = FakeLLMClient(
+        [LLMResponse(text=ruim, tool_calls=[], cost=Cost(calls=1))] * 12
+    )
+    inv = Investigator(client=cliente, context=_ctx(), max_tentativas_formato=2)
+
+    out = inv.investigate([_div("d1"), _div("d2")])
+
+    assert len(out.proposals) == 2
+
+
 def test_cada_divergencia_comeca_com_contexto_limpo():
     # Divergências não podem contaminar umas às outras: o histórico de uma não
     # entra no prompt da seguinte.
@@ -1127,6 +1316,13 @@ class Investigator:
     budget_microcents: int = 100_000  # ~US$ 0,001 por divergência
     name: str = field(default="investigador", init=False)
 
+    def __post_init__(self) -> None:
+        # Modelo sem preço conhecido não é abstenção, é erro de configuração.
+        # Abster em toda divergência gastaria a execução inteira sem produzir
+        # nada, e o custo — que é a métrica central do produto — ficaria
+        # incalculável. Falhar aqui, uma vez, é o comportamento certo.
+        Cost.zero().microcents(self.client.model)
+
     def investigate(self, divergences: list[Divergence]) -> InvestigationOutput:
         propostas, total = [], Cost.zero()
         for d in divergences:
@@ -1149,6 +1345,12 @@ class Investigator:
                     system=SYSTEM, messages=mensagens, tools=TOOL_SCHEMAS
                 )
             except Exception as erro:  # noqa: BLE001
+                # A captura envolve SÓ a chamada ao modelo, de propósito.
+                # Alargá-la para o corpo do turno inteiro transformaria bug do
+                # próprio investigador — um AttributeError, um nome errado — em
+                # abstenção plausível com suíte verde, que é a falha oposta e
+                # pior da que esta guarda previne.
+                #
                 # Timeout, rede caída, 500 da API. O SDK já tenta de novo por
                 # conta própria; se chegou aqui, acabou. Abster é a saída certa:
                 # derrubar o processo inteiro por causa de um item transformaria
@@ -1254,7 +1456,11 @@ class Investigator:
             try:
                 argumentos = {k: v for k, v in c.arguments.items() if v is not None}
                 resultados.append({"ferramenta": c.name, "resultado": metodo(**argumentos)})
-            except (ValueError, TypeError) as erro:
+            except Exception as erro:  # noqa: BLE001
+                # Aqui a captura larga É o requisito, e é a inversão exata da
+                # guarda estreita em volta de `complete`: o spec manda que erro
+                # de ferramenta volte ao modelo como texto, sempre. O modelo se
+                # corrige sozinho; o processo não se recupera de um estouro.
                 resultados.append({"ferramenta": c.name, "erro": str(erro)})
         return json.dumps(resultados, ensure_ascii=False, default=str)
 
@@ -1274,7 +1480,15 @@ class Investigator:
         except ValueError:
             return None
 
-        evidencia = [str(e) for e in dados.get("evidencia", [])]
+        evidencia_bruta = dados.get("evidencia", [])
+        if not isinstance(evidencia_bruta, list):
+            # String onde se pediu lista é erro de forma comum do modelo, e
+            # iterar sobre ela produz uma lista de CARACTERES. Medido:
+            # "l1: bruto 100" virava 13 itens — evidência "não vazia" que não
+            # sustenta nada, e que fazia uma confiança ALTA passar sem
+            # rebaixamento. Rejeitar manda para o caminho de retry.
+            return None
+        evidencia = [str(e) for e in evidencia_bruta]
         # Afirmar com confiança sem citar nada acontece. Rebaixar é mais útil
         # que descartar: a hipótese ainda ajuda o humano, com o peso certo.
         if confianca is Confidence.ALTA and not evidencia:
@@ -1295,7 +1509,7 @@ class Investigator:
 - [ ] **Step 4: Rodar e confirmar que passa**
 
 Run: `.venv/Scripts/pytest tests/agent/test_investigator.py -v`
-Expected: 12 passed
+Expected: 15 passed
 
 - [ ] **Step 5: Commit**
 
@@ -1359,9 +1573,12 @@ def _resposta_sdk(blocos, uso):
     return SimpleNamespace(content=blocos, usage=uso)
 
 
-def _uso(entrada=100, saida=50, cache=0):
+def _uso(entrada=100, saida=50, cache=0, escrita=0):
     return SimpleNamespace(
-        input_tokens=entrada, output_tokens=saida, cache_read_input_tokens=cache
+        input_tokens=entrada,
+        output_tokens=saida,
+        cache_read_input_tokens=cache,
+        cache_creation_input_tokens=escrita,
     )
 
 
@@ -1397,6 +1614,16 @@ def test_contabiliza_tokens_de_cache_separado():
 
     assert r.cost.cached_tokens == 990
     assert r.cost.input_tokens == 10
+
+
+def test_contabiliza_escrita_de_cache():
+    sdk = _SDKFalso(_resposta_sdk([SimpleNamespace(type="text", text="oi")],
+                                  _uso(entrada=10, escrita=2000)))
+    c = AnthropicClient(model="claude-opus-5", sdk=sdk)
+
+    r = c.complete(system="s", messages=[], tools=[])
+
+    assert r.cost.cache_creation_tokens == 2000
 
 
 def test_marca_o_system_para_cache():
@@ -1504,6 +1731,12 @@ class AnthropicClient:
                 input_tokens=getattr(uso, "input_tokens", 0),
                 output_tokens=getattr(uso, "output_tokens", 0),
                 cached_tokens=getattr(uso, "cache_read_input_tokens", 0) or 0,
+                # Tokens gastos para POPULAR o cache. Não aparecem em
+                # input_tokens nem em cache_read_input_tokens, e custam mais que
+                # entrada normal — ignorá-los subcontaria toda primeira chamada
+                # de cada janela de cache.
+                cache_creation_tokens=getattr(uso, "cache_creation_input_tokens", 0)
+                or 0,
                 calls=1,
             ),
         )
@@ -1512,7 +1745,7 @@ class AnthropicClient:
 - [ ] **Step 5: Rodar e confirmar que passa**
 
 Run: `.venv/Scripts/pytest tests/agent/test_anthropic_client.py -v`
-Expected: 6 passed
+Expected: 7 passed
 
 - [ ] **Step 6: Commit**
 
@@ -1830,10 +2063,11 @@ Expected: FAIL com `AttributeError: 'Metrics' object has no attribute 'matches_b
 
 - [ ] **Step 3: Modificar `src/orchestrator/metrics.py`**
 
-Acrescentar aos imports do topo:
+Acrescentar ao topo o único import novo que `metrics.py` de fato usa. **Não
+importe `Confidence` aqui** — quem usa é o arquivo de teste, e um import morto
+faz `ruff check` falhar com F401:
 
 ```python
-from orchestrator.agent.proposal import Confidence
 from orchestrator.taxonomy import DivergenceType
 ```
 
@@ -1876,10 +2110,11 @@ def evaluate(
 
 Acrescentar, antes do `return Metrics(...)`:
 
-```python
-    from collections import Counter as _Counter
+`Counter` já está importado no topo de `metrics.py` — use aquele, sem alias
+local:
 
-    por_camada = dict(_Counter(m.layer for m in result.matches))
+```python
+    por_camada = dict(Counter(m.layer for m in result.matches))
 
     # A precisão das propostas sai de graça: o gabarito da plano 1 já carrega o
     # tipo de cada divergência injetada. Uma proposta está correta quando o tipo
@@ -2167,6 +2402,15 @@ from orchestrator.agent.proposal import Cost
 from orchestrator.eval.agent_eval import EvalResult, avaliar
 
 
+# Valores MEDIDOS com n=100 na semente 1. A amostra de n=40 foi descartada de
+# propósito: ela dava 2 corretas de 2 arriscadas, e 2/2 é 1,0 tanto com a
+# fórmula certa quanto com ela invertida — pinar contadores numa amostra que não
+# distingue a fórmula é teatro.
+#
+# Com estes números, a fórmula invertida daria 12/6 = 2,0, fora de [0,1].
+PRECISAO_ESPERADA = {"total": 12, "abstidas": 0, "corretas": 6}
+
+
 def _fabrica_falsa(model: str):
     """Sempre devolve a mesma proposta, sem tocar em rede."""
     def fabrica():
@@ -2191,15 +2435,69 @@ def test_avaliacao_devolve_resultado_completo():
                 client_factory=_fabrica_falsa("claude-opus-5"))
 
     assert isinstance(r, EvalResult)
-    assert r.model == "fake"
+    # `avaliar` constrói EvalResult a partir do PARÂMETRO model, nunca de
+    # cliente.model — então isto reflete o que foi pedido, e "fake" aqui era
+    # resíduo de uma versão anterior do FakeLLMClient.
+    assert r.model == "claude-opus-5"
     assert r.proposals_total > 0
 
 
-def test_precisao_fica_entre_zero_e_um():
-    r = avaliar(model="claude-opus-5", seed=1, n=40, taxa_divergencia=0.15,
+def test_precisao_pina_os_contadores_e_o_valor():
+    # Uma asserção de faixa (0 <= x <= 1) é satisfeita por qualquer
+    # implementação, inclusive uma com numerador e denominador trocados. Com os
+    # três contadores brutos E o valor resultante fixos, trocar a fórmula
+    # quebra o teste.
+    #
+    # Os números abaixo são MEDIDOS nesta semente, não escolhidos: rode
+    # `avaliar` e copie o que sair. Se o benchmark mudar de forma, este teste
+    # falha — e esse é exatamente o momento em que alguém deveria olhar para
+    # ele.
+    r = avaliar(model="claude-opus-5", seed=1, n=100, taxa_divergencia=0.15,
                 client_factory=_fabrica_falsa("claude-opus-5"))
 
-    assert 0.0 <= r.precision <= 1.0
+    arriscadas = r.proposals_total - r.proposals_abstained
+    assert r.proposals_total == PRECISAO_ESPERADA["total"]
+    assert r.proposals_abstained == PRECISAO_ESPERADA["abstidas"]
+    assert r.proposals_correct == PRECISAO_ESPERADA["corretas"]
+    assert r.precision == PRECISAO_ESPERADA["corretas"] / arriscadas
+
+
+def test_so_abstencoes_zera_a_precisao_sem_dividir_por_zero():
+    # Sem este caso, o denominador `total - abstidas` nunca é exercido com
+    # abstenções maiores que zero, e o ramo de denominador zero não é tocado
+    # por teste nenhum. Medido: 12 propostas, todas abstenções.
+    def fabrica():
+        return FakeLLMClient(
+            model="claude-opus-5",
+            respostas=[
+                LLMResponse(
+                    text='{"tipo":"NAO_IDENTIFICADO","explicacao":"nao sei",'
+                         '"evidencia":[],"confianca":"BAIXA",'
+                         '"acao_sugerida":"investigar_manual"}',
+                    tool_calls=[],
+                    cost=Cost(input_tokens=50, output_tokens=20, calls=1),
+                )
+            ]
+            * 500,
+        )
+
+    r = avaliar(model="claude-opus-5", seed=1, n=100, taxa_divergencia=0.15,
+                client_factory=fabrica)
+
+    assert r.proposals_abstained == r.proposals_total
+    assert r.proposals_correct == 0
+    assert r.precision == 0.0
+    assert r.abstention_rate == 1.0
+
+
+def test_fabrica_que_devolve_outro_modelo_e_rejeitada():
+    # Pedir um modelo e medir outro produziria um relatório precificado numa
+    # tabela e rotulado como outra.
+    import pytest
+
+    with pytest.raises(ValueError):
+        avaliar(model="claude-opus-5", seed=1, n=40, taxa_divergencia=0.15,
+                client_factory=_fabrica_falsa("claude-haiku-4-5"))
 
 
 def test_custo_por_divergencia_e_inteiro_em_microcents():
@@ -2314,6 +2612,16 @@ def avaliar(
 ) -> EvalResult:
     dataset = build_benchmark(seed=seed, n=n, taxa_divergencia=taxa_divergencia)
     cliente = (client_factory or _fabrica_real(model))()
+
+    # O rótulo do resultado vem do modelo PEDIDO; o preço vem do modelo que o
+    # cliente REPORTA. Se divergirem, o relatório sai precificado numa tabela e
+    # rotulado como outra — corrupção silenciosa que derrota exatamente o
+    # propósito desta avaliação, que é transformar escolha de modelo em medição.
+    if cliente.model != model:
+        raise ValueError(
+            f"a fábrica devolveu um cliente de {cliente.model!r} quando "
+            f"{model!r} foi pedido; o custo sairia precificado errado"
+        )
     investigador = Investigator(
         client=cliente, context=ToolContext(bank=dataset.bank, ledger=dataset.ledger)
     )

@@ -10,7 +10,17 @@ from typing import Protocol
 
 from orchestrator.dates import add_business_days
 from orchestrator.synth.dataset import GroundTruth, InjectionResult, Pair
+from orchestrator.tax import _ALIQUOTAS, calcular_retencao
 from orchestrator.taxonomy import DivergenceType
+
+__all__ = [
+    "DefasagemTemporal",
+    "DevolucaoFundos",
+    "Injector",
+    "PagamentoAgregado",
+    "RetencaoImposto",
+    "calcular_retencao",
+]
 
 
 class Injector(Protocol):
@@ -45,24 +55,6 @@ class DefasagemTemporal:
                 ),
             ),
         )
-
-
-# Alíquotas em basis points (1% = 100 bp). Valores típicos de retenção na fonte.
-_ALIQUOTAS = {
-    "ISS": 500,      # 5%
-    "IRRF": 150,     # 1,5%
-    "CSLL/PIS/COFINS": 465,  # 4,65%
-    "INSS": 1100,    # 11%
-}
-
-
-def calcular_retencao(bruto: int, aliquota_bp: int) -> int:
-    """Retenção em centavos, truncada para baixo.
-
-    Determinística e testável de propósito: cálculo fiscal não pode depender
-    de raciocínio de modelo de linguagem. Ver spec 4.6.
-    """
-    return bruto * aliquota_bp // 10_000
 
 
 class RetencaoImposto:

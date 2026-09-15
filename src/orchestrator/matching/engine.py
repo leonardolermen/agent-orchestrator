@@ -5,8 +5,10 @@ resolveu vira Divergence — e é isso, e só isso, que o agente de investigaç�
 recebe. Ver spec 4.3.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Protocol
 
+from orchestrator.agent.proposal import Cost, InvestigationOutput, Proposal
 from orchestrator.matching.exact import ExactMatcher
 from orchestrator.matching.grouping import GroupingMatcher
 from orchestrator.matching.protocol import Matcher
@@ -14,10 +16,24 @@ from orchestrator.matching.tolerance import ToleranceMatcher
 from orchestrator.models import BankEntry, Divergence, LedgerEntry, MatchResult
 
 
+class Investigator(Protocol):
+    """Quem investiga o que as camadas determinísticas não resolveram.
+
+    Diferente de um Matcher: não resolve nada. Produz proposta, e o item
+    continua divergente até um humano aprovar.
+    """
+
+    name: str
+
+    def investigate(self, divergences: list[Divergence]) -> InvestigationOutput: ...
+
+
 @dataclass(frozen=True)
 class ReconcileResult:
     matches: list[MatchResult]
     divergences: list[Divergence]
+    proposals: list[Proposal] = field(default_factory=list)
+    agent_cost: Cost = field(default_factory=Cost.zero)
 
 
 def default_matchers() -> list[Matcher]:
@@ -29,6 +45,7 @@ def reconcile(
     bank: list[BankEntry],
     ledger: list[LedgerEntry],
     matchers: list[Matcher] | None = None,
+    investigator: Investigator | None = None,
 ) -> ReconcileResult:
     camadas = default_matchers() if matchers is None else matchers
 
@@ -55,4 +72,15 @@ def reconcile(
         for e in contabil_restante
     ]
 
-    return ReconcileResult(matches=todos, divergences=divergencias)
+    if investigator is None:
+        return ReconcileResult(matches=todos, divergences=divergencias)
+
+    # O investigador recebe SÓ o que sobrou, e o que ele devolve não remove
+    # nada do pool: proposta não é resolução.
+    saida = investigator.investigate(divergencias)
+    return ReconcileResult(
+        matches=todos,
+        divergences=divergencias,
+        proposals=saida.proposals,
+        agent_cost=saida.cost,
+    )

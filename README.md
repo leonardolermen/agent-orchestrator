@@ -92,3 +92,14 @@ Flags da CLI: `--seed` (semente do gerador), `--n` (tamanho do dataset) e
 flag que move a taxa determinística reportada acima).
 
 Próximo: agente de investigação (plano 2), revisão humana (plano 3).
+
+### Avaliar o agente (gasta dinheiro)
+
+Exige `ANTHROPIC_API_KEY` no ambiente ou `ant auth login`.
+
+```bash
+orchestrator-eval --n 100 --seed 1
+```
+
+Sem `--model`, compara `claude-opus-5`, `claude-sonnet-5` e `claude-haiku-4-5`
+contra o mesmo gabarito. A suíte de testes não faz nenhuma chamada de API.
