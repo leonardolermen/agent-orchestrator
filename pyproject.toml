@@ -15,6 +15,7 @@ assinatura = ["claude-agent-sdk>=0.2"]
 [project.scripts]
 orchestrator = "orchestrator.cli:main"
 orchestrator-eval = "orchestrator.eval.agent_eval:main"
+orchestrator-grill = "orchestrator.grill.cli:main"
 
 [build-system]
 requires = ["hatchling"]
