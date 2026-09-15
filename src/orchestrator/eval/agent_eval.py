@@ -10,6 +10,7 @@ O gabarito não precisou ser construído para isto — ele já existe desde a pl
 import argparse
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 from orchestrator.agent.investigator import Investigator
 from orchestrator.agent.llm import LLMClient
@@ -18,6 +19,7 @@ from orchestrator.agent.tools import ToolContext
 from orchestrator.cli import build_benchmark
 from orchestrator.matching.engine import default_resolvers, reconcile
 from orchestrator.metrics import evaluate
+from orchestrator.review.fila import Fila, caminho_da_fila, dataset_id
 from orchestrator.workflow.definition import Stage, WorkflowDefinition
 
 MODELOS_PADRAO = ("claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5")
@@ -25,6 +27,11 @@ MODELOS_PADRAO = ("claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5")
 # "api" gasta crédito da Console; "assinatura" usa o processo local do
 # Claude Code e serve só para avaliar — não exercita anthropic_client.py.
 VIAS = ("api", "assinatura")
+
+# Raiz da fila em disco. Atributo de módulo, mesmo padrão de
+# `api/app.py::_RAIZ_FILA`, para o teste poder trocá-la por um tmp_path sem
+# escrever no repositório.
+_RAIZ_FILA: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -126,6 +133,7 @@ def avaliar(
     client_factory: Callable[[], LLMClient] | None = None,
     via: str = "api",
     investigator_factory: Callable[[ToolContext], object] | None = None,
+    gravar_fila: bool = False,
 ) -> EvalResult:
     if via not in VIAS:
         raise ValueError(f"via desconhecida: {via!r}; use uma de {VIAS}")
@@ -169,6 +177,16 @@ def avaliar(
         ),
     )
     resultado = reconcile(dataset.bank, dataset.ledger, definition=definicao)
+    if gravar_fila:
+        # Quem grava é o CLI, nunca `reconcile`. O motor continua puro, e é
+        # disso que o golden e o teste do dinheiro dependem.
+        fila = Fila(
+            caminho_da_fila(
+                "conciliacao", dataset_id(seed, n, taxa_divergencia), raiz=_RAIZ_FILA
+            )
+        )
+        for p in resultado.proposals:
+            fila.gravar_proposta(p)
     # Pela assinatura `model` não está na tabela de preços; isso só não
     # estoura porque todo custo é Cost.zero() e `metrics` curto-circuita
     # antes de converter. O teste de `via=assinatura` pina esse caminho.
@@ -253,6 +271,9 @@ def main(argv: list[str] | None = None) -> int:
         help="api gasta crédito da Console; assinatura usa o Claude Code local "
              "e NÃO exercita anthropic_client.py",
     )
+    parser.add_argument(
+        "--fila", action="store_true", help="grava as propostas na fila de revisão"
+    )
     args = parser.parse_args(argv)
 
     if args.via == "assinatura":
@@ -273,7 +294,10 @@ def main(argv: list[str] | None = None) -> int:
     print()
     resultados = []
     for modelo in modelos:
-        r = avaliar(modelo, args.seed, args.n, args.taxa_divergencia, via=args.via)
+        r = avaliar(
+            modelo, args.seed, args.n, args.taxa_divergencia, via=args.via,
+            gravar_fila=args.fila,
+        )
         print(r.render())
         print()
         resultados.append(r)

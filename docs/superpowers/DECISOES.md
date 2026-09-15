@@ -284,3 +284,261 @@ sem `tests/__init__.py`. O brief original especificava `from tests.golden.gerar 
 ## P3.10. Task 11
 
 o §7.2 do spec desta fatia (`docs/superpowers/specs/2026-09-15-cascata-e-canvas-design.md`) foi corrigido para descrever a técnica de teste do dinheiro que de fato ficou (espião + asserção estrutural), não a técnica por exceção que o documento ainda descrevia. Não estava na lista de arquivos do brief da Task 11 (que só cita §6), mas deixar §7.2 descrevendo uma técnica comprovadamente vazia — registrada em P3.8 como a decisão mais consequente do plano — contradiria o próprio propósito desta tarefa, que é corrigir o spec onde a realidade divergiu dele. Alternativa rejeitada: tocar só §6 como o brief lista literalmente, e deixar §7.2 para uma tarefa futura — deixaria o documento de design, que é a fonte consultável do plano, ensinando um teste que não existe mais. Custo se errado: uma seção do spec editada além do que o brief listou explicitamente; o conteúdo em si não é controverso — é a mesma história que P3.8 já registra em detalhe.
+
+---
+
+# Plano 4 — fila de revisão humana
+
+**13 decisões** tomadas sem consulta prévia durante a execução do plano 4 —
+o agente propõe, o humano decide, e é a decisão, nunca a proposta, que resolve
+a divergência. Mesmo critério das seções anteriores: cada uma traz a
+alternativa rejeitada e o custo de estar errada.
+
+---
+
+## P4.1. Task 1
+
+`ids_de_conciliar_com` devolve `frozenset()` vazio para qualquer forma que não
+seja exatamente `conciliar_com(a, b)` — inclusive `conciliar_com(l1))`, com
+parênteses sobrando dentro do conteúdo extraído. Alternativa rejeitada:
+aceitar o texto até o primeiro `)` e ignorar o resto — salvaria o caso de um
+parêntese digitado a mais, mas transformaria uma ação malformada num id
+plausível-porém-errado (`"l1)"` como id de lançamento), que só falharia
+adiante, silenciosamente, quando `revisor.py` não encontrasse esse id em
+nenhum dos dois lados do pool e descartasse a decisão inteira como obsoleta —
+o reviewer veria 200, o item sumiria da fila, e nenhum vínculo seria criado.
+Devolver vazio para qualquer forma quebrada faz o mesmo descarte acontecer
+pela mesma rota, mas sem fabricar um id corrompido no meio do caminho. Custo
+se errado: uma ação com parêntese sobrando que poderia ter um único id válido
+extraído é tratada como "não concilia nada" em vez de tentar recuperar parte
+dela.
+
+## P4.2. Task 3
+
+escopo da fila por `dataset_id(seed, n, taxa)`, não só pelo `workflow_id`.
+`d-b-b00003` existe em toda semente do gerador sintético — é o mesmo id de
+divergência apontando para lançamentos diferentes conforme seed/n/taxa
+mudam. Alternativa rejeitada: uma fila só por `workflow_id`, mais simples de
+navegar — uma decisão tomada olhando a semente 1 se aplicaria, sem aviso, a
+um lançamento completamente diferente na semente 7. Custo se errado: uma
+decisão de revisão apontaria para o lançamento errado sempre que alguém
+trocasse de semente ou de `n` sem perceber que a fila também mudou de arquivo.
+
+## P4.3. Task 3
+
+dentro de uma mesma fila, PRIMEIRA proposta vence e ÚLTIMA decisão vence —
+duas regras opostas no mesmo arquivo, de propósito. Uma proposta é o agente
+falando uma vez sobre uma divergência; uma segunda proposta para o mesmo id
+só apareceria por reprocessamento, e aceitá-la apagaria o que o revisor já
+leu e talvez já tenha decidido em cima. Uma decisão é um humano que pode
+mudar de ideia; a mais recente é o estado corrente, e o log guarda todas as
+anteriores como auditoria. Alternativa rejeitada: última vence dos dois
+lados, por uniformidade — deixaria uma reinvestigação acidental substituir
+silenciosamente o texto que um revisor já tinha julgado. Custo se errado:
+com a regra atual, uma correção de proposta feita por reprocessamento nunca
+chega ao revisor; o único jeito de corrigir uma proposta é uma decisão nova,
+não uma proposta nova.
+
+## P4.4. Task 3
+
+`Fila.vazia()` é uma fila em memória que nunca toca o disco (`Fila(None)`,
+com `_acrescentar` virando no-op quando `caminho is None`). É o que
+`default_definition()` usa quando ninguém passa fila explícita — o revisor
+entra sempre na cascata, mas sem fila ele não emite nenhum match. Alternativa
+rejeitada: `default_definition()` sem revisor nenhum quando não há fila, com
+o revisor entrando só numa segunda definição — reintroduziria a bifurcação
+"definição servida" vs "definição executada" que a Task 6 do plano 3 (P3.5)
+fechou de propósito. Custo se errado: sem este caminho, toda chamada a
+`reconcile()` sem fila explícita (golden, testes antigos, CLI sem `--fila`)
+precisaria passar uma fila descartável na mão, ou o revisor teria que sumir
+da cascata padrão — voltando à bifurcação que P3.5 evitou.
+
+## P4.5. Task 4
+
+o lado de cada id que uma decisão concilia vem do POOL (`work.bank`/
+`work.ledger`, os dois lados ainda não casados no momento em que o revisor
+roda), nunca do prefixo do próprio id (`b`/`l`) nem do tipo da divergência.
+Um id que não aparece em nenhum dos dois lados do pool é obsoleto — regra já
+resolveu antes, ou outra decisão já fechou o caso — e a decisão inteira é
+descartada em silêncio, nunca em erro. Alternativa rejeitada: inferir o lado
+pelo prefixo do id (`b00003` é banco, `l00003` é contábil) — mais direto de
+ler, mas depende de uma convenção de nomenclatura do gerador sintético que
+nada no domínio real garante, e não distingue "id nunca existiu" de "id já
+foi consumido por outra camada". É esta classificação, e só ela, que faz o
+passo 4 da prova de ponta a ponta da Task 10 funcionar sem nenhum código
+especial: aceitar a proposta do lado bancário remove os dois ids do pool
+juntos, e o meio-item fantasma do lado contábil deixa de existir como
+consequência, não como feature. Custo se errado: um id do lado errado do
+pool seria aceito como válido, criando um `MatchResult` que mistura dois
+lançamentos do MESMO lado — o defeito que o §3.5 do spec deste plano existe
+para impedir.
+
+## P4.6. Task 5
+
+`ReconcileResult` ganha `matches_by_class: dict[CostClass, list[MatchResult]]`,
+e `metrics.py` usa isso — não `MatchResult.layer` — para decidir o que conta
+como determinístico. `layer` é proveniência (P3.2 em DECISOES.md: quem
+produziu aquele vínculo específico), não identidade de classe de custo; usar
+`layer` para essa decisão prenderia "é regra ou é humano" a uma string que
+cada resolver escolhe livremente. Alternativa rejeitada: comparar
+`layer in {"L1", "L2", "L3"}` — funciona hoje porque cada resolver nomeia a
+própria proveniência igual ao próprio nome, mas quebra no dia em que
+`RevisorHumano` reclassificar um match de outra proveniência, ou um resolver
+usar um `layer` que não seja o nome dele. Custo se errado: uma migração
+futura de proveniência (ex.: revisor confirmando um match que L3 propôs)
+contaria como determinístico ou como humano pela string errada, sem nenhum
+teste acusando — porque hoje as duas fontes coincidem por coincidência, não
+por garantia de tipo.
+
+## P4.7. Task 5
+
+dinheiro (`Valor conciliado`, `Valor em divergência`) conta TODAS as classes
+de custo; a taxa determinística (`deterministic_rate`, falsos positivos e
+negativos) conta só REGRA. São duas perguntas diferentes: quanto dinheiro
+está resolvido de fato, contra quanto uma regra sozinha resolveu sem
+intervenção. Alternativa rejeitada: as duas métricas na mesma população
+(as duas REGRA-only, ou as duas todas-as-classes) — mais simples de explicar,
+mas ou esconderia o valor que o revisor humano fechou (subestimando o
+produto), ou contaria aprovação humana como se fosse determinismo de regra
+(inflando a métrica que este projeto já corrigiu uma vez por contaminação
+silenciosa, `e6b2b05`). Custo se errado: um revisor aprovando um caso do
+agente moveria `deterministic_rate` para cima sem nenhuma regra nova ter
+rodado — o mesmo defeito que a Task 5 deste plano existe para fechar,
+reaberto por outra porta.
+
+## P4.8. Task 6
+
+o `POST` de decisão chama `_executar_memoizado.cache_clear()` depois de
+gravar. `_executar_memoizado` deixou de ser função pura dos três parâmetros
+do benchmark assim que passou a ler a fila em disco — ela também depende do
+conteúdo do arquivo de decisões, que o `lru_cache` não vê. Alternativa
+rejeitada: cache com TTL curto em vez de invalidação explícita — evitaria
+acoplar a rota de escrita ao detalhe de cache da rota de leitura, mas faria
+uma decisão recém-aprovada ficar invisível no canvas por um tempo arbitrário
+depois do clique, o oposto do que "aceitar e ver o efeito" deveria ser numa
+tela de revisão. Custo se errado: sem a limpeza, o canvas mostraria o estado
+anterior à decisão até o processo reiniciar ou o cache estourar por
+tamanho — o passo 3 da prova de ponta a ponta da Task 10 falharia sempre,
+mesmo com o mecanismo de revisão correto por baixo.
+
+## P4.9. Task 6
+
+`_construir_definicao` decide se repassa `fila` a uma fábrica de workflow
+introspectando a ASSINATURA dela por um parâmetro chamado literalmente
+`fila` — sem checagem estrutural nem import de tipo entre `api/app.py` e
+`workflow/definition.py`. Uma fábrica cuja assinatura não seja "aceita
+`fila`" nem "não aceita nada" levanta `TypeError` em vez de cair
+silenciosamente para `fabrica()` (o que aplicaria o argumento errado a um
+parâmetro qualquer, ou ignoraria a fila sem avisar). Um teste em
+`tests/workflow/test_definition.py` pina o nome literal `fila` do parâmetro
+de `default_definition`, porque é o único contrato entre os dois módulos.
+Alternativa rejeitada: um protocolo formal (`class WorkflowFactory(Protocol):
+def __call__(self, fila: Fila) -> WorkflowDefinition`) — mais explícito, mas
+exigiria toda fábrica de teste (que hoje registra função de zero argumentos
+direto em `_WORKFLOWS`) migrar para a mesma assinatura, só para declarar um
+contrato que uma introspecção de uma linha já cobre. Custo se errado: trocar
+o nome do parâmetro em `default_definition` sem tocar `app.py` quebra o
+teste que pina o nome, mas não quebra silenciosamente em produção — é
+exatamente o ponto de pinar.
+
+## P4.10. Task 6
+
+o teste `test_ler_a_fila_nao_chama_o_modelo` mudou de propósito depois de a
+revisão apontar que ele passava por acidente, não por prova. Com a fila
+vazia (estado original do teste), `_item()` nunca roda — não existe proposta
+pendente para montar — então o teste passaria mesmo que `_item` chamasse o
+modelo por baixo; é a mesma classe de teste vazio que P3.8 já documentou
+para a rota de execução, agora encontrada na rota de fila. Correção: o teste
+agora semeia uma proposta de verdade antes de espiar `anthropic_client`, e
+acrescenta `assert r.json()["itens"] != []` para garantir que o laço de
+montagem de item de fato executou. Alternativa rejeitada: manter o teste
+como estava, documentando em comentário que ele exige fila não-vazia para
+valer algo — um teste que precisa de aviso ao lado para não enganar quem lê
+o verde é pior que corrigi-lo. Custo se errado: nenhum — o teste antigo
+nunca discriminava o defeito; o novo, sim, e a suíte confirma que ele
+continua verde com o código real.
+
+## P4.11. Task 6
+
+a guarda de idempotência do agente (`Investigator`, que já existia deste
+plano) fica em `investigate()`, no laço que soma custo total da passagem, e
+não em `_uma()`, que é onde a proposta guardada é servida. `serial.py`
+persiste os cinco campos de `Cost`, então uma proposta lida do disco carrega
+o gasto REAL da investigação original — se `investigate()` somasse esse
+custo ao total desta passagem, uma execução que só serviu propostas
+guardadas (gasto real: zero) apareceria com o gasto da execução ANTERIOR, e
+o teto por execução estouraria sobre dinheiro que não foi gasto agora.
+Alternativa rejeitada: manter a guarda em `_uma()` e subtrair o custo
+histórico de volta no chamador — funciona, mas exige que todo chamador de
+`_uma()` saiba filtrar propostas servidas da fila para não contar o custo
+delas, duplicando a regra em vez de ter um único ponto que nunca deixa o
+custo histórico entrar no total. Custo se errado: uma segunda passagem sobre
+o mesmo dataset, com a fila já populada pela primeira, reportaria custo e
+consumiria teto de orçamento por trabalho que não fez.
+
+## P4.12. Task 8
+
+a API recusa com 422 em dois pontos que antes aceitavam em silêncio e
+descartavam depois: aceitar uma proposta cuja `acao_sugerida` começa com
+`conciliar_com` mas não extrai nenhum id (forma quebrada como
+`"conciliar_com:l1"`, sem parênteses), e corrigir com um id que não existe
+em nenhum dos dois lados do dataset. Nos dois casos, sem o guard, o pedido
+chegava intacto até `revisor.py`, que marcava a decisão inteira "obsoleta" e
+a descartava — o reviewer via 200, o item sumia de `pendentes()`,
+`divergiu` acusava divergência do agente, e nenhum vínculo era criado.
+Alternativa rejeitada: deixar `revisor.py` ser a única linha de defesa, já
+que ele descarta o caso obsoleto de qualquer jeito — tecnicamente seguro
+(nenhum vínculo fantasma é criado), mas transforma um erro de entrada em
+silêncio operacional: ninguém percebe que a decisão não fez nada até
+auditar o log. Custo se errado: um clique de "aceitar" ou "corrigir" que
+parecia ter funcionado (200) não concilia nada, e só a trilha de auditoria
+do jsonl revela isso depois.
+
+## P4.13. Task 9
+
+o formulário de correção em `/fila.html` é alternado por uma CLASSE
+(`.aberta`, que carrega o `display` real), nunca pelo atributo `hidden`, e
+"Corrigir" só alterna essa classe — nunca decide sozinho; um botão separado
+("Confirmar correção") dentro da caixa é o único caminho até `decidir()`.
+Descoberto tarde: o CSS do bloco de autor já declarava `display:flex` na
+classe do container de correção, o que vence o `display:none` que o
+`hidden` do user agent aplicaria — a caixa ficava visível desde o primeiro
+paint, o primeiro clique em "Corrigir" parecia não fazer nada (já estava
+"aberta" aos olhos), e o segundo clique caía direto em `decidir("corrigir",
+...)` com o `<select>` ainda no primeiro tipo da lista e nenhum id — o
+backend aceita isso como abstenção legítima, gravando uma correção
+inventada no log de decisões. Alternativa rejeitada: continuar usando
+`hidden` e corrigir só o CSS que o sobrepunha — trataria o sintoma (o
+elemento errado ficando visível), não a causa (um único botão fazendo duas
+coisas, abrir a caixa E submeter, dependendo de quantas vezes foi clicado).
+Separar "abrir" de "confirmar" em dois controles elimina a ambiguidade de
+contagem de cliques por construção. Custo se errado: sem a separação, todo
+fluxo de correção fica um clique-fantasma de distância de gravar uma decisão
+falsa no log de auditoria — exatamente o defeito que este item corrigiu
+depois de já commitado uma vez sem ele.
+
+## P4.14. Task 10
+
+`web/canvas.js` (`PEDIDO = { seed: 1, n: 300, ... }`, do plano 3) e
+`web/fila.js` (`PARAMS = { seed: 1, n: 30, ... }`, da Task 9 deste plano)
+apontam para datasets DIFERENTES — a fila é escopada por `dataset_id`
+(P4.2), e os dois arquivos nunca foram alinhados ao mesmo `n`. Na prova de
+ponta a ponta desta tarefa isso significa que aceitar uma proposta em
+`/fila.html` (dataset `s1-n30-t0.15`) não aparece em `/` (dataset
+`s1-n300-t0.15`, sem fila gravada) — os dois lêem arquivos de fila
+diferentes. Verifiquei o mecanismo em si diretamente contra a API com os
+MESMOS parâmetros da fila (`POST /api/workflows/conciliacao/runs` com
+`n=30`): revisor aparece com 1 match e a lacuna cai de 1 item (3,57%) para 0
+depois da decisão — a propriedade do §3.5 do spec está correta; o que não
+bate é só o `n` fixo entre as duas páginas estáticas. Decisão: NÃO tocar
+`web/canvas.js` — não está nos arquivos desta tarefa, e escolher um `n` de
+"amostra representativa" para a tela pública é decisão de produto, não algo
+que a prova de ponta a ponta deveria decidir de passagem. Alternativa
+rejeitada: mudar `canvas.js` para `n=30` só para a demonstração fechar
+visualmente — reduziria a amostra da tela pública (302 → 28 lançamentos)
+para todo mundo, por um motivo que não é dela. Custo se errado: quem seguir
+o roteiro da Task 10 literalmente, abrindo `/` no navegador em vez de
+consultar a API com os parâmetros corretos, não vai VER o passo 3 acontecer
+— é um achado registrado para tarefa futura (unificar os parâmetros das
+duas telas, ou torná-los configuráveis), não um defeito no mecanismo de
+revisão em si.
