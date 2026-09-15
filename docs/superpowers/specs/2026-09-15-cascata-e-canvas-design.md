@@ -105,27 +105,36 @@ class WorkSet:
 
 @dataclass(frozen=True)
 class ResolverOutput:
-    matches: list[MatchResult]      # resolve: sai do pool
-    proposals: list[Proposal]       # propõe: NÃO sai do pool
-    cost: Cost
+    matches: list[MatchResult] = field(default_factory=list)   # resolve: sai do pool
+    proposals: list[Proposal] = field(default_factory=list)    # propõe: NÃO sai do pool
+    cost: Cost = field(default_factory=Cost.zero)
 
 class Resolver(Protocol):
     name: str
     cost_class: CostClass
     def resolve(self, work: WorkSet) -> ResolverOutput: ...
+    def describe(self) -> ResolverDescription: ...
 ```
 
 ### 3.2 O motor
 
 ```python
 def reconcile(bank, ledger, definition=None) -> ReconcileResult:
-    definicao = definition or default_definition()
+    definicao = default_definition() if definition is None else definition
     work = WorkSet(list(bank), list(ledger))
     for stage in definicao.stages:
         for r in sorted(stage.cascade, key=lambda r: r.cost_class):
             out = r.resolve(work)
             work = work.without(out.matches)    # proposals sequer aparece
 ```
+
+É `is None`, não `or`: uma `WorkflowDefinition` explicitamente vazia (`stages=()`)
+é *falsy* como qualquer coleção vazia, e `definition or default_definition()`
+a substituiria pelos resolvers padrão em silêncio — a mesma classe de defeito
+que as decisões #7, #9 e #10 do plano 1 já registraram noutros pontos do
+projeto: entrada malformada, ou aqui explicitamente vazia, tratada em silêncio
+em vez de honrada ou rejeitada. `is None` distingue "não foi passado" de "foi
+passado vazio".
 
 O `sorted` é por stage, não global: a cascata é a unidade de ordenação, e um
 stage posterior não pode ter seus resolvers embaralhados com os de um anterior.
@@ -400,7 +409,7 @@ código medido. Rejeitada: mantém `Matcher` vivo como segundo conceito.
 | Deriva para plataforma antes de valor | Alta | Escopo travado no §2 com gatilho por item; nada de edição, catálogo ou DSL |
 | Selo do agente nunca sai de "não medido" | Média | Depende de crédito de API; a tela declara a ausência em vez de inventar número |
 | `Stage` sem segundo stage vira peso morto | Baixa | Assumido no §4.3; dez linhas, reversível |
-| Endpoint passa a gastar dinheiro numa mudança futura | Média | Teste que injeta cliente que levanta e exige 200 |
+| Endpoint passa a gastar dinheiro numa mudança futura | Média | Espião que grava chamadas a `complete()` (assinatura sobre estado, não exceção) + assinatura estrutural: toda `cost_class` da resposta é REGRA. Ver §7.2 e `DECISOES.md`, Plano 3, para a técnica anterior por exceção, provada vazia contra o `Investigator` real |
 
 ---
 

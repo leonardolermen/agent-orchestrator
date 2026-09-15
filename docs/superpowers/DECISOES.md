@@ -240,7 +240,7 @@ NÃO faço a chamada real que o reviewer pede como prova final. Gasta dinheiro e
 
 # Plano 3 — cascata e canvas
 
-**9 decisões** tomadas sem consulta prévia durante a execução do plano 3. Mesmo
+**10 decisões** tomadas sem consulta prévia durante a execução do plano 3. Mesmo
 critério: cada uma traz a alternativa rejeitada e o custo de estar errada.
 
 ---
