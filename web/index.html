@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent Orchestrator — cascata</title>
+  <!-- Descrição estática: existe também para quando a página é lida sem
+       executar o JavaScript (leitor de tela, crawler, ou o teste em
+       tests/api/test_estaticos.py, que só lê o HTML servido). -->
+  <meta name="description" content="Cascata medida de resolvers para conciliar lançamentos bancários.">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <h1 id="titulo">carregando…</h1>
+    <p class="proveniencia" id="proveniencia"></p>
+  </header>
+  <main id="stages"></main>
+  <noscript>Esta página precisa de JavaScript para desenhar a cascata de conciliar lançamentos.</noscript>
+  <script src="/canvas.js"></script>
+</body>
+</html>

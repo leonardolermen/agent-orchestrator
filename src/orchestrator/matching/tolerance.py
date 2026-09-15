@@ -7,13 +7,17 @@ from dataclasses import dataclass, field
 
 from orchestrator.dates import business_days_between
 from orchestrator.models import BankEntry, LedgerEntry, MatchResult
+from orchestrator.workflow.cost_class import CostClass
+from orchestrator.workflow.resolver import ResolverDescription, ResolverOutput
+from orchestrator.workflow.workset import WorkSet
 
 
 @dataclass
 class ToleranceMatcher:
     max_cents: int = 5
     max_business_days: int = 3
-    layer: str = field(default="L2", init=False)
+    name: str = field(default="L2", init=False)
+    cost_class: CostClass = field(default=CostClass.REGRA, init=False)
 
     def __post_init__(self) -> None:
         # Tolerância negativa não casaria nada e pareceria uma camada que
@@ -26,7 +30,19 @@ class ToleranceMatcher:
                 f"max_business_days não pode ser negativo: {self.max_business_days}"
             )
 
-    def match(self, bank: list[BankEntry], ledger: list[LedgerEntry]) -> list[MatchResult]:
+    def describe(self) -> ResolverDescription:
+        return ResolverDescription(
+            name=self.name,
+            cost_class=self.cost_class,
+            summary="mesmo documento, com folga de valor e dias úteis",
+        )
+
+    def resolve(self, work: WorkSet) -> ResolverOutput:
+        return ResolverOutput(matches=self._casar(work.bank, work.ledger))
+
+    def _casar(
+        self, bank: list[BankEntry], ledger: list[LedgerEntry]
+    ) -> list[MatchResult]:
         por_documento: dict[str, list[LedgerEntry]] = {}
         for le in ledger:
             if le.document is not None and le.cash_date is not None:
@@ -53,7 +69,7 @@ class ToleranceMatcher:
                     MatchResult(
                         bank_ids=frozenset({be.id}),
                         ledger_ids=frozenset({le.id}),
-                        layer=self.layer,
+                        layer=self.name,
                         rule=(
                             f"tolerância: até {self.max_cents} centavos e "
                             f"{self.max_business_days} dias úteis"

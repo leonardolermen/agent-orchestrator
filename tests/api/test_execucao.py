@@ -1,0 +1,180 @@
+import pytest
+
+pytest.importorskip("fastapi")
+
+from fastapi.testclient import TestClient
+
+from orchestrator.api.app import _WORKFLOWS, _executar_memoizado, app
+
+cliente = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def _cache_limpo():
+    """`executar()` delega para `_executar_memoizado`, que é `lru_cache`d.
+
+    Duas funções neste arquivo postam o EXATO mesmo corpo
+    (`{"seed": 1, "n": 100, "taxa_divergencia": 0.15}`): o canário
+    (`test_execucao_nao_chama_o_modelo_de_jeito_nenhum`) e
+    `test_execucao_so_serve_resolvers_de_classe_regra`. Se uma rodar depois da
+    outra com o cache ainda quente, a segunda vira cache hit — o corpo de
+    `_executar_memoizado` nem executa — e uma asserção sobre "o que foi
+    chamado" passa vazia, sem ter provado nada. Hoje isso só não acontece por
+    acidente de ordem no arquivo; `-k`, um teste novo inserido antes, ou um
+    plugin de ordem aleatória destruiriam essa garantia em silêncio.
+    """
+    _executar_memoizado.cache_clear()
+
+
+def test_execucao_nao_chama_o_modelo_de_jeito_nenhum(monkeypatch):
+    """A promessa do §5.2 do spec, virada teste — versão que de fato pina algo.
+
+    A primeira versão deste teste levantava `AssertionError` de dentro de
+    `AnthropicClient.complete` e checava só `status_code == 200`. Isso é
+    vazio: `Investigator._uma()` (ver `investigator.py`) envolve exatamente
+    essa chamada num `try/except Exception` largo e PROPOSITAL — qualquer
+    exceção vinda do modelo, canário incluído, vira uma abstenção silenciosa
+    e a rota devolve 200 do mesmo jeito. Medido: liguei um `Investigator` de
+    verdade na definição servida e o teste antigo continuou passando. Uma
+    exceção que o próprio domínio existe para engolir não prova que nada foi
+    chamado.
+
+    Por isso o canário aqui NUNCA levanta. Ele grava a chamada numa lista e
+    devolve uma resposta válida — e a asserção é sobre a lista, não sobre
+    propagação. Não existe `except` que esconda um `append`.
+    """
+
+    chamadas: list[dict] = []
+
+    def _espiao(self, system, messages, tools):
+        chamadas.append({"system": system, "messages": messages, "tools": tools})
+        from orchestrator.agent.llm import LLMResponse
+        from orchestrator.agent.proposal import Cost
+
+        return LLMResponse(text="{}", tool_calls=[], cost=Cost.zero())
+
+    # Qualquer construção de cliente real passa por aqui.
+    import orchestrator.agent.anthropic_client as ac
+
+    monkeypatch.setattr(ac.AnthropicClient, "complete", _espiao)
+
+    resposta = cliente.post(
+        "/api/workflows/conciliacao/runs",
+        json={"seed": 1, "n": 100, "taxa_divergencia": 0.15},
+    )
+
+    assert resposta.status_code == 200
+    assert chamadas == []
+
+
+def test_execucao_so_serve_resolvers_de_classe_regra():
+    """Segunda perna da mesma garantia, sem monkeypatch nenhum.
+
+    Pina a propriedade direto na saída do endpoint: nenhum resolver de
+    `cost_class` AGENTE participou da execução. Isso pega até um agente que
+    foi ligado mas ABSTEVE em toda divergência sem nunca chamar o modelo —
+    caso que o espião do teste acima não pegaria, porque para ele nada de
+    errado aconteceria (a lista de chamadas continuaria vazia mesmo com o
+    agente presente). As duas asserções são independentes: uma pega quem
+    chama o modelo, a outra pega quem foi apenas colocado na cascata.
+    """
+    corpo = cliente.post(
+        "/api/workflows/conciliacao/runs",
+        json={"seed": 1, "n": 100, "taxa_divergencia": 0.15},
+    ).json()
+
+    assert all(r["cost_class"] == "REGRA" for r in corpo["by_resolver"])
+
+
+def test_execucao_reporta_taxa_e_custo_por_resolver():
+    corpo = cliente.post(
+        "/api/workflows/conciliacao/runs",
+        json={"seed": 1, "n": 300, "taxa_divergencia": 0.15},
+    ).json()
+
+    nomes = [r["name"] for r in corpo["by_resolver"]]
+    assert nomes == ["L1", "L2", "L3"]
+    assert all(r["microcents"] == 0 for r in corpo["by_resolver"])
+    assert 0.80 < corpo["deterministic_rate"] < 0.95
+
+
+def test_a_lacuna_e_reportada_explicitamente():
+    # A definição padrão não tem agente. O que as regras não resolvem não
+    # some do relatório: vira lacuna com tamanho. É o §3.4 do spec de
+    # composição — o ponto mais valioso da tela.
+    corpo = cliente.post(
+        "/api/workflows/conciliacao/runs",
+        json={"seed": 1, "n": 300, "taxa_divergencia": 0.15},
+    ).json()
+
+    assert corpo["gap"]["items"] > 0
+    soma = sum(r["rate"] for r in corpo["by_resolver"]) + corpo["gap"]["rate"]
+    assert abs(soma - 1.0) < 1e-9
+
+
+def test_n_invalido_da_422_em_vez_de_estourar():
+    resposta = cliente.post(
+        "/api/workflows/conciliacao/runs",
+        json={"seed": 1, "n": 300, "taxa_divergencia": 5.0},
+    )
+    assert resposta.status_code == 422
+
+
+def test_resolver_com_layer_diferente_do_name_e_reportado_pelo_proprio_nome(monkeypatch):
+    """Pina P3.2 (DECISOES.md): `Resolver.name` é identidade, `MatchResult.layer`
+    é proveniência — dois conceitos que hoje coincidem para L1/L2/L3, mas não
+    são o mesmo campo. Um resolver com `name` diferente do `layer` que ele
+    estampa nos próprios matches ainda precisa aparecer com a contagem REAL na
+    resposta do endpoint. Se o endpoint voltasse a ler `matches_by_layer`
+    (proveniência) chaveado por `name` (identidade), este resolver reportaria
+    0% mesmo tendo casado lançamentos de verdade — o defeito de zero silencioso
+    que este teste existe para travar.
+    """
+    from orchestrator.models import MatchResult
+    from orchestrator.workflow.cost_class import CostClass
+    from orchestrator.workflow.definition import Stage, WorkflowDefinition
+    from orchestrator.workflow.resolver import ResolverDescription, ResolverOutput
+
+    class _NomeDiferenteDaProveniencia:
+        name = "resolver_x"
+        cost_class = CostClass.REGRA
+
+        def resolve(self, work):
+            n = min(3, len(work.bank), len(work.ledger))
+            return ResolverOutput(
+                matches=[
+                    MatchResult(
+                        bank_ids=frozenset({work.bank[i].id}),
+                        ledger_ids=frozenset({work.ledger[i].id}),
+                        # Proveniência deliberadamente != `name` acima.
+                        layer="proveniencia_y",
+                        rule="teste",
+                    )
+                    for i in range(n)
+                ]
+            )
+
+        def describe(self) -> ResolverDescription:
+            return ResolverDescription(self.name, self.cost_class, "name != layer, de propósito")
+
+    def _fabrica():
+        return WorkflowDefinition(
+            id="layer_diferente",
+            name="teste — name != layer",
+            stages=(Stage(name="s", cascade=(_NomeDiferenteDaProveniencia(),)),),
+        )
+
+    monkeypatch.setitem(_WORKFLOWS, "layer_diferente", _fabrica)
+
+    corpo = cliente.post(
+        "/api/workflows/layer_diferente/runs",
+        json={"seed": 1, "n": 100, "taxa_divergencia": 0.15},
+    ).json()
+
+    (resolvido,) = corpo["by_resolver"]
+    assert resolvido["name"] == "resolver_x"
+    assert resolvido["matches"] == 3
+    assert resolvido["rate"] == pytest.approx(3 / corpo["bank_total"])
+
+    soma = sum(r["rate"] for r in corpo["by_resolver"]) + corpo["gap"]["rate"]
+    assert soma == pytest.approx(1.0)

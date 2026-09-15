@@ -22,6 +22,9 @@ from orchestrator.agent.proposal import (
 from orchestrator.agent.tools import TOOL_SCHEMAS, ToolContext
 from orchestrator.models import Divergence
 from orchestrator.taxonomy import DivergenceType
+from orchestrator.workflow.cost_class import CostClass
+from orchestrator.workflow.resolver import ResolverDescription, ResolverOutput
+from orchestrator.workflow.workset import WorkSet
 
 # I3: vocabulário fechado de ações. O plano 3 (fila de revisão humana) precisa
 # despachar por este campo — texto livre não dá para despachar.
@@ -113,6 +116,7 @@ class Investigator:
     budget_total_microcents: int = 400_000_000
 
     name: str = field(default="investigador", init=False)
+    cost_class: CostClass = field(default=CostClass.AGENTE, init=False)
 
     def __post_init__(self) -> None:
         # Modelo sem preço conhecido não é abstenção, é erro de configuração.
@@ -120,6 +124,18 @@ class Investigator:
         # nada, e o custo — que é a métrica central do produto — ficaria
         # incalculável. Falhar aqui, uma vez, é o comportamento certo.
         Cost.zero().microcents(self.client.model)
+
+    def describe(self) -> ResolverDescription:
+        return ResolverDescription(
+            name=self.name,
+            cost_class=self.cost_class,
+            summary="investiga o que as regras não resolveram e propõe uma explicação",
+        )
+
+    def resolve(self, work: WorkSet) -> ResolverOutput:
+        """Investiga o que sobrou. Nunca devolve `matches`: proposta não resolve."""
+        saida = self.investigate(work.as_divergences())
+        return ResolverOutput(proposals=saida.proposals, cost=saida.cost)
 
     def investigate(self, divergences: list[Divergence]) -> InvestigationOutput:
         propostas, total = [], Cost.zero()

@@ -79,7 +79,14 @@ projetada a partir de zero instâncias.
 
 ## Status
 
-Núcleo determinístico funcionando. Sem dependência de IA.
+Núcleo determinístico funcionando, e o agente de investigação (plano 2)
+também — mas o agente nunca fez uma chamada real ao modelo, porque a conta
+usada para desenvolver não tem crédito. Esta fatia (plano 3) uniu as três
+camadas de regra e o agente atrás de um único protocolo `Resolver`, rodando
+como cascata ordenada por custo; empacotou essa cascata numa
+`WorkflowDefinition` que o motor executa e a API serializa sem cópia paralela;
+mediu custo por resolver, não só por sistema; e acrescentou um canvas somente
+leitura que desenha a cascata com números medidos, não inventados.
 
 ```bash
 pip install -e ".[dev]"
@@ -91,7 +98,21 @@ Flags da CLI: `--seed` (semente do gerador), `--n` (tamanho do dataset) e
 `--taxa-divergencia` (fração de pares que recebe divergência injetada — é o
 flag que move a taxa determinística reportada acima).
 
-Próximo: agente de investigação (plano 2), revisão humana (plano 3).
+### Ver a cascata no canvas
+
+```bash
+pip install -e ".[dev,api]"
+uvicorn orchestrator.api.app:app --port 8000
+```
+
+Abra `http://localhost:8000`: a página mostra, para a definição servida, cada
+resolver da cascata com classe de custo, taxa de resolução e custo — tudo
+medido contra um benchmark sintético — e a lacuna que nenhum resolver cobre,
+declarada em vez de escondida. Nenhum endpoint por trás da página tem caminho
+de código até o modelo (ver `tests/api/test_execucao.py`), então nenhum F5
+gasta dinheiro.
+
+Próximo: revisão humana da fila de propostas.
 
 ### Avaliar o agente (gasta dinheiro)
 

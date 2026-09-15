@@ -158,3 +158,50 @@ def test_tabela_com_um_unico_modelo_nao_estoura():
                 client_factory=_fabrica_falsa("claude-opus-5"))
 
     assert "claude-opus-5" in _tabela([a])
+
+
+class _ClienteQueFalha:
+    """Cliente que sempre estoura na chamada — rede caída, 401, sem crédito."""
+
+    model = "claude-haiku-4-5"
+
+    def complete(self, system, messages, tools):
+        raise RuntimeError("Your credit balance is too low")
+
+
+def test_falha_total_de_api_nao_e_relatada_como_medicao():
+    """MEDIDO em 2026-09-15: sem crédito na conta, a avaliação imprimia
+    `Precisão 0.0% / Abstenção 100.0% / Custo US$ 0.0000` — indistinguível de
+    um modelo que tentou e foi inútil. Zero chamada havia sido feita. Um
+    operador comparando modelos concluiria que o modelo é ruim; a conclusão
+    certa é que a execução não mediu nada.
+    """
+    r = avaliar(model="claude-haiku-4-5", seed=1, n=30, taxa_divergencia=0.15,
+                client_factory=lambda: _ClienteQueFalha())
+
+    assert r.proposals_total > 0
+    assert r.proposals_api_failed == r.proposals_total
+    assert r.mediu_algo is False
+
+    saida = r.render()
+    assert "FALHA DE API" in saida
+    # A precisão não pode aparecer como número de medição quando nada foi medido.
+    assert "0.0%" not in saida.split("FALHA DE API")[0]
+
+
+def test_tabela_nao_apresenta_percentual_de_execucao_que_nao_mediu_nada():
+    """A tabela é o artefato de DECISÃO entre modelos. Um modelo cuja execução
+    falhou inteira aparecendo com `0.0%` ao lado de um que mediu de verdade
+    convida exatamente à conclusão errada: que ele foi testado e perdeu.
+    """
+    ok = avaliar(model="claude-opus-5", seed=1, n=40, taxa_divergencia=0.15,
+                 client_factory=_fabrica_falsa("claude-opus-5"))
+    falhou = avaliar(model="claude-haiku-4-5", seed=1, n=40, taxa_divergencia=0.15,
+                     client_factory=lambda: _ClienteQueFalha())
+
+    linhas = _tabela([ok, falhou]).splitlines()
+    linha_falhou = next(x for x in linhas if "claude-haiku-4-5" in x)
+
+    assert "%" not in linha_falhou
+    assert "US$" not in linha_falhou or "0.0000" not in linha_falhou
+    assert "falha" in linha_falhou.lower()

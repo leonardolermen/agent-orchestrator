@@ -9,6 +9,8 @@ from orchestrator.agent.tools import TOOL_SCHEMAS, ToolContext
 from orchestrator.models import Divergence
 from orchestrator.synth.generator import build_dataset, generate_clean_pairs
 from orchestrator.taxonomy import DivergenceType
+from orchestrator.workflow.cost_class import CostClass
+from orchestrator.workflow.workset import WorkSet
 
 
 def _ctx() -> ToolContext:
@@ -30,6 +32,36 @@ def _proposta_json(tipo="RETENCAO_IMPOSTO", confianca="ALTA", evidencia=("l1: br
             "acao_sugerida": "conciliar_com:l1",
         }
     )
+
+
+# Constantes usadas pelos testes de Resolver abaixo — reaproveitam a mesma
+# resposta válida e o mesmo contexto que os testes acima já montavam inline.
+CONTEXTO_DE_TESTE = _ctx()
+RESPOSTA_VALIDA = LLMResponse(text=_proposta_json(), tool_calls=[], cost=Cost(calls=1))
+
+
+def test_investigador_e_um_resolver_da_classe_agente():
+    inv = Investigator(client=FakeLLMClient(respostas=[]), context=CONTEXTO_DE_TESTE)
+
+    assert inv.cost_class is CostClass.AGENTE
+    assert inv.describe().name == "investigador"
+
+
+def test_resolve_recebe_o_workset_e_devolve_propostas_sem_matches():
+    # O agente propõe; nunca resolve. `matches` vazio não é detalhe de
+    # implementação, é a invariante do produto.
+    pares = generate_clean_pairs(seed=2, n=1)
+    inv = Investigator(
+        client=FakeLLMClient(respostas=[RESPOSTA_VALIDA] * 4),
+        context=CONTEXTO_DE_TESTE,
+    )
+    work = WorkSet(bank=[pares[0].bank], ledger=[])
+
+    saida = inv.resolve(work)
+
+    assert saida.matches == []
+    assert len(saida.proposals) == 1
+    assert saida.cost.calls >= 1
 
 
 def test_uma_divergencia_vira_uma_proposta():

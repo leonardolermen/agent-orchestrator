@@ -3,12 +3,28 @@
 from datetime import date
 
 from orchestrator.models import BankEntry, LedgerEntry, MatchResult
+from orchestrator.workflow.cost_class import CostClass
+from orchestrator.workflow.resolver import ResolverDescription, ResolverOutput
+from orchestrator.workflow.workset import WorkSet
 
 
 class ExactMatcher:
-    layer = "L1"
+    name = "L1"
+    cost_class = CostClass.REGRA
 
-    def match(self, bank: list[BankEntry], ledger: list[LedgerEntry]) -> list[MatchResult]:
+    def describe(self) -> ResolverDescription:
+        return ResolverDescription(
+            name=self.name,
+            cost_class=self.cost_class,
+            summary="documento, valor e data coincidem exatamente",
+        )
+
+    def resolve(self, work: WorkSet) -> ResolverOutput:
+        return ResolverOutput(matches=self._casar(work.bank, work.ledger))
+
+    def _casar(
+        self, bank: list[BankEntry], ledger: list[LedgerEntry]
+    ) -> list[MatchResult]:
         indice: dict[tuple[str, int, date], list[LedgerEntry]] = {}
         for le in ledger:
             if le.document is None or le.cash_date is None:
@@ -32,7 +48,7 @@ class ExactMatcher:
                 MatchResult(
                     bank_ids=frozenset({be.id}),
                     ledger_ids=frozenset({escolhido.id}),
-                    layer=self.layer,
+                    layer=self.name,
                     rule="exato: documento, valor e data coincidem",
                     evidence={
                         "documento": be.document,
