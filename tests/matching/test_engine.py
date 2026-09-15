@@ -84,6 +84,20 @@ def test_default_resolvers_tem_tres_camadas():
     assert [r.name for r in default_resolvers()] == ["L1", "L2", "L3"]
 
 
+def test_default_resolvers_sao_todos_regra():
+    # cost_class é a chave de ordenação da cascata. O golden não pega um
+    # cost_class errado no L2, porque nesta configuração o L2 não casa nada:
+    # a ordem mudaria e os oito campos congelados ficariam idênticos.
+    assert [r.cost_class for r in default_resolvers()] == [CostClass.REGRA] * 3
+
+
+def test_cada_resolver_se_descreve_com_o_proprio_nome_e_classe():
+    for r in default_resolvers():
+        d = r.describe()
+        assert (d.name, d.cost_class) == (r.name, r.cost_class)
+        assert d.summary
+
+
 class _InvestigadorFalso:
     name = "falso"
 
@@ -175,18 +189,23 @@ def test_agente_roda_depois_da_regra_mesmo_declarado_antes():
     assert registro == ["regra", "agente"]
 
 
-def test_ordem_dentro_da_mesma_classe_e_preservada():
-    # Dentro da mesma classe de custo a ordem é conhecimento de domínio do
-    # especialista e tem que sobreviver. Isso depende de `sorted` ser estável.
+def test_ordem_entre_e_dentro_das_classes_e_preservada():
+    # Duas classes intercaladas na entrada, cada uma com dois resolvers fora
+    # de ordem alfabética. Um único resultado certo mata qualquer variante
+    # errada de uma vez: sem ordenação nenhuma, ordenação instável, ordenação
+    # por nome, ou ordenação invertida — todas produziriam uma sequência
+    # diferente de ["regra_b", "regra_a", "agente_b", "agente_a"].
     registro: list[str] = []
     cascata = [
-        _ResolverEspiao("segunda", CostClass.REGRA, registro),
-        _ResolverEspiao("primeira", CostClass.REGRA, registro),
+        _ResolverEspiao("agente_b", CostClass.AGENTE, registro),
+        _ResolverEspiao("regra_b", CostClass.REGRA, registro),
+        _ResolverEspiao("agente_a", CostClass.AGENTE, registro),
+        _ResolverEspiao("regra_a", CostClass.REGRA, registro),
     ]
 
     reconcile([], [], resolvers=cascata)
 
-    assert registro == ["segunda", "primeira"]
+    assert registro == ["regra_b", "regra_a", "agente_b", "agente_a"]
 
 
 def test_proposta_nao_remove_nada_do_pool():
