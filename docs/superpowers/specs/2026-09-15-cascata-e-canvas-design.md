@@ -80,6 +80,7 @@ que o §3.5 do spec de composição nomeia: selo sem medição é decoração.
 | Gerador prosa → rascunho | Houver catálogo |
 | `Executor` como costura separada | Houver execução que não seja in-process |
 | Framework de front | Começar arrastar-e-soltar de resolver |
+| Selo do agente por replay de gravação (§5.3) | Houver crédito de API, uma gravação do benchmark, e uma definição `conciliacao-com-agente` para servir |
 
 ---
 
@@ -253,6 +254,15 @@ O selo declara a procedência — *"medido em AAAA-MM-DD, gravação X"* — e n
 finge ser ao vivo. Enquanto não houver gravação, diz **"não medido"**, que é a
 verdade em 2026-09-15 e é pressão útil.
 
+**Anti-escopo desta fatia, não construído.** `default_definition()` — a única
+definição que a API serve hoje — não tem agente, então não há selo nenhum para
+gravar ou repetir: o que sobra das regras aparece como LACUNA (§6), não como
+uma linha AGENTE "não medido". O desenho acima continua correto — não gastar
+por request e declarar procedência —, mas só passa a ter o que medir quando
+existir uma segunda definição com agente. Ver a tabela do §2: desbloqueia com
+crédito de API, uma gravação do benchmark, e uma definição
+`conciliacao-com-agente` para servir.
+
 ---
 
 ## 6. O front
@@ -260,15 +270,38 @@ verdade em 2026-09-15 e é pressão útil.
 Sem build step: FastAPI serve estáticos, a página busca o JSON e desenha. HTML,
 CSS e JS puro.
 
+Isto é o que a tela **de fato** desenha para `default_definition()` — medido,
+não um mock imaginado antes de existir front:
+
 ```
 ┌─ conciliar lançamentos ─────────────────────────────┐
-│  ① casar exato          REGRA   R$0      82,4% ●    │
-│  ② tolerância           REGRA   R$0       3,1% ●    │
-│  ③ agrupamento          REGRA   R$0       1,7% ●    │
-│  ④ investigar           AGENTE  não medido  12,8% ○ │
-│  projeção: 500 itens → R$ 0,00 + agente não medido  │
+│  ① L1   REGRA    R$ 0      84,1% ●                  │
+│  ② L2   REGRA    R$ 0       0,0% ●                  │
+│  ③ L3   REGRA    R$ 0       2,6% ●                  │
+│  —  sem resolver configurado  LACUNA   13,2% ◌      │
 └─────────────────────────────────────────────────────┘
 ```
+
+Duas coisas nessa medição merecem prosa, não só o desenho.
+
+**L2 mede zero, e isso é o design funcionando, não um bug.** A camada de
+tolerância roda — ela está na cascata, custa manutenção, tem os próprios
+testes — e não resolve nada neste benchmark. A causa está documentada em
+`tests/golden/gerar.py`: dos quatro tipos de divergência que o gerador injeta,
+nenhum cai dentro da janela de tolerância do L2 (defasagem de prazo,
+retenção de imposto e devolução de fundos são construídos deliberadamente fora
+dela; pares limpos já são tomados pelo L1 antes de chegar ao L2). Um selo por
+resolver existe exatamente para tornar visível esse tipo de fato: uma camada
+que existe e não ganha nada com o dataset atual é informação que o especialista
+precisa ver, não algo para esconder atrás de uma média.
+
+**A lacuna substitui a linha do agente**, e é mais honesta que um selo escrito
+"não medido": `default_definition()` genuinely não tem agente configurado, então
+o que as regras não resolvem é **não resolvido**, não "não medido". Não medido
+sugere que existe um resolver ali e falta instrumentá-lo; a lacuna diz que não
+há resolver nenhum configurado para aquele resto — é o §3.4 do spec de
+composição, o ponto na tela onde um especialista do domínio olha e diz "existe
+regra pra isso" (ou, aqui, ainda não existe).
 
 Renderizar isso é DOM e CSS; framework não compra nada. Cada hora em bundler é
 hora fora da unificação do domínio, que é a parte com valor. O contrato que
@@ -311,9 +344,22 @@ falha do teste diz isso**, para ninguém regenerar no automático.
 | Estabilidade dentro da classe | `[Tolerância, Exato]` preserva essa ordem — é o §3.1 |
 | Proposta não remove | `work.without()` ignora `proposals` |
 | Anti-drift da API | JSON da definição bate com `default_definition()` real |
-| **O endpoint não gasta dinheiro** | injetar `LLMClient` que levanta em `complete()`; exigir 200 |
+| **O endpoint não gasta dinheiro** | espião que grava chamadas a `complete()` + toda `cost_class` da resposta é REGRA |
 
-O último transforma a promessa do §5.2 em teste.
+O último transforma a promessa do §5.2 em teste. **A técnica mudou em
+execução e vale registrar por quê.** A ideia original era injetar um
+`LLMClient` que levanta em `complete()` e exigir 200 — mas isso não prova
+nada: `Investigator._uma()` envolve `complete()` num `except Exception` amplo
+por desenho, então o erro injetado vira abstenção silenciosa e o endpoint
+responde 200 com ou sem agente de fato ligado. Isso foi demonstrado, não
+teorizado — um `Investigator` real foi ligado à definição servida e o teste
+antigo continuou passando. A técnica que ficou é duas asserções
+independentes: um espião que nunca levanta, só grava cada chamada a
+`complete()` numa lista, com a asserção sobre essa lista estar vazia; e uma
+verificação estrutural de que todo resolver na resposta de execução é da
+classe REGRA. Com um agente ligado, as duas falham, cada uma por um motivo
+diferente. Ver `docs/superpowers/DECISOES.md`, Plano 3, para o relato
+completo.
 
 Front sem teste automatizado nesta fatia — o contrato é o JSON e ele é testado
 do lado do servidor. Gatilho: edição.
