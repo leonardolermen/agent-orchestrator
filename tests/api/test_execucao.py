@@ -16,7 +16,7 @@ def _cache_limpo():
     Duas funções neste arquivo postam o EXATO mesmo corpo
     (`{"seed": 1, "n": 100, "taxa_divergencia": 0.15}`): o canário
     (`test_execucao_nao_chama_o_modelo_de_jeito_nenhum`) e
-    `test_execucao_so_serve_resolvers_de_classe_regra`. Se uma rodar depois da
+    `test_execucao_nao_serve_resolver_que_gasta_dinheiro`. Se uma rodar depois da
     outra com o cache ainda quente, a segunda vira cache hit — o corpo de
     `_executar_memoizado` nem executa — e uma asserção sobre "o que foi
     chamado" passa vazia, sem ter provado nada. Hoje isso só não acontece por
@@ -67,7 +67,7 @@ def test_execucao_nao_chama_o_modelo_de_jeito_nenhum(monkeypatch):
     assert chamadas == []
 
 
-def test_execucao_so_serve_resolvers_de_classe_regra():
+def test_execucao_nao_serve_resolver_que_gasta_dinheiro():
     """Segunda perna da mesma garantia, sem monkeypatch nenhum.
 
     Pina a propriedade direto na saída do endpoint: nenhum resolver de
@@ -77,13 +77,17 @@ def test_execucao_so_serve_resolvers_de_classe_regra():
     errado aconteceria (a lista de chamadas continuaria vazia mesmo com o
     agente presente). As duas asserções são independentes: uma pega quem
     chama o modelo, a outra pega quem foi apenas colocado na cascata.
+
+    A asserção é "nenhum AGENTE", não "só REGRA": com o revisor (`HUMANO`) na
+    definição padrão, a cascata já tem duas classes, e a propriedade que
+    importa sempre foi "nada aqui gasta dinheiro" — nunca "só existem regras".
     """
     corpo = cliente.post(
         "/api/workflows/conciliacao/runs",
         json={"seed": 1, "n": 100, "taxa_divergencia": 0.15},
     ).json()
 
-    assert all(r["cost_class"] == "REGRA" for r in corpo["by_resolver"])
+    assert "AGENTE" not in [r["cost_class"] for r in corpo["by_resolver"]]
 
 
 def test_execucao_reporta_taxa_e_custo_por_resolver():
@@ -93,7 +97,7 @@ def test_execucao_reporta_taxa_e_custo_por_resolver():
     ).json()
 
     nomes = [r["name"] for r in corpo["by_resolver"]]
-    assert nomes == ["L1", "L2", "L3"]
+    assert nomes == ["L1", "L2", "L3", "revisor"]
     assert all(r["microcents"] == 0 for r in corpo["by_resolver"])
     assert 0.80 < corpo["deterministic_rate"] < 0.95
 

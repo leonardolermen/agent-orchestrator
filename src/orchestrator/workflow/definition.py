@@ -7,9 +7,17 @@ e a execução — e um desenho que não corresponde ao motor é a decoração q
 """
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from orchestrator.matching.engine import default_resolvers
 from orchestrator.workflow.resolver import Resolver
+
+if TYPE_CHECKING:
+    # Só para o type checker: em tempo de execução este import viraria
+    # circular (`revisor.py` importa deste módulo). O import de verdade,
+    # usado dentro de `default_definition`, é local de propósito — mesma
+    # razão do import local em `engine.py`.
+    from orchestrator.review.fila import Fila
 
 
 @dataclass(frozen=True)
@@ -33,17 +41,27 @@ class WorkflowDefinition:
     stages: tuple[Stage, ...]
 
 
-def default_definition() -> WorkflowDefinition:
-    """O conciliador determinístico.
+def default_definition(fila: "Fila | None" = None) -> WorkflowDefinition:
+    """O conciliador: três regras e o revisor humano.
 
-    Sem agente: o agente é opcional, custa dinheiro, e a definição que a API
-    serve precisa ser executável sem gastar um centavo. O que as regras não
-    resolvem aparece como LACUNA na tela — que é informação, não omissão.
+    Sem agente — ele é opcional, custa dinheiro, e a definição que a API serve
+    precisa ser executável sem gastar um centavo.
+
+    O revisor entra SEMPRE. Sem fila ele usa uma vazia e não emite nada, então
+    a CLI e o golden ficam idênticos; com fila, ele aplica o que foi aprovado.
+    Não há "definição servida" separada da "definição executada".
     """
+    from orchestrator.review.fila import Fila
+    from orchestrator.review.revisor import RevisorHumano
+
+    revisor = RevisorHumano(fila=fila if fila is not None else Fila.vazia())
     return WorkflowDefinition(
         id="conciliacao",
         name="Conciliação bancária",
         stages=(
-            Stage(name="conciliar lançamentos", cascade=tuple(default_resolvers())),
+            Stage(
+                name="conciliar lançamentos",
+                cascade=(*default_resolvers(), revisor),
+            ),
         ),
     )

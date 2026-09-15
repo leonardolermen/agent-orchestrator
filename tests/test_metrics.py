@@ -393,13 +393,16 @@ def test_custo_e_reportado_por_resolver_nao_so_no_total():
 
 def test_resolver_que_nao_custou_nada_aparece_com_zero_e_nao_some():
     # Um resolver ausente do dicionário e um resolver de custo zero são
-    # coisas diferentes na tela: um é "não rodou", o outro é "de graça".
+    # coisas diferentes na tela: um é "não rodou", o outro é "de graça". Desde
+    # que o revisor entrou na definição padrão (sempre presente, sempre a
+    # custo zero) ele também roda aqui e aparece com 0 — é o mesmo caso do L1,
+    # L2 e L3, não uma exceção.
     dataset = build_benchmark(seed=1, n=100, taxa_divergencia=0.15)
     resultado = reconcile(dataset.bank, dataset.ledger)
 
     m = evaluate(dataset, resultado)
 
-    assert set(m.cost_by_resolver_microcents) == {"L1", "L2", "L3"}
+    assert set(m.cost_by_resolver_microcents) == {"L1", "L2", "L3", "revisor"}
     assert all(v == 0 for v in m.cost_by_resolver_microcents.values())
 
 
