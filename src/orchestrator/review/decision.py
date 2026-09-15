@@ -34,6 +34,9 @@ def ids_de_conciliar_com(acao: str) -> frozenset[str]:
     if not texto.startswith(_PREFIXO) or not texto.endswith(")"):
         return frozenset()
     dentro = texto[len(_PREFIXO) : -1]
+    # Rejeita se o interior contém parênteses — são formas quebradas
+    if "(" in dentro or ")" in dentro:
+        return frozenset()
     return frozenset(p.strip() for p in dentro.split(",") if p.strip())
 
 
