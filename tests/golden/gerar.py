@@ -38,6 +38,13 @@ def medir() -> dict:
             "false_negatives": m.false_negatives,
             "matched_amount": m.matched_amount,
             "divergent_amount": m.divergent_amount,
+            # matches_by_layer nunca contém L2 nesta configuração. Os injetores
+            # produzem divergências fora da janela de tolerância do L2:
+            # DefasagemTemporal (delay deliberadamente acima da tolerância),
+            # RetencaoImposto (valor muito além da janela de 5 centavos),
+            # DevolucaoFundos (anula document, que L1 e L2 exigem).
+            # Pares clean já são tomados pelo L1. L2 não tem cobertura de
+            # regressão neste golden — veja tests/matching/test_tolerance.py.
             "matches_by_layer": dict(sorted(m.matches_by_layer.items())),
         }
     return saida
