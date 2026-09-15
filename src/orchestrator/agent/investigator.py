@@ -10,7 +10,7 @@ import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from orchestrator.agent.llm import LLMClient, LLMResponse
+from orchestrator.agent.llm import LLMClient, blocos_assistente
 from orchestrator.agent.proposal import (
     Confidence,
     Cost,
@@ -282,7 +282,7 @@ class Investigator:
                         )
                     )
                 mensagens.append(
-                    {"role": "assistant", "content": self._blocos_assistente(resposta)}
+                    {"role": "assistant", "content": blocos_assistente(resposta)}
                 )
                 mensagens.append(
                     {
@@ -323,28 +323,6 @@ class Investigator:
             custo,
             trace,
         )
-
-    @staticmethod
-    def _blocos_assistente(resposta: LLMResponse) -> list[Any]:
-        """Blocos de conteúdo do turno do assistente, para ecoar de volta.
-
-        CRITICAL 2 (defeito 3): quando o cliente real preenche `raw_content`,
-        devolve os blocos VERBATIM — inclui blocos de thinking, que a API
-        exige de volta inalterados. `FakeLLMClient` e `ReplayClient` nunca
-        preenchem `raw_content`; para esses, reconstrói um turno mínimo a
-        partir de `text`/`tool_calls`, só para que os testes movidos a dublê
-        continuem exercitando o laço.
-        """
-        if resposta.raw_content:
-            return resposta.raw_content
-        blocos: list[Any] = []
-        if resposta.text:
-            blocos.append({"type": "text", "text": resposta.text})
-        blocos.extend(
-            {"type": "tool_use", "id": c.id, "name": c.name, "input": c.arguments}
-            for c in resposta.tool_calls
-        )
-        return blocos
 
     def _executar(self, chamadas: list[Any]) -> list[Any]:
         """Executa as ferramentas pedidas e devolve um resultado por chamada,
