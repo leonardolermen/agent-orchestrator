@@ -6,6 +6,8 @@ mão em paralelo a eles — ver o teste anti-drift.
 
 from pydantic import BaseModel, Field
 
+from orchestrator.review.decision import Veredito
+from orchestrator.taxonomy import DivergenceType
 from orchestrator.workflow.definition import Stage, WorkflowDefinition
 
 
@@ -59,6 +61,52 @@ class RunJSON(BaseModel):
     deterministic_rate: float
     by_resolver: list[ResolverRunJSON]
     gap: GapJSON
+
+
+class LancamentoJSON(BaseModel):
+    id: str
+    lado: str  # "banco" ou "contabil"
+    data: str
+    valor: int  # centavos, sempre int
+    descricao: str
+    contraparte: str
+    documento: str | None
+
+
+class ItemFilaJSON(BaseModel):
+    divergence_id: str
+    tipo: str
+    confianca: str
+    explicacao: str
+    evidencia: list[str]
+    acao_sugerida: str
+    conciliar_com: list[str]
+    lancamentos: list[LancamentoJSON]
+    decidido: bool = False
+    veredito: str | None = None
+    tipo_decidido: str | None = None
+    autor: str | None = None
+    # Verdadeiro quando o humano discordou do agente — é o sinal de treino do
+    # §4.7 do spec pai, exposto sem máquina nova.
+    divergiu: bool = False
+
+
+class FilaJSON(BaseModel):
+    workflow: str
+    dataset: str
+    itens: list[ItemFilaJSON]
+    # A taxonomia vem da API, não hardcoded no JS. Duplicar os 14 valores no
+    # front criaria drift silencioso no dia em que a taxonomia crescer — o
+    # mesmo defeito que a fatia anterior existiu para tornar impossível.
+    tipos: list[str]
+
+
+class DecisaoRequest(BaseModel):
+    veredito: Veredito
+    tipo: DivergenceType | None = None
+    conciliar_com: list[str] | None = None
+    autor: str = Field(min_length=1)
+    motivo: str = ""
 
 
 def stage_json(stage: Stage) -> StageJSON:
