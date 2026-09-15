@@ -35,9 +35,29 @@ especificado na Task 2 e nunca consumido: é a metade faltante do protocolo.
 **I1 — o plano largou um requisito do spec sem registrar.** O spec exige teto em
 DOIS níveis, por divergência e por execução; o plano só previa o primeiro.
 
+**C3 — a avaliação ao vivo relatava falha total como se fosse medição.**
+Descoberto em 2026-09-15, na primeira tentativa de chamada real. Com a conta
+sem crédito, `orchestrator-eval` imprimiu `Precisão 0.0% / Abstenção 100.0% /
+Custo US$ 0.0000` — saída idêntica à de um modelo que tentou e foi inútil,
+quando na verdade **nenhuma chamada foi feita** (`calls=0` nas duas propostas).
+A tabela de comparação entre modelos, que é o artefato de DECISÃO deste plano,
+mostraria o modelo com falha de API ao lado de um medido de verdade, com `0.0%`
+na coluna de precisão. O plano especificou os contadores da `EvalResult` sem
+nenhum que distinguisse *não chamou* de *chamou e errou*. Corrigido com
+`proposals_api_failed` e `mediu_algo`: a execução que não mediu nada omite os
+números e diz isso em voz alta; a linha da tabela troca os percentuais por
+`—`. Dois testes pinam os dois caminhos.
+
 **A verificação final deste plano não pegava nenhum dos dois.** Os cinco itens
 dela passavam nesta branch com o agente quebrado. Falta um item: uma chamada
 real, uma vez, contra o modelo mais barato.
+
+**Esse item continua em aberto em 2026-09-15.** A chave da API é válida e
+autentica (a Anthropic devolve `request_id`), mas a conta da Console está sem
+crédito: `Your credit balance is too low to access the Anthropic API`. Enquanto
+não houver crédito, C1 e C2 permanecem **corrigidos no código e não
+confirmados na prática** — nenhuma das três camadas de teste toca o protocolo
+de verdade.
 
 O código na branch está corrigido. **Os blocos de código deste documento não
 foram reescritos** — reexecutar este plano literalmente reproduziria C1 e C2.

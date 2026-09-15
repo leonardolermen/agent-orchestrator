@@ -13,6 +13,7 @@ from dataclasses import dataclass
 
 from orchestrator.agent.investigator import Investigator
 from orchestrator.agent.llm import LLMClient
+from orchestrator.agent.proposal import TraceKind
 from orchestrator.agent.tools import ToolContext
 from orchestrator.cli import build_benchmark
 from orchestrator.matching.engine import reconcile
@@ -29,6 +30,11 @@ class EvalResult:
     proposals_correct: int
     proposals_abstained: int
     total_microcents: int
+    # Propostas que nunca chegaram a falar com o modelo: rede caída, 401,
+    # conta sem crédito. Sem este contador, uma execução que não fez
+    # chamada NENHUMA sai com exatamente os mesmos números de uma em que o
+    # modelo tentou e errou tudo — MEDIDO em 2026-09-15, ver o teste.
+    proposals_api_failed: int = 0
 
     @property
     def precision(self) -> float:
@@ -41,22 +47,48 @@ class EvalResult:
         return self.proposals_abstained / self.proposals_total if self.proposals_total else 0.0
 
     @property
+    def mediu_algo(self) -> bool:
+        """Falso quando nenhuma investigação chegou a falar com o modelo."""
+        return self.proposals_total > self.proposals_api_failed
+
+    @property
     def microcents_per_divergence(self) -> int:
         return self.total_microcents // self.divergences if self.divergences else 0
 
     def render(self) -> str:
-        return "\n".join(
-            [
-                f"Modelo:                        {self.model}",
-                f"Divergências investigadas:     {self.divergences}",
-                f"Precisão (das que arriscaram): {self.precision:.1%}",
-                f"Taxa de abstenção:             {self.abstention_rate:.1%}",
-                f"Custo total:                   "
-                f"US$ {self.total_microcents / 100_000_000:.4f}",
-                f"Custo por divergência:         "
-                f"US$ {self.microcents_per_divergence / 100_000_000:.6f}",
+        linhas = [
+            f"Modelo:                        {self.model}",
+            f"Divergências investigadas:     {self.divergences}",
+        ]
+        if not self.mediu_algo:
+            # Sair pelos números normais aqui seria relatar uma falha como
+            # medição: precisão 0,0% e custo US$ 0,0000 por FALTA DE CHAMADA
+            # são idênticos a precisão 0,0% e custo zero por desempenho.
+            linhas += [
+                "",
+                f"*** FALHA DE API em {self.proposals_api_failed}/"
+                f"{self.proposals_total} investigações — NADA foi medido. ***",
+                "Nenhuma chamada ao modelo teve sucesso. Os números de precisão,",
+                "abstenção e custo sairiam zerados por falta de chamada, não por",
+                "desempenho, e por isso foram omitidos.",
+                "O motivo de cada falha está no rastro da proposta (TraceKind.ERRO).",
             ]
-        )
+            return "\n".join(linhas)
+        linhas += [
+            f"Precisão (das que arriscaram): {self.precision:.1%}",
+            f"Taxa de abstenção:             {self.abstention_rate:.1%}",
+            f"Custo total:                   "
+            f"US$ {self.total_microcents / 100_000_000:.4f}",
+            f"Custo por divergência:         "
+            f"US$ {self.microcents_per_divergence / 100_000_000:.6f}",
+        ]
+        if self.proposals_api_failed:
+            linhas.append(
+                f"ATENÇÃO — FALHA DE API em {self.proposals_api_failed} de "
+                f"{self.proposals_total} investigações; os números acima "
+                f"cobrem apenas as restantes."
+            )
+        return "\n".join(linhas)
 
 
 def _fabrica_real(model: str) -> Callable[[], LLMClient]:
@@ -93,6 +125,11 @@ def avaliar(
 
     resultado = reconcile(dataset.bank, dataset.ledger, investigator=investigador)
     metricas = evaluate(dataset, resultado, model=cliente.model)
+    falhas_api = sum(
+        1
+        for p in resultado.proposals
+        if any(e.kind is TraceKind.ERRO for e in p.trace)
+    )
 
     return EvalResult(
         model=model,
@@ -101,6 +138,7 @@ def avaliar(
         proposals_correct=metricas.proposals_correct,
         proposals_abstained=metricas.proposals_abstained,
         total_microcents=metricas.agent_cost_microcents,
+        proposals_api_failed=falhas_api,
     )
 
 
@@ -111,9 +149,22 @@ def _tabela(resultados: list[EvalResult]) -> str:
     empilhados (um `render()` por modelo) obrigam quem lê a fazer a
     comparação de cabeça. Colunas lado a lado fazem isso por ele.
     """
-    cabecalho = ("Modelo", "Precisão", "Abstenção", "US$/divergência", "US$ total")
+    cabecalho = (
+        "Modelo", "Precisão", "Abstenção", "US$/divergência", "US$ total", "Situação"
+    )
     linhas = [cabecalho]
     for r in resultados:
+        if not r.mediu_algo:
+            # Um modelo cuja execução falhou inteira aparecendo com "0.0%" ao
+            # lado de um que mediu de verdade convida à conclusão errada: que
+            # ele foi testado e perdeu. Não foi testado.
+            linhas.append(
+                (
+                    r.model, "—", "—", "—", "—",
+                    f"falha de API em {r.proposals_api_failed}/{r.proposals_total}",
+                )
+            )
+            continue
         linhas.append(
             (
                 r.model,
@@ -121,6 +172,9 @@ def _tabela(resultados: list[EvalResult]) -> str:
                 f"{r.abstention_rate:.1%}",
                 f"{r.microcents_per_divergence / 100_000_000:.6f}",
                 f"{r.total_microcents / 100_000_000:.4f}",
+                "—"
+                if not r.proposals_api_failed
+                else f"falha de API em {r.proposals_api_failed}/{r.proposals_total}",
             )
         )
     larguras = [max(len(linha[i]) for linha in linhas) for i in range(len(cabecalho))]
