@@ -396,7 +396,21 @@ A API constrói a entrada `agente` com um `LLMClient` sentinela cujo
   servindo *o mesmo objeto que o motor executa*. O invariante do
   [`definition.py`](../../../src/orchestrator/workflow/definition.py) — nunca
   uma descrição paralela ao motor — fica intacto.
-- Qualquer tentativa real de chamar o modelo por um endpoint explode alto.
+- Nenhuma chamada chega ao modelo: `complete()` levanta antes de qualquer rede.
+  A garantia de dinheiro é essa, e ela se sustenta.
+
+**Correção de uma afirmação anterior deste spec.** Este parágrafo dizia que a
+tentativa "explode alto, não silenciosamente". É **falso**, e foi medido na
+Task 8: com a guarda do 409 removida, `POST /runs` responde **200 com 14
+chamadas** a `ClienteAusente.complete` — todas engolidas pelo `except Exception`
+de `Investigator._uma`, que as converte em abstenções. Nenhum centavo é gasto,
+mas nada aparece.
+
+Consequência para o desenho: a tranca garante **não gastar**, não garante
+**avisar**. Quem torna o caso visível é o 409, e é por isso que as duas metades
+existem — não como redundância, mas porque cada uma cobre o que a outra não
+cobre. É o mesmo `except Exception` amplo que, na fatia 2, tornou vazio um teste
+de dinheiro inteiro.
 
 `ClienteAusente.model` precisa ser um modelo **da tabela de preços**:
 `Investigator.__post_init__` chama `Cost.zero().microcents(self.client.model)`
