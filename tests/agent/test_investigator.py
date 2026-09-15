@@ -670,3 +670,45 @@ def test_divergencia_sem_proposta_na_fila_e_investigada_normalmente():
     # só "b" gerou chamada ao modelo
     assert len(cliente.chamadas) == 1
     assert out.cost.calls == 1
+
+
+def test_proposta_guardada_com_custo_historico_nao_entra_na_conta_desta_passagem():
+    """Regressão do CRITICAL apontado na revisão: `serial.py` persiste os
+    cinco campos de `Cost`, então uma proposta vinda do disco carrega o
+    gasto REAL da investigação original. Somar esse custo em `total` faria
+    o teto por execução estourar sobre gasto histórico — de uma passagem
+    que não chamou o modelo nenhuma vez — e inflaria `agent_cost_microcents`
+    com dinheiro já contado numa execução anterior.
+    """
+    from orchestrator.review.fila import Fila
+
+    custo_historico = Cost(input_tokens=90_000, output_tokens=20_000, calls=6)
+    fila = Fila.vazia()
+    fila.gravar_proposta(
+        Proposal(
+            divergence_id="a",
+            tipo=DivergenceType.DEFASAGEM_TEMPORAL,
+            explicacao="da passagem anterior",
+            evidencia=["e"],
+            confianca=Confidence.MEDIA,
+            acao_sugerida="conciliar_com(l1)",
+            cost=custo_historico,
+        )
+    )
+
+    class _ClienteQueAcusa:
+        model = "claude-haiku-4-5"
+
+        def complete(self, system, messages, tools):
+            raise AssertionError("o agente reinvestigou o que já estava na fila")
+
+    inv = Investigator(client=_ClienteQueAcusa(), context=CONTEXTO_DE_TESTE, fila=fila)
+    out = inv.investigate([_div("a")])
+
+    # A passagem não gastou nada: nenhuma chamada ao modelo, custo agregado
+    # zerado — mesmo a proposta guardada carregando um custo histórico alto.
+    assert out.cost.calls == 0
+    assert out.cost.microcents(inv.client.model) == 0
+    # O registro de auditoria da proposta em si continua intacto: ela ainda
+    # carrega o custo de quando foi de fato investigada.
+    assert out.proposals[0].cost == custo_historico

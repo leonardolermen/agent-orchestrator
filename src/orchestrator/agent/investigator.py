@@ -152,6 +152,23 @@ class Investigator:
     def investigate(self, divergences: list[Divergence]) -> InvestigationOutput:
         propostas, total = [], Cost.zero()
         for d in divergences:
+            # Idempotência: divergência que já tem proposta na fila não é
+            # reinvestigada. O agente roda antes do revisor em toda passagem,
+            # então sem isto a passagem 2 pagaria de novo por tudo. A guarda
+            # vive AQUI, antes do teto por execução, e não dentro de `_uma`
+            # — o custo gravado na proposta é o que a investigação ORIGINAL
+            # gastou, e precisa ficar de fora de `total`: esta passagem não
+            # gastou nada por ela, e somar de volta faria o teto da execução
+            # estourar sobre gasto histórico, não sobre gasto desta passagem.
+            #
+            # É um cache permanente, sem invalidação: uma vez na fila, a
+            # divergência nunca mais é reinvestigada, mesmo que o prompt
+            # mude, o modelo troque ou um bug do agente seja corrigido.
+            # Reprocessar de verdade exige apagar a entrada da fila.
+            guardada = self.fila.proposta(d.id) if self.fila is not None else None
+            if guardada is not None:
+                propostas.append(guardada)
+                continue
             if total.microcents(self.client.model) > self.budget_total_microcents:
                 # I1: estourar o teto da EXECUÇÃO é evento observável, não
                 # exceção — abstém o restante do lote sem nem chamar o
@@ -173,11 +190,6 @@ class Investigator:
         return InvestigationOutput(proposals=propostas, cost=total)
 
     def _uma(self, divergencia: Divergence) -> Proposal:
-        if self.fila is not None:
-            guardada = self.fila.proposta(divergencia.id)
-            if guardada is not None:
-                return guardada
-
         entrada = descrever_divergencia(self.context, divergencia)
         mensagens: list[dict[str, Any]] = [{"role": "user", "content": entrada}]
         custo, tentativas_formato = Cost.zero(), 0
