@@ -6,8 +6,10 @@ modelo. Ver o §5 do spec desta fatia e o teste em `tests/api/test_execucao.py`.
 """
 
 from functools import lru_cache
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
 
 from orchestrator.api.schemas import (
     GapJSON,
@@ -93,3 +95,14 @@ def _executar_memoizado(workflow_id: str, seed: int, n: int, taxa: float) -> Run
             rate=(total - total_resolvido) / total if total else 0.0,
         ),
     )
+
+
+# De `src/orchestrator/api/app.py`: parents[0] é `api`, [1] é `orchestrator`,
+# [2] é `src`, [3] é a raiz do repositório — é lá que mora `web/`.
+_WEB = Path(__file__).resolve().parents[3] / "web"
+
+# Este `mount("/")` PRECISA ser a última linha do arquivo. `StaticFiles` com
+# `html=True` responde por qualquer caminho não reconhecido (inclusive `/`,
+# servindo `index.html`), então se ele viesse antes das rotas `/api/...`
+# elas nunca seriam alcançadas — o mount as engoliria todas.
+app.mount("/", StaticFiles(directory=_WEB, html=True), name="web")

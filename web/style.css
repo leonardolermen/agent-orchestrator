@@ -1,0 +1,72 @@
+:root {
+  --tinta: #1c1c1c;
+  --fundo: #faf9f7;
+  --borda: #d8d4cd;
+  --regra: #2f7a4d;
+  --agente: #a86a10;
+  --humano: #2a5d9c;
+  --lacuna: #8a6d1f;
+  --lacuna-fundo: #fdf6e0;
+}
+
+body {
+  margin: 0;
+  padding: 2rem 1rem;
+  background: var(--fundo);
+  color: var(--tinta);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+header { max-width: 46rem; margin: 0 auto 1.5rem; }
+h1 { font-size: 1.4rem; margin: 0 0 .25rem; }
+.proveniencia { margin: 0; color: #6b6660; font-size: .85rem; }
+
+main { max-width: 46rem; margin: 0 auto; }
+
+.stage {
+  border: 1px solid var(--borda);
+  border-radius: 8px;
+  background: #fff;
+  padding: 1rem 1.25rem 1.25rem;
+}
+.stage h2 { font-size: 1rem; margin: 0 0 .75rem; font-weight: 600; }
+
+.resolver {
+  display: grid;
+  grid-template-columns: 2rem 1fr 6rem 8rem 5rem;
+  gap: .5rem;
+  align-items: center;
+  padding: .5rem 0;
+  border-top: 1px solid #efece7;
+}
+.ordem { color: #9b958d; }
+.nome { font-weight: 500; }
+.custo, .taxa { font-family: ui-monospace, "SF Mono", Menlo, monospace; text-align: right; }
+
+.classe {
+  font-size: .7rem;
+  letter-spacing: .04em;
+  text-align: center;
+  padding: .15rem .4rem;
+  border-radius: 4px;
+  border: 1px solid currentColor;
+}
+.classe-regra  { color: var(--regra); }
+.classe-agente { color: var(--agente); }
+.classe-humano { color: var(--humano); }
+.classe-lacuna { color: var(--lacuna); }
+
+/* A lacuna não é erro nem ausência: é o ponto da tela onde o especialista
+   diz o que falta no catálogo. Ela tem que saltar aos olhos. */
+.lacuna {
+  background: var(--lacuna-fundo);
+  border-top: 1px dashed var(--lacuna);
+  margin: .25rem -1.25rem 0;
+  padding: .5rem 1.25rem;
+}
+.lacuna .nome { color: var(--lacuna); }
+
+@media (max-width: 34rem) {
+  .resolver { grid-template-columns: 1.5rem 1fr 4.5rem; row-gap: .15rem; }
+  .custo, .taxa { grid-column: 2 / 4; text-align: left; font-size: .85rem; }
+}
