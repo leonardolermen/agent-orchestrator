@@ -279,10 +279,23 @@ lista achatada, e nada que hoje a lê muda.
 
 | Campo | Passa a considerar | Golden |
 |---|---|---|
-| `deterministic_rate`, `bank_matched`, `matched_amount`, `divergent_amount` | só `REGRA` | intacto |
+| `deterministic_rate`, `bank_matched` | só `REGRA` | intacto |
 | `false_positives` | caso reservado ao agente tocado por match **de regra** | intacto |
 | `false_negatives` | caso que a regra devia pegar e **a regra** não cobriu | intacto |
+| `matched_amount`, `divergent_amount` | **todas as classes** | intacto |
 | `bank_matched_total`, `resolution_rate` (novos) | todas as classes | não existem no golden |
+
+**Por que os dois valores em dinheiro não seguem a taxa determinística.** Isto
+saiu da auto-revisão, contra o que uma leitura apressada sugere. `bank_matched`
+e `deterministic_rate` são medidas do *catálogo de regras* — o nome de uma delas
+diz isso — e restringi-las a `REGRA` é o que as mantém honestas. Já
+`divergent_amount` responde a pergunta de um controller: **quanto ainda está em
+aberto**. Dinheiro que um humano conciliou não está em aberto, e mantê-lo ali
+reportaria como problema um trabalho que já foi feito.
+
+Os quatro continuam idênticos no golden porque a definição padrão não tem
+resolver fora da classe `REGRA` — e o agente, mesmo quando entra, produz
+proposta, nunca match.
 
 **O golden fica intacto porque a definição padrão só tem regras** — com a fila
 vazia, `RevisorHumano` não emite nada e todos os matches são `REGRA`. Os quatro
@@ -325,6 +338,21 @@ transformaria um guarda de dinheiro num guarda de forma; o nome vai junto.
 GET  /api/fila/{workflow}?seed&n&taxa[&estado=pendente|decidida]
 POST /api/fila/{workflow}/{divergence_id}/decisao
 ```
+
+### 6.2.1 A memoização da execução deixa de ser correta sozinha
+
+`_executar_memoizado` é `lru_cache` sobre `(workflow, seed, n, taxa)`. Com a
+fila no meio, a execução **deixa de ser função só desses quatro valores**: ela
+passa a depender do conteúdo do arquivo de decisões. Sem cuidado, aprovar uma
+proposta e recarregar o canvas mostraria o estado anterior, e o revisor
+concluiria que a aprovação não funcionou.
+
+O POST de decisão chama `_executar_memoizado.cache_clear()`. Recomputar custa
+milissegundos e a correção é óbvia de ler. A alternativa — incluir uma revisão
+da fila na chave — preserva as entradas de outros datasets, e é o gatilho para
+quando houver datasets suficientes para isso importar.
+
+### 6.2.2 O corpo das rotas
 
 O GET reconstrói o benchmark (determinístico, cacheado como a execução já é) e
 junta cada proposta aos **lançamentos que ela julga** — o controller precisa ver
