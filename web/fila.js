@@ -65,17 +65,15 @@ function desenhar(item) {
                  <td class="num">${(l.valor / 100).toFixed(2)}</td>
                  <td>${l.contraparte}</td><td>${l.documento ?? "—"}</td></tr>`)
     .join("");
-  const evidencia = item.evidencia.map((e) => `<li>${e}</li>`).join("");
-
   el.innerHTML = `
     <h2>${item.divergence_id}</h2>
     <table class="lancamentos"><tbody>${lancamentos}</tbody></table>
     <p class="proposta">
       <span class="tipo">${item.tipo}</span>
       <span class="confianca conf-${item.confianca.toLowerCase()}">${item.confianca}</span>
-      ${item.explicacao}
+      <span class="explicacao"></span>
     </p>
-    <ul class="evidencia">${evidencia}</ul>
+    <ul class="evidencia"></ul>
     <div class="acoes">
       <button data-v="aceitar">Aceitar</button>
       <button data-v="corrigir" class="btn-corrigir" type="button">Corrigir</button>
@@ -86,6 +84,20 @@ function desenhar(item) {
       <input class="ids-corrigidos" placeholder="ids a conciliar, separados por vírgula">
       <button class="confirmar-correcao" type="button">Confirmar correção</button>
     </div>`;
+
+  // `explicacao` e `evidencia` são texto livre que o AGENTE (um LLM) produziu
+  // a partir do dataset — a primeira vez que o projeto deixa saída de modelo
+  // virar DOM. `innerHTML` os interpretaria como marcação; `textContent` os
+  // trata como o que são, texto, e nada que a proposta escreva pode injetar
+  // uma tag. O resto do template continua vindo de campos do próprio dataset
+  // (`lado`, `id`, `data`, `contraparte`, `documento`), não do modelo.
+  el.querySelector(".explicacao").textContent = item.explicacao;
+  const listaEvidencia = el.querySelector(".evidencia");
+  for (const e of item.evidencia) {
+    const li = document.createElement("li");
+    li.textContent = e;
+    listaEvidencia.appendChild(li);
+  }
 
   // "Corrigir" só abre/fecha a caixa — nunca decide nada sozinho. Um clique
   // perdido (ou dois seguidos por engano) nesse botão não pode gravar uma

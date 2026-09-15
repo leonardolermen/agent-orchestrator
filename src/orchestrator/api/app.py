@@ -274,14 +274,10 @@ def decidir(
         raise HTTPException(status_code=404, detail=f"workflow desconhecido: {workflow_id}")
     fila, _ = _abrir_fila(workflow_id, seed, n, taxa_divergencia)
 
-    # Validação de FORMA do pedido, antes de qualquer busca: `corrigir` sem
-    # `tipo` é inválido em si mesmo, independente de existir proposta para
-    # `divergence_id`. Checar isto DEPOIS do 404 de proposta ausente faria um
-    # pedido malformado para um id inexistente devolver 404 em vez de 422 — o
-    # sinal errado para quem está montando o corpo da requisição.
-    if pedido.veredito is Veredito.CORRIGIR and pedido.tipo is None:
-        raise HTTPException(status_code=422, detail="corrigir exige `tipo`")
-
+    # `corrigir` sem `tipo` nunca chega aqui: `DecisaoRequest._corrigir_exige_tipo`
+    # (schemas.py) é um `@model_validator`, e o FastAPI devolve 422 antes de o
+    # handler rodar — logo antes de qualquer busca, sem depender de ordem
+    # escrita à mão contra o 404 de proposta ausente.
     proposta = fila.proposta(divergence_id)
     if proposta is None:
         raise HTTPException(
