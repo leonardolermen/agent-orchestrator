@@ -100,6 +100,7 @@ def test_cada_resolver_se_descreve_com_o_proprio_nome_e_classe():
 
 class _InvestigadorFalso:
     name = "falso"
+    cost_class = CostClass.AGENTE
 
     def __init__(self):
         self.recebeu = None
@@ -110,6 +111,13 @@ class _InvestigadorFalso:
             proposals=[Proposal.abstencao(d.id, "teste") for d in divergences],
             cost=Cost(calls=len(divergences)),
         )
+
+    def resolve(self, work: WorkSet) -> ResolverOutput:
+        saida = self.investigate(work.as_divergences())
+        return ResolverOutput(proposals=saida.proposals, cost=saida.cost)
+
+    def describe(self) -> ResolverDescription:
+        return ResolverDescription(self.name, self.cost_class, "falso")
 
 
 def test_sem_investigador_nao_ha_propostas():
@@ -128,7 +136,7 @@ def test_investigador_recebe_apenas_o_que_sobrou():
     ds = build_dataset(pares, injections=[inj])
     espiao = _InvestigadorFalso()
 
-    r = reconcile(ds.bank, ds.ledger, investigator=espiao)
+    r = reconcile(ds.bank, ds.ledger, resolvers=[*default_resolvers(), espiao])
 
     assert espiao.recebeu == r.divergences
     assert len(r.proposals) == len(r.divergences)
@@ -142,7 +150,7 @@ def test_proposta_nao_resolve_a_divergencia():
     ds = build_dataset(pares, injections=[inj])
 
     sem = reconcile(ds.bank, ds.ledger)
-    com = reconcile(ds.bank, ds.ledger, investigator=_InvestigadorFalso())
+    com = reconcile(ds.bank, ds.ledger, resolvers=[*default_resolvers(), _InvestigadorFalso()])
 
     assert len(com.divergences) == len(sem.divergences)
     assert len(com.matches) == len(sem.matches)
@@ -153,9 +161,61 @@ def test_custo_do_agente_e_agregado_no_resultado():
     inj = DefasagemTemporal().apply(Random(0), pares[0])
     ds = build_dataset(pares, injections=[inj])
 
-    r = reconcile(ds.bank, ds.ledger, investigator=_InvestigadorFalso())
+    r = reconcile(ds.bank, ds.ledger, resolvers=[*default_resolvers(), _InvestigadorFalso()])
 
     assert r.agent_cost.calls == len(r.divergences)
+
+
+def test_custo_de_cada_resolver_na_cascata_e_somado_no_agent_cost():
+    # Requisito adicional do Task 5: agora que o agente é só mais um resolver
+    # dentro do laço, `saida.cost` de CADA UM precisa ser somado — não só o
+    # `calls`, os três campos de consumo de token. Antes da Task 5 este custo
+    # nunca existia (nenhuma regra determinística cobra); se o laço voltar a
+    # ler só `matches`/`proposals` e descartar `cost`, `agent_cost` regride
+    # para `Cost.zero()` mesmo com propostas não vazias — um zero silencioso
+    # bem no número que sustenta o argumento comercial do produto.
+    class _AgenteFalso:
+        name = "agente_falso"
+        cost_class = CostClass.AGENTE
+
+        def resolve(self, work: WorkSet) -> ResolverOutput:
+            return ResolverOutput(cost=Cost(input_tokens=321, output_tokens=64, calls=6))
+
+        def describe(self) -> ResolverDescription:
+            return ResolverDescription(self.name, self.cost_class, "agente falso")
+
+    r = reconcile(BANCO_DE_TESTE, CONTABIL_DE_TESTE, resolvers=[_AgenteFalso()])
+
+    assert r.agent_cost.input_tokens == 321
+    assert r.agent_cost.output_tokens == 64
+    assert r.agent_cost.calls == 6
+
+
+def test_agente_na_cascata_recebe_as_mesmas_divergencias_que_recebia_por_parametro():
+    # Quando o agente roda por último, `work.as_divergences()` produz
+    # exatamente a lista que o parâmetro `investigator=` entregava. Este teste
+    # é o que autoriza remover o parâmetro.
+    registro: list[list[str]] = []
+
+    class _RegistraDivergencias:
+        name = "espiao"
+        cost_class = CostClass.AGENTE
+
+        def resolve(self, work: WorkSet) -> ResolverOutput:
+            registro.append([d.id for d in work.as_divergences()])
+            return ResolverOutput()
+
+        def describe(self) -> ResolverDescription:
+            return ResolverDescription(self.name, self.cost_class, "espião")
+
+    esperado = reconcile(BANCO_DE_TESTE, CONTABIL_DE_TESTE)
+    reconcile(
+        BANCO_DE_TESTE,
+        CONTABIL_DE_TESTE,
+        resolvers=[*default_resolvers(), _RegistraDivergencias()],
+    )
+
+    assert registro == [[d.id for d in esperado.divergences]]
 
 
 class _ResolverEspiao:

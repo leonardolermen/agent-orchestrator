@@ -1,14 +1,14 @@
 from random import Random
 
 from orchestrator.agent.proposal import Confidence, Cost, InvestigationOutput, Proposal
-from orchestrator.matching.engine import reconcile
+from orchestrator.matching.engine import default_resolvers, reconcile
 from orchestrator.metrics import evaluate
 from orchestrator.models import MatchResult
 from orchestrator.money import format_brl
 from orchestrator.synth.generator import build_dataset, generate_clean_pairs
 from orchestrator.synth.injectors import DefasagemTemporal, PagamentoAgregado
 from orchestrator.workflow.cost_class import CostClass
-from orchestrator.workflow.resolver import ResolverOutput
+from orchestrator.workflow.resolver import ResolverDescription, ResolverOutput
 from orchestrator.workflow.workset import WorkSet
 
 
@@ -197,6 +197,7 @@ class _InvestigadorQueAcerta:
     """Propõe sempre o tipo que o gabarito diz."""
 
     name = "acerta"
+    cost_class = CostClass.AGENTE
 
     def __init__(self, truth):
         self._por_id = {}
@@ -226,6 +227,13 @@ class _InvestigadorQueAcerta:
         return InvestigationOutput(propostas, Cost(input_tokens=100 * len(propostas),
                                                    calls=len(propostas)))
 
+    def resolve(self, work: WorkSet) -> ResolverOutput:
+        saida = self.investigate(work.as_divergences())
+        return ResolverOutput(proposals=saida.proposals, cost=saida.cost)
+
+    def describe(self) -> ResolverDescription:
+        return ResolverDescription(self.name, self.cost_class, "acerta contra o gabarito")
+
 
 def test_conta_matches_por_camada():
     pares = generate_clean_pairs(seed=9, n=20)
@@ -253,7 +261,9 @@ def test_precisao_das_propostas_contra_o_gabarito():
     inj = DefasagemTemporal().apply(Random(0), pares[0])
     ds = build_dataset(pares, injections=[inj])
 
-    r = reconcile(ds.bank, ds.ledger, investigator=_InvestigadorQueAcerta(ds.truth))
+    r = reconcile(
+        ds.bank, ds.ledger, resolvers=[*default_resolvers(), _InvestigadorQueAcerta(ds.truth)]
+    )
     m = evaluate(ds, r)
 
     assert m.proposals_total == len(r.divergences)
@@ -267,12 +277,22 @@ def test_abstencao_nao_conta_como_acerto_nem_como_erro():
 
     class _SempreAbstem:
         name = "abstem"
+        cost_class = CostClass.AGENTE
 
         def investigate(self, divergences):
             ps = [Proposal.abstencao(d.id, "não sei") for d in divergences]
             return InvestigationOutput(ps, Cost.zero())
 
-    m = evaluate(ds, reconcile(ds.bank, ds.ledger, investigator=_SempreAbstem()))
+        def resolve(self, work: WorkSet) -> ResolverOutput:
+            saida = self.investigate(work.as_divergences())
+            return ResolverOutput(proposals=saida.proposals, cost=saida.cost)
+
+        def describe(self) -> ResolverDescription:
+            return ResolverDescription(self.name, self.cost_class, "sempre abstém")
+
+    m = evaluate(
+        ds, reconcile(ds.bank, ds.ledger, resolvers=[*default_resolvers(), _SempreAbstem()])
+    )
 
     assert m.proposals_abstained == m.proposals_total
     assert m.proposals_correct == 0
@@ -283,7 +303,9 @@ def test_custo_do_agente_aparece_em_microcents():
     inj = DefasagemTemporal().apply(Random(0), pares[0])
     ds = build_dataset(pares, injections=[inj])
 
-    r = reconcile(ds.bank, ds.ledger, investigator=_InvestigadorQueAcerta(ds.truth))
+    r = reconcile(
+        ds.bank, ds.ledger, resolvers=[*default_resolvers(), _InvestigadorQueAcerta(ds.truth)]
+    )
     m = evaluate(ds, r, model="claude-opus-5")
 
     assert m.agent_cost_microcents == r.agent_cost.microcents("claude-opus-5")
@@ -295,7 +317,10 @@ def test_render_mostra_camadas_e_propostas():
     ds = build_dataset(pares, injections=[inj])
 
     saida = evaluate(
-        ds, reconcile(ds.bank, ds.ledger, investigator=_InvestigadorQueAcerta(ds.truth))
+        ds,
+        reconcile(
+            ds.bank, ds.ledger, resolvers=[*default_resolvers(), _InvestigadorQueAcerta(ds.truth)]
+        ),
     ).render()
 
     assert "L1" in saida

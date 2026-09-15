@@ -16,7 +16,7 @@ from orchestrator.agent.llm import LLMClient
 from orchestrator.agent.proposal import TraceKind
 from orchestrator.agent.tools import ToolContext
 from orchestrator.cli import build_benchmark
-from orchestrator.matching.engine import reconcile
+from orchestrator.matching.engine import default_resolvers, reconcile
 from orchestrator.metrics import evaluate
 
 MODELOS_PADRAO = ("claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5")
@@ -123,7 +123,9 @@ def avaliar(
         client=cliente, context=ToolContext(bank=dataset.bank, ledger=dataset.ledger)
     )
 
-    resultado = reconcile(dataset.bank, dataset.ledger, investigator=investigador)
+    resultado = reconcile(
+        dataset.bank, dataset.ledger, resolvers=[*default_resolvers(), investigador]
+    )
     metricas = evaluate(dataset, resultado, model=cliente.model)
     falhas_api = sum(
         1
