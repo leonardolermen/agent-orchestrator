@@ -166,29 +166,48 @@ def test_custo_do_agente_e_agregado_no_resultado():
     assert r.agent_cost.calls == len(r.divergences)
 
 
-def test_custo_de_cada_resolver_na_cascata_e_somado_no_agent_cost():
-    # Requisito adicional do Task 5: agora que o agente é só mais um resolver
-    # dentro do laço, `saida.cost` de CADA UM precisa ser somado — não só o
-    # `calls`, os três campos de consumo de token. Antes da Task 5 este custo
-    # nunca existia (nenhuma regra determinística cobra); se o laço voltar a
-    # ler só `matches`/`proposals` e descartar `cost`, `agent_cost` regride
-    # para `Cost.zero()` mesmo com propostas não vazias — um zero silencioso
-    # bem no número que sustenta o argumento comercial do produto.
-    class _AgenteFalso:
-        name = "agente_falso"
+def test_custo_de_dois_resolvers_na_cascata_e_somado_nao_sobrescrito_no_agent_cost():
+    # Review do Task 5, round 2: com um resolver só, `custo_total = custo_total
+    # + saida.cost` (certo) e a regressão `custo_total = saida.cost`
+    # (sobrescreve em vez de somar) produzem o MESMO resultado — soma de um
+    # único valor não-zero com `Cost.zero()` é o próprio valor, e o teste
+    # anterior (`_AgenteFalso` sozinho, ou `_InvestigadorFalso` empilhado só
+    # com regras que sempre custam zero) não distinguia as duas
+    # implementações.
+    #
+    # Aqui são DOIS resolvers, os dois com custo não-zero e DISTINTO nos três
+    # campos (input_tokens, output_tokens, calls). Só a soma de verdade bate
+    # com o valor esperado — overwrite faria o último resolver da cascata
+    # "vencer" sozinho — e um bug parcial em `Cost.__add__` (um campo que
+    # deixasse de ser somado) também apareceria, porque os três campos têm
+    # valores diferentes entre A e B.
+    class _AgenteFalsoA:
+        name = "agente_falso_a"
         cost_class = CostClass.AGENTE
 
         def resolve(self, work: WorkSet) -> ResolverOutput:
             return ResolverOutput(cost=Cost(input_tokens=321, output_tokens=64, calls=6))
 
         def describe(self) -> ResolverDescription:
-            return ResolverDescription(self.name, self.cost_class, "agente falso")
+            return ResolverDescription(self.name, self.cost_class, "agente falso A")
 
-    r = reconcile(BANCO_DE_TESTE, CONTABIL_DE_TESTE, resolvers=[_AgenteFalso()])
+    class _AgenteFalsoB:
+        name = "agente_falso_b"
+        cost_class = CostClass.AGENTE
 
-    assert r.agent_cost.input_tokens == 321
-    assert r.agent_cost.output_tokens == 64
-    assert r.agent_cost.calls == 6
+        def resolve(self, work: WorkSet) -> ResolverOutput:
+            return ResolverOutput(cost=Cost(input_tokens=100, output_tokens=7, calls=2))
+
+        def describe(self) -> ResolverDescription:
+            return ResolverDescription(self.name, self.cost_class, "agente falso B")
+
+    r = reconcile(
+        BANCO_DE_TESTE, CONTABIL_DE_TESTE, resolvers=[_AgenteFalsoA(), _AgenteFalsoB()]
+    )
+
+    assert r.agent_cost.input_tokens == 321 + 100
+    assert r.agent_cost.output_tokens == 64 + 7
+    assert r.agent_cost.calls == 6 + 2
 
 
 def test_agente_na_cascata_recebe_as_mesmas_divergencias_que_recebia_por_parametro():
