@@ -32,6 +32,15 @@ class ReconcileResult:
     # nada aparece com Cost.zero(); um que não rodou não aparece. A diferença
     # importa na tela: "de graça" e "não rodou" são coisas diferentes.
     cost_by_resolver: dict[str, Cost] = field(default_factory=dict)
+    # Contagem por IDENTIDADE do resolver (`Resolver.name`), não por
+    # proveniência (`MatchResult.layer`) — ver P3.2 em DECISOES.md. Os dois
+    # coincidem hoje porque cada resolver só produz matches com o próprio
+    # nome como `layer`, mas são conceitos diferentes por desenho: `layer` é
+    # "quem produziu este vínculo", `name` é "quem é o resolver na cascata".
+    # `Metrics.matches_by_layer` continua a fonte de proveniência; este campo
+    # é o que a tela precisa para nunca reportar 0% de um resolver que rodou
+    # e apenas estampou seus matches com uma proveniência diferente do nome.
+    matches_by_resolver: dict[str, int] = field(default_factory=dict)
 
 
 def default_resolvers() -> list[Resolver]:
@@ -53,6 +62,7 @@ def reconcile(
     todos: list[MatchResult] = []
     propostas: list[Proposal] = []
     custos: dict[str, Cost] = {}
+    matches_por_resolver: dict[str, int] = {}
 
     # A ordenação é POR STAGE, não global: um stage posterior não pode ter
     # seus resolvers embaralhados com os de um anterior. Com um stage só — o
@@ -67,6 +77,9 @@ def reconcile(
             # Chave, não soma: cada resolver aparece com o PRÓPRIO custo, e um
             # selo na tela não teria como decompor um total do sistema.
             custos[resolver.name] = saida.cost
+            # Chave por identidade do resolver, não por `layer` do match — a
+            # mesma distinção do comentário em `matches_by_resolver` acima.
+            matches_por_resolver[resolver.name] = len(saida.matches)
             # Só `matches` encolhe o pool. `saida.proposals` não aparece
             # nesta expressão, e é essa ausência que torna a invariante
             # estrutural em vez de uma regra que alguém precisa lembrar.
@@ -77,4 +90,5 @@ def reconcile(
         divergences=work.as_divergences(),
         proposals=propostas,
         cost_by_resolver=custos,
+        matches_by_resolver=matches_por_resolver,
     )

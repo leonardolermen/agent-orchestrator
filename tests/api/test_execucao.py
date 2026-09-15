@@ -4,9 +4,26 @@ pytest.importorskip("fastapi")
 
 from fastapi.testclient import TestClient
 
-from orchestrator.api.app import app
+from orchestrator.api.app import _WORKFLOWS, _executar_memoizado, app
 
 cliente = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def _cache_limpo():
+    """`executar()` delega para `_executar_memoizado`, que é `lru_cache`d.
+
+    Duas funções neste arquivo postam o EXATO mesmo corpo
+    (`{"seed": 1, "n": 100, "taxa_divergencia": 0.15}`): o canário
+    (`test_execucao_nao_chama_o_modelo_de_jeito_nenhum`) e
+    `test_execucao_so_serve_resolvers_de_classe_regra`. Se uma rodar depois da
+    outra com o cache ainda quente, a segunda vira cache hit — o corpo de
+    `_executar_memoizado` nem executa — e uma asserção sobre "o que foi
+    chamado" passa vazia, sem ter provado nada. Hoje isso só não acontece por
+    acidente de ordem no arquivo; `-k`, um teste novo inserido antes, ou um
+    plugin de ordem aleatória destruiriam essa garantia em silêncio.
+    """
+    _executar_memoizado.cache_clear()
 
 
 def test_execucao_nao_chama_o_modelo_de_jeito_nenhum(monkeypatch):
@@ -101,3 +118,63 @@ def test_n_invalido_da_422_em_vez_de_estourar():
         json={"seed": 1, "n": 300, "taxa_divergencia": 5.0},
     )
     assert resposta.status_code == 422
+
+
+def test_resolver_com_layer_diferente_do_name_e_reportado_pelo_proprio_nome(monkeypatch):
+    """Pina P3.2 (DECISOES.md): `Resolver.name` é identidade, `MatchResult.layer`
+    é proveniência — dois conceitos que hoje coincidem para L1/L2/L3, mas não
+    são o mesmo campo. Um resolver com `name` diferente do `layer` que ele
+    estampa nos próprios matches ainda precisa aparecer com a contagem REAL na
+    resposta do endpoint. Se o endpoint voltasse a ler `matches_by_layer`
+    (proveniência) chaveado por `name` (identidade), este resolver reportaria
+    0% mesmo tendo casado lançamentos de verdade — o defeito de zero silencioso
+    que este teste existe para travar.
+    """
+    from orchestrator.models import MatchResult
+    from orchestrator.workflow.cost_class import CostClass
+    from orchestrator.workflow.definition import Stage, WorkflowDefinition
+    from orchestrator.workflow.resolver import ResolverDescription, ResolverOutput
+
+    class _NomeDiferenteDaProveniencia:
+        name = "resolver_x"
+        cost_class = CostClass.REGRA
+
+        def resolve(self, work):
+            n = min(3, len(work.bank), len(work.ledger))
+            return ResolverOutput(
+                matches=[
+                    MatchResult(
+                        bank_ids=frozenset({work.bank[i].id}),
+                        ledger_ids=frozenset({work.ledger[i].id}),
+                        # Proveniência deliberadamente != `name` acima.
+                        layer="proveniencia_y",
+                        rule="teste",
+                    )
+                    for i in range(n)
+                ]
+            )
+
+        def describe(self) -> ResolverDescription:
+            return ResolverDescription(self.name, self.cost_class, "name != layer, de propósito")
+
+    def _fabrica():
+        return WorkflowDefinition(
+            id="layer_diferente",
+            name="teste — name != layer",
+            stages=(Stage(name="s", cascade=(_NomeDiferenteDaProveniencia(),)),),
+        )
+
+    monkeypatch.setitem(_WORKFLOWS, "layer_diferente", _fabrica)
+
+    corpo = cliente.post(
+        "/api/workflows/layer_diferente/runs",
+        json={"seed": 1, "n": 100, "taxa_divergencia": 0.15},
+    ).json()
+
+    (resolvido,) = corpo["by_resolver"]
+    assert resolvido["name"] == "resolver_x"
+    assert resolvido["matches"] == 3
+    assert resolvido["rate"] == pytest.approx(3 / corpo["bank_total"])
+
+    soma = sum(r["rate"] for r in corpo["by_resolver"]) + corpo["gap"]["rate"]
+    assert soma == pytest.approx(1.0)

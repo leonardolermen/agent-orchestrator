@@ -68,8 +68,13 @@ def _executar_memoizado(workflow_id: str, seed: int, n: int, taxa: float) -> Run
         ResolverRunJSON(
             name=d.name,
             cost_class=d.cost_class.name,
-            matches=m.matches_by_layer.get(d.name, 0),
-            rate=m.matches_by_layer.get(d.name, 0) / total if total else 0.0,
+            # `resultado.matches_by_resolver`, chaveado por IDENTIDADE do
+            # resolver — não `m.matches_by_layer`, que é chaveado por
+            # PROVENIÊNCIA (`MatchResult.layer`). Os dois coincidem hoje
+            # (P3.2 em DECISOES.md), mas só um deles responde "quanto este
+            # resolver da cascata resolveu" por construção.
+            matches=resultado.matches_by_resolver.get(d.name, 0),
+            rate=resultado.matches_by_resolver.get(d.name, 0) / total if total else 0.0,
             microcents=m.cost_by_resolver_microcents.get(d.name, 0),
         )
         for stage in definicao.stages
