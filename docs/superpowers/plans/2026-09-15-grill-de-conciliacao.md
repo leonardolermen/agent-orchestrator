@@ -20,7 +20,13 @@
 - **Toda restrição de parâmetro vive no `__post_init__` do resolver**, nunca duplicada no catálogo.
 - **Um teste que passa com a implementação errada não é teste.** Para cada teste escrito, quebre a implementação de propósito e mostre o teste falhando antes de seguir.
 - **Comentários e mensagens em português**, seguindo o estilo do repositório: explique *por quê*, não *o quê*.
-- **Ruff limpo:** `ruff check src tests` e `ruff format --check src tests` antes de cada commit. `line-length = 100`.
+- **Ferramentas vivem no venv, NÃO no PATH.** Todo comando do plano roda como
+  `.venv/Scripts/python.exe -m pytest ...` e `.venv/Scripts/python.exe -m ruff ...`.
+  Consoles scripts: `.venv/Scripts/orchestrator.exe`, `.venv/Scripts/orchestrator-grill.exe`.
+  `pytest`/`ruff` pelados falham com "command not found".
+- **Ruff limpo:** `ruff check src tests` antes de cada commit. `line-length = 100`.
+  NÃO rode `ruff format`: 39 arquivos pré-existentes seriam reformatados e o diff
+  real ficaria enterrado sob ruído alheio. Só o lint é o padrão exercido aqui.
 
 ---
 
@@ -343,7 +349,7 @@ Faça, uma de cada vez, e confirme o FAIL antes de desfazer:
 - [ ] **Step 6: Commit**
 
 ```bash
-ruff check src tests && ruff format --check src tests && pytest tests/ -q
+ruff check src tests && pytest tests/ -q
 git add src/orchestrator/grill tests/grill
 git commit -m "feat(grill): catálogo como tabela única e ClienteAusente"
 ```
@@ -365,6 +371,7 @@ git commit -m "feat(grill): catálogo como tabela única e ClienteAusente"
   - `construir(receita, *, fila=None, cliente=None, context=None) -> WorkflowDefinition` — defaults inertes: `Fila.vazia()`, `ClienteAusente()`, `ToolContext([], [])`
   - `ID_RESERVADOS: frozenset[str]` = `{"conciliacao"}`
   - `PADRAO_ID: re.Pattern` = `^[a-z][a-z0-9-]{2,39}$`
+  - `validar_id(workflow_id: str) -> None` — levanta `ValueError` para id fora do padrão ou reservado. **Mora aqui, e só aqui**: a Task 4 e a Task 5 chamam esta função; nenhuma das duas reescreve a checagem. Duplicar um bloco lógico verbatim é defeito pelo rubric de revisão.
 
 - [ ] **Step 1: Escreva os testes que falham**
 
@@ -514,6 +521,23 @@ PADRAO_ID = re.compile(r"^[a-z][a-z0-9-]{2,39}$")
 ID_RESERVADOS = frozenset({"conciliacao"})
 
 
+def validar_id(workflow_id: str) -> None:
+    """Único lugar onde a forma de um id é decidida.
+
+    Chamado pelo entrevistador (antes do primeiro turno, para não desperdiçar
+    a conversa do parceiro) e pelo registro (antes de montar caminho, porque um
+    id com `../` escreveria fora de `data/`). Dois pontos de chamada, uma
+    lógica.
+    """
+    if not PADRAO_ID.match(workflow_id):
+        raise ValueError(
+            f"id inválido: {workflow_id!r}. use minúsculas, dígitos e hífen, "
+            f"começando por letra, de 3 a 40 caracteres"
+        )
+    if workflow_id in ID_RESERVADOS:
+        raise ValueError(f"id reservado: {workflow_id!r}")
+
+
 @dataclass(frozen=True)
 class ResolverReceita:
     nome: str
@@ -632,7 +656,7 @@ Esperado: 10 passed.
 - [ ] **Step 6: Commit**
 
 ```bash
-ruff check src tests && ruff format --check src tests && pytest tests/ -q
+ruff check src tests && pytest tests/ -q
 git add src/orchestrator/grill/receita.py tests/grill/test_receita.py
 git commit -m "feat(grill): Receita serializável e construir() que valida construindo"
 ```
@@ -1017,7 +1041,7 @@ Esperado: 12 passed.
 - [ ] **Step 7: Commit**
 
 ```bash
-ruff check src tests && ruff format --check src tests && pytest tests/ -q
+ruff check src tests && pytest tests/ -q
 git add src/orchestrator/grill/prompt.py src/orchestrator/grill/ferramentas.py tests/grill/test_ferramentas.py
 git commit -m "feat(grill): três ferramentas com enum derivado do catálogo"
 ```
@@ -1270,7 +1294,7 @@ from orchestrator.grill.ferramentas import (
     interpretar,
 )
 from orchestrator.grill.prompt import SYSTEM
-from orchestrator.grill.receita import PADRAO_ID, ID_RESERVADOS, Receita, construir
+from orchestrator.grill.receita import Receita, construir, validar_id
 
 # SUBSTITUA pelo número derivado no Step 1 desta tarefa, e cole a conta
 # inteira neste comentário no formato do comentário de
@@ -1330,14 +1354,9 @@ class Entrevistador:
         responder: Callable[[str], str],
     ) -> Proposta | RecusaFinal:
         # ANTES do primeiro turno: descobrir um id inválido no fim
-        # desperdiçaria a conversa inteira do parceiro.
-        if not PADRAO_ID.match(workflow_id):
-            raise ValueError(
-                f"id inválido: {workflow_id!r}. use minúsculas, dígitos e hífen, "
-                f"começando por letra, de 3 a 40 caracteres"
-            )
-        if workflow_id in ID_RESERVADOS:
-            raise ValueError(f"id reservado: {workflow_id!r}")
+        # desperdiçaria a conversa inteira do parceiro. A checagem em si mora
+        # em `receita.validar_id` — o registro chama a MESMA função.
+        validar_id(workflow_id)
 
         ferramentas = esquemas()
         mensagens: list[dict[str, Any]] = [{"role": "user", "content": descricao}]
@@ -1467,14 +1486,14 @@ Esperado: 11 passed. Se `test_orcamento_padrao_cobre_uma_entrevista_realista` fa
 - [ ] **Step 6: Mutação**
 
 1. Troque `mensagens.append(self._erro(...))` (no ramo de `construir` falhando) por um `pass` → `test_proposta_invalida_volta_ao_modelo_com_a_mensagem_do_resolver` FALHA na asserção sobre `cliente.chamadas[1]`.
-2. Remova a checagem de `PADRAO_ID` → `test_id_invalido_e_recusado_antes_do_primeiro_turno` FALHA.
+2. Remova a chamada a `validar_id` de `entrevistar` → `test_id_invalido_e_recusado_antes_do_primeiro_turno` FALHA.
 3. Mova a checagem de orçamento para DEPOIS do `return` da proposta → `test_orcamento_estourado_falha_alto` FALHA.
 4. Troque `for _ in range(self.max_turnos)` por `while True` → `test_turnos_esgotados_falha_alto_e_preserva_a_transcricao` trava; confirme com `pytest --timeout` ou Ctrl+C, depois restaure.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-ruff check src tests && ruff format --check src tests && pytest tests/ -q
+ruff check src tests && pytest tests/ -q
 git add src/orchestrator/grill/entrevistador.py tests/grill/test_entrevistador.py
 git commit -m "feat(grill): laço da entrevista com saída tipada e orçamento derivado"
 ```
@@ -1489,7 +1508,7 @@ git commit -m "feat(grill): laço da entrevista com saída tipada e orçamento d
 - Test: `tests/grill/test_registro.py`
 
 **Interfaces:**
-- Consumes: `Receita`, `para_json`, `de_json`, `PADRAO_ID`, `ID_RESERVADOS` (Task 2); `RecusaFinal` (Task 4).
+- Consumes: `Receita`, `para_json`, `de_json`, `validar_id` (Task 2); `RecusaFinal` (Task 4). **Não reescreva a validação de id** — importe `validar_id` de `receita.py`.
 - Produces:
   - `_RAIZ_PADRAO: Path` = `Path("data")` — atributo de módulo, trocável por `tmp_path` no teste
   - `caminho_da_receita(id, raiz=None) -> Path` → `<raiz>/workflows/<id>.json`
@@ -1632,13 +1651,7 @@ import json
 import sys
 from pathlib import Path
 
-from orchestrator.grill.receita import (
-    ID_RESERVADOS,
-    PADRAO_ID,
-    Receita,
-    de_json,
-    para_json,
-)
+from orchestrator.grill.receita import Receita, de_json, para_json, validar_id
 
 _RAIZ_PADRAO = Path("data")
 
@@ -1656,18 +1669,6 @@ def caminho_da_recusa(workflow_id: str, raiz: Path | None = None) -> Path:
     return _raiz(raiz) / "grill" / "recusas" / f"{workflow_id}.json"
 
 
-def _validar_id(workflow_id: str) -> None:
-    # A validação vem ANTES de montar o caminho: um id com `../` escreveria
-    # fora de `data/`.
-    if not PADRAO_ID.match(workflow_id):
-        raise ValueError(
-            f"id inválido: {workflow_id!r}. use minúsculas, dígitos e hífen, "
-            f"começando por letra, de 3 a 40 caracteres"
-        )
-    if workflow_id in ID_RESERVADOS:
-        raise ValueError(f"id reservado: {workflow_id!r}")
-
-
 def _escrever(caminho: Path, dados: dict) -> Path:
     caminho.parent.mkdir(parents=True, exist_ok=True)
     caminho.write_text(json.dumps(dados, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -1675,7 +1676,8 @@ def _escrever(caminho: Path, dados: dict) -> Path:
 
 
 def gravar_receita(receita: Receita, raiz: Path | None = None) -> Path:
-    _validar_id(receita.id)
+    # ANTES de montar o caminho: um id com `../` escreveria fora de `data/`.
+    validar_id(receita.id)
     caminho = caminho_da_receita(receita.id, raiz)
     if caminho.exists():
         raise ValueError(
@@ -1707,7 +1709,7 @@ def listar_receitas(raiz: Path | None = None) -> list[Receita]:
 
 
 def gravar_recusa(workflow_id: str, recusa, raiz: Path | None = None) -> Path:
-    _validar_id(workflow_id)
+    validar_id(workflow_id)
     return _escrever(
         caminho_da_recusa(workflow_id, raiz),
         {
@@ -1753,14 +1755,14 @@ Esperado: 11 passed.
 
 - [ ] **Step 6: Mutação**
 
-1. Remova `_validar_id` de `gravar_receita` → `test_id_com_travessia_de_caminho_e_recusado` FALHA **e escreve fora de `tmp_path`**; confirme e restaure.
+1. Remova a chamada a `validar_id` de `gravar_receita` → `test_id_com_travessia_de_caminho_e_recusado` FALHA **e escreve fora de `tmp_path`**; confirme e restaure.
 2. Remova o `if caminho.exists()` → `test_gravar_recusa_sobrescrever` FALHA.
 3. Troque o `except` de `listar_receitas` por um `raise` → `test_listar_ignora_arquivo_corrompido` FALHA.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-ruff check src tests && ruff format --check src tests && pytest tests/ -q
+ruff check src tests && pytest tests/ -q
 git add src/orchestrator/grill/registro.py tests/grill/test_registro.py .gitignore
 git commit -m "feat(grill): registro em disco e .gitignore como allowlist sob data/"
 ```
@@ -2062,7 +2064,7 @@ Esperado: 7 passed.
 - [ ] **Step 7: Commit**
 
 ```bash
-ruff check src tests && ruff format --check src tests && pytest tests/ -q
+ruff check src tests && pytest tests/ -q
 git add src/orchestrator/grill/cli.py tests/grill/test_cli.py pyproject.toml
 git commit -m "feat(grill): CLI orchestrator-grill com a ressalva do benchmark"
 ```
@@ -2317,7 +2319,7 @@ Esperado: 7 passed.
 - [ ] **Step 7: Commit**
 
 ```bash
-ruff check src tests && ruff format --check src tests && pytest tests/ -q
+ruff check src tests && pytest tests/ -q
 git add src/orchestrator/api tests/api/test_workflows_gerados.py tests/grill/test_fabrica.py
 git commit -m "feat(api): registro de workflows gerados e GET /api/workflows"
 ```
@@ -2487,7 +2489,7 @@ Esperado: tudo verde, incluindo os testes de dinheiro que já existiam.
 - [ ] **Step 6: Commit**
 
 ```bash
-ruff check src tests && ruff format --check src tests && pytest tests/ -q
+ruff check src tests && pytest tests/ -q
 git add src/orchestrator/api/app.py tests/api/test_dinheiro_workflow_gerado.py
 git commit -m "feat(api): 409 para cascata paga, com ClienteAusente como tranca"
 ```
@@ -2621,7 +2623,7 @@ pytest tests/ -q
 - [ ] **Step 6: Commit**
 
 ```bash
-ruff check src tests && ruff format --check src tests
+ruff check src tests
 git add web tests/api/test_canvas_workflows.py
 git commit -m "feat(web): seletor de workflow lendo o id da URL"
 ```
@@ -2731,7 +2733,7 @@ Responda às perguntas. Confirme: receita gravada, número impresso com a ressal
 - [ ] **Step 6: Commit**
 
 ```bash
-ruff check src tests && ruff format --check src tests && pytest tests/ -q
+ruff check src tests && pytest tests/ -q
 git add src/orchestrator/grill/assinatura.py tests/grill/test_assinatura.py pyproject.toml docs/superpowers/DECISOES.md
 git commit -m "feat(grill): adaptador de assinatura para a entrevista"
 ```
@@ -2744,7 +2746,7 @@ Antes de encerrar, rode e confirme:
 
 ```bash
 pytest tests/ -q
-ruff check src tests && ruff format --check src tests
+ruff check src tests
 orchestrator --seed 1 --n 500
 ```
 
