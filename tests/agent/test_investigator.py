@@ -532,3 +532,59 @@ def test_multiplas_chamadas_de_ferramenta_voltam_em_uma_unica_mensagem():
     assert len(mensagens_de_resultado[0]["content"]) == 2
     ids = {b["tool_use_id"] for b in mensagens_de_resultado[0]["content"]}
     assert ids == {"t1", "t2"}
+
+
+def test_interpretar_proposta_e_funcao_de_modulo_reusavel():
+    """O parsing da proposta precisa ser reusável fora do Investigator.
+
+    O investigador movido a assinatura (eval/assinatura.py) roda um laço
+    diferente mas tem que produzir EXATAMENTE a mesma Proposal a partir do
+    mesmo JSON. Duplicar o parsing significaria dois caminhos divergindo em
+    silêncio no dia em que um deles ganhasse uma guarda nova.
+    """
+    from orchestrator.agent.investigator import interpretar_proposta
+
+    texto = (
+        '{"tipo":"DEFASAGEM_TEMPORAL","explicacao":"liquidou depois",'
+        '"evidencia":["b1: 2026-01-05"],"confianca":"MEDIA",'
+        '"acao_sugerida":"conciliar_com(l1)"}'
+    )
+
+    p = interpretar_proposta("d-1", texto, Cost.zero(), [])
+
+    assert p is not None
+    assert p.divergence_id == "d-1"
+    assert p.tipo is DivergenceType.DEFASAGEM_TEMPORAL
+    assert p.confianca is Confidence.MEDIA
+    assert p.evidencia == ["b1: 2026-01-05"]
+    assert p.acao_sugerida == "conciliar_com(l1)"
+
+
+def test_descrever_divergencia_e_funcao_de_modulo_reusavel():
+    """A entrada do agente também precisa ser compartilhada.
+
+    Se os dois caminhos montarem o texto da divergência por conta própria, o
+    agente por assinatura estaria sendo avaliado sobre uma entrada diferente
+    da que o caminho pago envia — e a comparação entre eles, que é o motivo
+    de existir os dois, não valeria nada.
+    """
+    import json
+
+    from orchestrator.agent.investigator import descrever_divergencia
+    from orchestrator.agent.tools import ToolContext
+    from orchestrator.models import Divergence
+    from orchestrator.synth.generator import generate_clean_pairs
+
+    pares = generate_clean_pairs(seed=2, n=1)
+    ctx = ToolContext(bank=[pares[0].bank], ledger=[pares[0].ledger])
+    d = Divergence(
+        id="d-1",
+        bank_ids=frozenset({pares[0].bank.id}),
+        ledger_ids=frozenset(),
+    )
+
+    dados = json.loads(descrever_divergencia(ctx, d))
+
+    assert dados["divergencia_id"] == "d-1"
+    assert [e["id"] for e in dados["lancamentos_bancarios"]] == [pares[0].bank.id]
+    assert dados["lancamentos_contabeis"] == []

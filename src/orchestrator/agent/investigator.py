@@ -161,7 +161,7 @@ class Investigator:
         return InvestigationOutput(proposals=propostas, cost=total)
 
     def _uma(self, divergencia: Divergence) -> Proposal:
-        entrada = self._descrever(divergencia)
+        entrada = descrever_divergencia(self.context, divergencia)
         mensagens: list[dict[str, Any]] = [{"role": "user", "content": entrada}]
         custo, tentativas_formato = Cost.zero(), 0
         trace: list[TraceEvent] = [
@@ -255,7 +255,7 @@ class Investigator:
                 )
                 continue
 
-            proposta = self._interpretar(divergencia.id, resposta.text, custo, trace)
+            proposta = interpretar_proposta(divergencia.id, resposta.text, custo, trace)
             if proposta is not None:
                 return proposta
 
@@ -300,28 +300,6 @@ class Investigator:
         )
         return blocos
 
-    def _descrever(self, d: Divergence) -> str:
-        banco = [e for e in self.context.bank if e.id in d.bank_ids]
-        contabil = [le for le in self.context.ledger if le.id in d.ledger_ids]
-        return json.dumps(
-            {
-                "divergencia_id": d.id,
-                "lancamentos_bancarios": [
-                    {
-                        "id": e.id,
-                        "data": e.date.isoformat(),
-                        "valor": e.amount,
-                        "descricao": e.description,
-                        "contraparte": e.counterparty,
-                        "documento": e.document,
-                    }
-                    for e in banco
-                ],
-                "lancamentos_contabeis": [ToolContext.ledger_dict(le) for le in contabil],
-            },
-            ensure_ascii=False,
-        )
-
     def _executar(self, chamadas: list[Any]) -> list[Any]:
         """Executa as ferramentas pedidas e devolve um resultado por chamada,
         na mesma ordem — necessário para casar cada `tool_result` com o
@@ -348,50 +326,74 @@ class Investigator:
                 resultados.append({"erro": str(erro)})
         return resultados
 
-    def _interpretar(
-        self, divergence_id: str, texto: str, custo: Cost, trace: list[TraceEvent]
-    ) -> Proposal | None:
-        """Devolve None quando o texto não é uma proposta utilizável."""
-        try:
-            dados = json.loads(_sem_cerca_markdown(texto))
-        except json.JSONDecodeError:
-            return None
-        if not isinstance(dados, dict):
-            return None
-        try:
-            tipo = DivergenceType(dados.get("tipo", ""))
-            confianca = Confidence(dados.get("confianca", ""))
-        except ValueError:
-            return None
 
-        evidencia_bruta = dados.get("evidencia", [])
-        if not isinstance(evidencia_bruta, list):
-            # String onde se pediu lista é erro de forma comum do modelo, e
-            # iterar sobre ela produz uma lista de CARACTERES. Medido:
-            # "l1: bruto 100" virava 13 itens — evidência "não vazia" que não
-            # sustenta nada, e que fazia uma confiança ALTA passar sem
-            # rebaixamento. Rejeitar manda para o caminho de retry.
-            return None
-        evidencia = [str(e) for e in evidencia_bruta]
-        # Afirmar com confiança sem citar nada acontece. Rebaixar é mais útil
-        # que descartar: a hipótese ainda ajuda o humano, com o peso certo.
-        if confianca is Confidence.ALTA and not evidencia:
-            confianca = Confidence.BAIXA
+def interpretar_proposta(
+    divergence_id: str, texto: str, custo: Cost, trace: list[TraceEvent]
+) -> Proposal | None:
+    """Devolve None quando o texto não é uma proposta utilizável."""
+    try:
+        dados = json.loads(_sem_cerca_markdown(texto))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(dados, dict):
+        return None
+    try:
+        tipo = DivergenceType(dados.get("tipo", ""))
+        confianca = Confidence(dados.get("confianca", ""))
+    except ValueError:
+        return None
 
-        # I3: vocabulário fechado. Texto livre não dá para o plano 3
-        # despachar; rebaixa para investigar_manual em vez de rejeitar a
-        # proposta inteira — o tipo e a evidência continuam válidos.
-        acao = str(dados.get("acao_sugerida", "investigar_manual"))
-        if not acao.startswith(ACOES_VALIDAS):
-            acao = "investigar_manual"
+    evidencia_bruta = dados.get("evidencia", [])
+    if not isinstance(evidencia_bruta, list):
+        # String onde se pediu lista é erro de forma comum do modelo, e
+        # iterar sobre ela produz uma lista de CARACTERES. Medido:
+        # "l1: bruto 100" virava 13 itens — evidência "não vazia" que não
+        # sustenta nada, e que fazia uma confiança ALTA passar sem
+        # rebaixamento. Rejeitar manda para o caminho de retry.
+        return None
+    evidencia = [str(e) for e in evidencia_bruta]
+    # Afirmar com confiança sem citar nada acontece. Rebaixar é mais útil
+    # que descartar: a hipótese ainda ajuda o humano, com o peso certo.
+    if confianca is Confidence.ALTA and not evidencia:
+        confianca = Confidence.BAIXA
 
-        return Proposal(
-            divergence_id=divergence_id,
-            tipo=tipo,
-            explicacao=str(dados.get("explicacao", "")),
-            evidencia=evidencia,
-            confianca=confianca,
-            acao_sugerida=acao,
-            cost=custo,
-            trace=[*trace, TraceEvent(kind=TraceKind.OUTCOME, detail={"tipo": tipo.value})],
-        )
+    # I3: vocabulário fechado. Texto livre não dá para o plano 3
+    # despachar; rebaixa para investigar_manual em vez de rejeitar a
+    # proposta inteira — o tipo e a evidência continuam válidos.
+    acao = str(dados.get("acao_sugerida", "investigar_manual"))
+    if not acao.startswith(ACOES_VALIDAS):
+        acao = "investigar_manual"
+
+    return Proposal(
+        divergence_id=divergence_id,
+        tipo=tipo,
+        explicacao=str(dados.get("explicacao", "")),
+        evidencia=evidencia,
+        confianca=confianca,
+        acao_sugerida=acao,
+        cost=custo,
+        trace=[*trace, TraceEvent(kind=TraceKind.OUTCOME, detail={"tipo": tipo.value})],
+    )
+
+
+def descrever_divergencia(context: ToolContext, d: Divergence) -> str:
+    banco = [e for e in context.bank if e.id in d.bank_ids]
+    contabil = [le for le in context.ledger if le.id in d.ledger_ids]
+    return json.dumps(
+        {
+            "divergencia_id": d.id,
+            "lancamentos_bancarios": [
+                {
+                    "id": e.id,
+                    "data": e.date.isoformat(),
+                    "valor": e.amount,
+                    "descricao": e.description,
+                    "contraparte": e.counterparty,
+                    "documento": e.document,
+                }
+                for e in banco
+            ],
+            "lancamentos_contabeis": [ToolContext.ledger_dict(le) for le in contabil],
+        },
+        ensure_ascii=False,
+    )

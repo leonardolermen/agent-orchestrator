@@ -3,6 +3,8 @@ import pytest
 from orchestrator.agent.llm import FakeLLMClient, LLMResponse
 from orchestrator.agent.proposal import Cost
 from orchestrator.eval.agent_eval import EvalResult, _tabela, avaliar
+from orchestrator.workflow.cost_class import CostClass
+from orchestrator.workflow.resolver import ResolverDescription, ResolverOutput
 
 # Valores MEDIDOS com n=100 na semente 1. A amostra de n=40 foi descartada de
 # propósito: ela dava 2 corretas de 2 arriscadas, e 2/2 é 1,0 tanto com a
@@ -205,3 +207,78 @@ def test_tabela_nao_apresenta_percentual_de_execucao_que_nao_mediu_nada():
     assert "%" not in linha_falhou
     assert "US$" not in linha_falhou or "0.0000" not in linha_falhou
     assert "falha" in linha_falhou.lower()
+
+
+def test_execucao_por_assinatura_nao_reporta_custo_como_medido():
+    """Assinatura não tem preço por chamada — imprimir US$ 0,0000 seria mentira.
+
+    É o mesmo modo de falha que esta avaliação já cometeu uma vez, relatando
+    falha total de API como se fosse medição. Aqui o número não é zero, é
+    inexistente, e a saída precisa dizer isso. A precisão, que É medível por
+    este caminho, continua aparecendo.
+    """
+    r = EvalResult(
+        model="assinatura",
+        divergences=2,
+        proposals_total=2,
+        proposals_correct=1,
+        proposals_abstained=0,
+        total_microcents=0,
+        custo_medido=False,
+    )
+
+    saida = r.render()
+
+    assert "não medido" in saida
+    assert "US$" not in saida
+    assert "50.0%" in saida
+
+
+class _ResolverMudo:
+    """Um resolver que não resolve, não propõe e não fala com ninguém."""
+
+    name = "investigador"
+    cost_class = CostClass.AGENTE
+
+    def resolve(self, work):
+        return ResolverOutput()
+
+    def describe(self):
+        return ResolverDescription(self.name, self.cost_class, "mudo")
+
+
+def test_via_assinatura_marca_o_custo_como_nao_medido():
+    r = avaliar(
+        model="assinatura", seed=1, n=40, taxa_divergencia=0.15,
+        via="assinatura", investigator_factory=lambda contexto: _ResolverMudo(),
+    )
+
+    assert r.custo_medido is False
+
+
+def test_via_api_continua_marcando_o_custo_como_medido():
+    r = avaliar(
+        model="claude-opus-5", seed=1, n=40, taxa_divergencia=0.15,
+        client_factory=_fabrica_falsa("claude-opus-5"),
+    )
+
+    assert r.custo_medido is True
+
+
+def test_main_aceita_via_assinatura_e_nao_anuncia_gasto(capsys):
+    """`--n 20` não produz divergência nenhuma, então nada chama o modelo.
+
+    O que este teste pina é o anúncio: a via paga avisa que GASTA DINHEIRO, e
+    a via por assinatura não pode repetir esse aviso — nem imprimir cifra.
+    """
+    import pytest
+
+    pytest.importorskip("claude_agent_sdk")
+    from orchestrator.eval.agent_eval import main
+
+    assert main(["--via", "assinatura", "--n", "20"]) == 0
+
+    saida = capsys.readouterr().out
+    assert "GASTA DINHEIRO" not in saida
+    assert "assinatura" in saida.lower()
+    assert "US$" not in saida
