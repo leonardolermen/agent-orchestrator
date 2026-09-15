@@ -131,3 +131,22 @@ def test_interpretar_rejeita_parametro_nao_inteiro():
                 },
             )
         )
+
+
+def test_interpretar_rejeita_parametros_falsy_malformado():
+    # `item.get("parametros") or {}` trocaria um `0`/`[]`/`False` malformado
+    # por "sem parâmetros" em silêncio, sem nunca chegar no isinstance(dict)
+    # que deveria rejeitar. O parceiro que pediu uma tolerância receberia o
+    # default sem ninguém avisar.
+    with pytest.raises(ValueError, match="objeto"):
+        interpretar(
+            ToolCall(
+                id="1",
+                name="propor_workflow",
+                arguments={
+                    "nome": "x",
+                    "justificativa": "y",
+                    "resolvers": [{"nome": "L2", "parametros": 0}],
+                },
+            )
+        )

@@ -145,7 +145,12 @@ def interpretar(chamada: ToolCall) -> Pergunta | PropostaBruta | Recusa:
         for item in brutos:
             if not isinstance(item, dict) or not isinstance(item.get("nome"), str):
                 raise ValueError(f"item de 'resolvers' malformado: {item!r}")
-            params = item.get("parametros") or {}
+            # `is None` e não `or`: um `0`/`[]`/`False` malformado precisa
+            # cair no isinstance(dict) abaixo e ser rejeitado, não ser trocado
+            # por "sem parâmetros" em silêncio.
+            params = item.get("parametros")
+            if params is None:
+                params = {}
             if not isinstance(params, dict):
                 raise ValueError(f"'parametros' de {item['nome']!r} não é objeto")
             limpos: dict[str, int] = {}
