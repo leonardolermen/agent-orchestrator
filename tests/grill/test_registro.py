@@ -56,10 +56,17 @@ def test_gravar_recusa_id_fora_do_padrao(tmp_path):
 
 def test_id_com_travessia_de_caminho_e_recusado(tmp_path):
     # `PADRAO_ID` já barra, mas o teste existe porque a consequência de falhar
-    # aqui é escrita fora de `data/`.
+    # aqui é escrita fora de `data/`. Precisa de DOIS níveis de `..`: o
+    # primeiro cancela só o segmento `workflows/` que `caminho_da_receita`
+    # insere, e é o segundo que de fato sairia de `tmp_path`. Um único `..`
+    # pousa de volta dentro de `tmp_path` — não prova nada sobre travessia.
     with pytest.raises(ValueError, match="id inválido"):
-        gravar_receita(_r("../fora"), raiz=tmp_path)
-    assert not (tmp_path.parent / "fora.json").exists()
+        gravar_receita(_r("../../fora"), raiz=tmp_path)
+    # Não adivinha nome nem profundidade exata de onde a escrita indevida
+    # pousaria: cobre qualquer travessia, recursivamente sob `tmp_path` e no
+    # diretório acima dele.
+    assert not any(tmp_path.rglob("*.json"))
+    assert not any(tmp_path.parent.glob("*.json"))
 
 
 def test_listar_devolve_ordenado_por_id(tmp_path):
