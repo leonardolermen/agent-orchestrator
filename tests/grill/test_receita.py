@@ -8,6 +8,7 @@ from orchestrator.grill.receita import (
     construir,
     de_json,
     para_json,
+    validar_id,
 )
 from orchestrator.workflow.cost_class import CostClass
 
@@ -107,3 +108,70 @@ def test_para_json_preserva_a_ordem_proposta():
     # acontece na execução. Reordenar na serialização apagaria a intenção.
     r = _receita(ResolverReceita("revisor", {}), ResolverReceita("L1", {}))
     assert [x["nome"] for x in para_json(r)["resolvers"]] == ["revisor", "L1"]
+
+
+def test_validar_id_aceita_id_valido():
+    # Não deve levantar. Também cobre a borda inferior do `{2,39}`: "abc" tem
+    # 3 caracteres, o mínimo aceito.
+    assert validar_id("abc") is None
+    assert validar_id("acme-2") is None
+
+
+def test_validar_id_aceita_a_borda_superior_do_comprimento():
+    # 40 caracteres: 1 (primeiro) + 39 (o teto de `{2,39}`).
+    assert validar_id("a" + "b" * 39) is None
+
+
+def test_validar_id_rejeita_id_curto_demais():
+    # 2 caracteres: abaixo do mínimo de 3 (a borda inferior do `{2,39}`).
+    with pytest.raises(ValueError, match="inválido"):
+        validar_id("ab")
+
+
+def test_validar_id_rejeita_id_longo_demais():
+    # 41 caracteres: acima do teto de 40.
+    with pytest.raises(ValueError, match="inválido"):
+        validar_id("a" + "b" * 40)
+
+
+def test_validar_id_rejeita_maiuscula():
+    with pytest.raises(ValueError, match="inválido"):
+        validar_id("Acme")
+
+
+def test_validar_id_rejeita_caractere_invalido():
+    with pytest.raises(ValueError, match="inválido"):
+        validar_id("acme_um")
+
+
+def test_validar_id_rejeita_path_traversal():
+    # Um id com `../` escreveria fora de `data/` se chegasse ao registro sem
+    # passar por aqui.
+    with pytest.raises(ValueError, match="inválido"):
+        validar_id("../etc")
+
+
+def test_validar_id_rejeita_id_reservado():
+    with pytest.raises(ValueError, match="reservado"):
+        validar_id("conciliacao")
+
+
+def test_construir_rejeita_max_turns_menor_que_um():
+    # `range(max_turns)` com max_turns <= 0 é vazio: o agente nunca chama o
+    # modelo e a investigação inteira vira abstenção muda — furando "se
+    # `construir` retorna, a receita roda".
+    r = _receita(ResolverReceita("agente", {"max_turns": -5}))
+    with pytest.raises(ValueError, match="max_turns"):
+        construir(r)
+
+
+def test_construir_rejeita_budget_microcents_negativo():
+    r = _receita(ResolverReceita("agente", {"budget_microcents": -1}))
+    with pytest.raises(ValueError, match="budget_microcents"):
+        construir(r)
+
+
+def test_construir_rejeita_budget_total_microcents_negativo():
+    r = _receita(ResolverReceita("agente", {"budget_total_microcents": -1}))
+    with pytest.raises(ValueError, match="budget_total_microcents"):
+        construir(r)

@@ -131,6 +131,23 @@ class Investigator:
     cost_class: CostClass = field(default=CostClass.AGENTE, init=False)
 
     def __post_init__(self) -> None:
+        # `range(max_turns)` com max_turns <= 0 é vazio: o laço de `_uma`
+        # nunca chama o modelo e a investigação inteira vira abstenção muda,
+        # sem custo e sem trace de erro — um agente que não pode dar nem um
+        # turno não é agente, é abstenção disfarçada de configuração válida.
+        if self.max_turns < 1:
+            raise ValueError(f"max_turns precisa ser pelo menos 1: {self.max_turns}")
+        # Orçamento negativo faria a primeira comparação de custo
+        # (`custo.microcents(...) > self.budget_microcents`) já nascer
+        # estourada: toda divergência abstém no primeiro turno, sem nunca
+        # chamar o modelo, e pareceria um agente funcionando com orçamento
+        # zerado em vez de uma configuração inválida.
+        if self.budget_microcents < 0:
+            raise ValueError(f"budget_microcents não pode ser negativo: {self.budget_microcents}")
+        if self.budget_total_microcents < 0:
+            raise ValueError(
+                f"budget_total_microcents não pode ser negativo: {self.budget_total_microcents}"
+            )
         # Modelo sem preço conhecido não é abstenção, é erro de configuração.
         # Abster em toda divergência gastaria a execução inteira sem produzir
         # nada, e o custo — que é a métrica central do produto — ficaria

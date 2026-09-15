@@ -90,9 +90,13 @@ def construir(
     erro ao modelo para ele corrigir — por isso as mensagens são escritas para
     serem lidas por um modelo, não só por uma pessoa.
 
-    `is None` e não `or`: `Fila.vazia()` e `ToolContext([], [])` são objetos
-    legítimos e um `or` os trocaria pelos defaults, transformando "fila vazia
-    explícita" em "fila default" sem aviso.
+    `is None` e não `or`: defensivo, não corretivo. Hoje `Fila`, `ToolContext`
+    e `ClienteAusente` não definem `__bool__` nem `__len__`, então nenhum dos
+    três é falsy e `or` se comportaria hoje identicamente a `is None`. A
+    disciplina existe para o dia em que alguém acrescentar um `__len__` a
+    `Fila` (por exemplo, `len(fila) == 0`) — nesse dia, um `or` trocaria
+    silenciosamente uma fila vazia explícita pelo default, e um `is None`
+    continuaria correto sem precisar mudar.
     """
     if fila is None:
         fila = Fila.vazia()
