@@ -6,6 +6,7 @@ import pytest
 from orchestrator.agent.proposal import Confidence, Proposal
 from orchestrator.review.decision import Decision, Veredito
 from orchestrator.review.fila import Fila, caminho_da_fila, dataset_id
+from orchestrator.review.serial import decisao_para_dict, proposta_para_dict
 from orchestrator.taxonomy import DivergenceType
 
 
@@ -46,6 +47,7 @@ def test_caminho_separa_workflows(tmp_path):
 
     assert a != b
     assert a.suffix == ".jsonl"
+    assert a == tmp_path / "fila" / "conciliacao" / "s1-n30-t0.15.jsonl"
 
 
 def test_grava_e_le_proposta(tmp_path):
@@ -84,6 +86,57 @@ def test_ultima_decisao_vence_mas_o_log_guarda_as_duas(tmp_path):
     assert sum(1 for x in linhas if '"decisao"' in x) == 2
 
 
+def test_primeira_proposta_vence_tambem_ao_recarregar_do_arquivo(tmp_path):
+    # `gravar_proposta` já bloqueia a segunda escrita em memória, o que nunca
+    # chega a exercitar o dedup de `_aplicar`. Um arquivo pré-existente,
+    # migrado ou produzido por outro processo pode conter as duas linhas de
+    # `proposta` direto — é aí que o dedup de leitura precisa valer.
+    caminho = caminho_da_fila("w", "d", raiz=tmp_path)
+    caminho.parent.mkdir(parents=True, exist_ok=True)
+    linhas = [
+        json.dumps(
+            {
+                "kind": "proposta",
+                "dados": proposta_para_dict(
+                    _proposta("d-1", DivergenceType.DEFASAGEM_TEMPORAL)
+                ),
+            }
+        ),
+        json.dumps(
+            {
+                "kind": "proposta",
+                "dados": proposta_para_dict(_proposta("d-1", DivergenceType.RETENCAO_IMPOSTO)),
+            }
+        ),
+    ]
+    caminho.write_text("\n".join(linhas) + "\n", encoding="utf-8")
+
+    f = Fila(caminho)
+
+    assert f.proposta("d-1").tipo is DivergenceType.DEFASAGEM_TEMPORAL
+
+
+def test_ultima_decisao_vence_tambem_ao_recarregar_do_arquivo(tmp_path):
+    # `test_ultima_decisao_vence_mas_o_log_guarda_as_duas` só inspeciona a
+    # `Fila` viva que escreveu — nunca reconstrói a partir do arquivo. Um
+    # copy-paste acidental do ramo de proposta (primeira vence) para o ramo de
+    # decisão passaria por aquele teste sem ser notado.
+    caminho = caminho_da_fila("w", "d", raiz=tmp_path)
+    caminho.parent.mkdir(parents=True, exist_ok=True)
+    linhas = [
+        json.dumps({"kind": "decisao", "dados": decisao_para_dict(_decisao("d-1", "primeira"))}),
+        json.dumps(
+            {"kind": "decisao", "dados": decisao_para_dict(_decisao("d-1", "reconsiderei"))}
+        ),
+    ]
+    caminho.write_text("\n".join(linhas) + "\n", encoding="utf-8")
+
+    f = Fila(caminho)
+
+    assert f.decisao("d-1").motivo == "reconsiderei"
+    assert sum(1 for x in linhas if '"decisao"' in x) == 2
+
+
 def test_pendentes_exclui_o_que_ja_foi_decidido(tmp_path):
     f = Fila(caminho_da_fila("w", "d", raiz=tmp_path))
     f.gravar_proposta(_proposta("d-1"))
@@ -96,9 +149,15 @@ def test_pendentes_exclui_o_que_ja_foi_decidido(tmp_path):
 
 def test_fila_vazia_nao_escreve_nada(tmp_path, monkeypatch):
     # A definição padrão usa uma fila vazia. Se ela tocasse o disco, o golden
-    # e a CLI passariam a depender de estado fora do processo.
+    # e a CLI passariam a depender de estado fora do processo. Uma tarefa
+    # futura chama `gravar_*` numa `Fila.vazia()` dentro dessa definição
+    # padrão — o teste precisa exercitar exatamente essas chamadas, não só
+    # as leituras (que são puras e não provariam nada sobre escrita).
     monkeypatch.chdir(tmp_path)
     f = Fila.vazia()
+
+    f.gravar_proposta(_proposta("d-1"))
+    f.gravar_decisao(_decisao("d-1"))
 
     assert f.pendentes() == []
     assert f.proposta("qualquer") is None
@@ -112,10 +171,11 @@ def test_registro_truncado_aponta_arquivo_e_linha(tmp_path):
     caminho = caminho_da_fila("w", "d", raiz=tmp_path)
     caminho.parent.mkdir(parents=True, exist_ok=True)
 
-    decisao_incompleta = decisao_para_dict_sem_autor(_decisao("d-1"))
+    dados_da_decisao_sem_autor = decisao_para_dict(_decisao("d-1"))
+    del dados_da_decisao_sem_autor["autor"]
     linhas = [
-        json.dumps({"kind": "proposta", "dados": _proposta_dict("d-1")}),
-        json.dumps({"kind": "decisao", "dados": decisao_incompleta}),
+        json.dumps({"kind": "proposta", "dados": proposta_para_dict(_proposta("d-1"))}),
+        json.dumps({"kind": "decisao", "dados": dados_da_decisao_sem_autor}),
     ]
     caminho.write_text("\n".join(linhas) + "\n", encoding="utf-8")
 
@@ -124,19 +184,8 @@ def test_registro_truncado_aponta_arquivo_e_linha(tmp_path):
 
     mensagem = str(excinfo.value)
     assert str(caminho) in mensagem
-    assert "2" in mensagem
+    # Não "2" solto: `tmp_path` real do pytest embute um contador de execução
+    # (`pytest-of-<user>\pytest-<N>\...`) que pode conter o dígito por
+    # coincidência mesmo se o número de linha estiver errado.
+    assert "linha 2" in mensagem
     assert excinfo.value.__cause__ is not None
-
-
-def _proposta_dict(divergence_id: str) -> dict:
-    from orchestrator.review.serial import proposta_para_dict
-
-    return proposta_para_dict(_proposta(divergence_id))
-
-
-def decisao_para_dict_sem_autor(d: Decision) -> dict:
-    from orchestrator.review.serial import decisao_para_dict
-
-    dados = decisao_para_dict(d)
-    del dados["autor"]
-    return dados
