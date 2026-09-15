@@ -517,28 +517,47 @@ fluxo de correção fica um clique-fantasma de distância de gravar uma decisão
 falsa no log de auditoria — exatamente o defeito que este item corrigiu
 depois de já commitado uma vez sem ele.
 
-## P4.14. Task 10
+## P4.14. Task 10 — resolvida na própria Task 10 (rodada de correção)
 
-`web/canvas.js` (`PEDIDO = { seed: 1, n: 300, ... }`, do plano 3) e
-`web/fila.js` (`PARAMS = { seed: 1, n: 30, ... }`, da Task 9 deste plano)
-apontam para datasets DIFERENTES — a fila é escopada por `dataset_id`
-(P4.2), e os dois arquivos nunca foram alinhados ao mesmo `n`. Na prova de
-ponta a ponta desta tarefa isso significa que aceitar uma proposta em
-`/fila.html` (dataset `s1-n30-t0.15`) não aparece em `/` (dataset
-`s1-n300-t0.15`, sem fila gravada) — os dois lêem arquivos de fila
-diferentes. Verifiquei o mecanismo em si diretamente contra a API com os
-MESMOS parâmetros da fila (`POST /api/workflows/conciliacao/runs` com
-`n=30`): revisor aparece com 1 match e a lacuna cai de 1 item (3,57%) para 0
-depois da decisão — a propriedade do §3.5 do spec está correta; o que não
-bate é só o `n` fixo entre as duas páginas estáticas. Decisão: NÃO tocar
-`web/canvas.js` — não está nos arquivos desta tarefa, e escolher um `n` de
-"amostra representativa" para a tela pública é decisão de produto, não algo
-que a prova de ponta a ponta deveria decidir de passagem. Alternativa
-rejeitada: mudar `canvas.js` para `n=30` só para a demonstração fechar
-visualmente — reduziria a amostra da tela pública (302 → 28 lançamentos)
-para todo mundo, por um motivo que não é dela. Custo se errado: quem seguir
-o roteiro da Task 10 literalmente, abrindo `/` no navegador em vez de
-consultar a API com os parâmetros corretos, não vai VER o passo 3 acontecer
-— é um achado registrado para tarefa futura (unificar os parâmetros das
-duas telas, ou torná-los configuráveis), não um defeito no mecanismo de
-revisão em si.
+Achado original: `web/canvas.js` (`PEDIDO = { seed: 1, n: 300, ... }`, do
+plano 3) e `web/fila.js` (`PARAMS = { seed: 1, n: 30, ... }`, da Task 9 deste
+plano) apontavam para datasets DIFERENTES — a fila é escopada por
+`dataset_id` (P4.2), e os dois arquivos nunca tinham sido alinhados ao mesmo
+`n`. Na primeira passada da prova de ponta a ponta isso significava que
+aceitar uma proposta em `/fila.html` (dataset `s1-n30-t0.15`) nunca aparecia
+em `/` (dataset `s1-n300-t0.15`, sem fila gravada) — os dois liam arquivos de
+fila diferentes, PARA SEMPRE, para qualquer usuário, porque os valores
+estavam fixos em cada arquivo. O mecanismo por baixo (`revisor.py`,
+`_executar_memoizado`) já estava correto — confirmado batendo a API
+diretamente com os parâmetros da fila — mas a demonstração publicada
+(abrir `/` depois de decidir em `/fila.html`) não fechava visualmente, o que
+derrota o que esta fatia existe para provar: aprovar na fila e VER o canvas
+mudar.
+
+**Correção:** as duas páginas passaram a ler `seed`/`n`/`taxa_divergencia` da
+própria URL (`location.search`), com o MESMO padrão nas duas quando o
+parâmetro está ausente (`seed=1`, `n=300`, `taxa_divergencia=0.15` — os
+mesmos de `RunRequest` em `api/schemas.py`). Cada página ganhou um link para
+a outra carregando a query string atual (`Ver a fila de revisão →` no
+canvas, `← Ver a cascata` na fila), para navegar entre as duas sem perder o
+dataset de vista. Alternativa rejeitada: só igualar as duas constantes
+(`n:300` nos dois arquivos) — resolveria o sintoma medido, mas é a MESMA
+classe de defeito que criou o problema: um valor duplicado em dois arquivos
+sem nenhum mecanismo que os mantenha iguais, que já drift uma vez (Task 9
+escolheu 30, Plano 3 já tinha escolhido 300, e nada acusou a divergência até
+esta tarefa testar as duas páginas juntas). Ler da URL faz as duas páginas
+concordarem por CONSTRUÇÃO — não há um segundo lugar para o valor ficar
+desatualizado. Custo se errado: se um dia as duas páginas precisarem de
+padrões diferentes de propósito (por exemplo, a fila mostrando um dataset
+menor por padrão para carregar mais rápido), a homogeneização atual exigiria
+uma decisão explícita de produto para diferenciá-los de novo — o oposto do
+custo do defeito original, que era diferenciação acidental por nunca terem
+sido escritos juntos.
+
+Reprovado com os próprios olhos depois da correção, no navegador, com
+`n=30` na query string dos dois lados (dataset barato de avaliar de verdade
+pela assinatura): canvas ANTES da decisão mostrava `revisor` HUMANO 0.0% e
+lacuna 3.6%; depois de aceitar `d-b-b00003` em `/fila.html?...&n=30`, o
+MESMO canvas (`/?...&n=30`, recarregado) mostrou `revisor` HUMANO 3.6% e
+lacuna 0.0%. O passo 3 do roteiro da Task 10, que na primeira rodada só
+tinha sido confirmado mecanicamente (via API), passou a se ver na tela.

@@ -1,6 +1,33 @@
 // A tela não decide nada: ela mostra o que a API mediu e manda de volta o que
 // o humano escolheu. Nenhum número é escrito aqui.
-const PARAMS = new URLSearchParams({ seed: 1, n: 30, taxa_divergencia: 0.15 });
+//
+// `seed`/`n`/`taxa_divergencia` vêm da URL, não de uma constante local. Esta
+// página e o canvas (`/`, `canvas.js`) precisam concordar sobre QUAL dataset
+// estão olhando — a fila é escopada por `dataset_id(seed, n, taxa)` (ver
+// `orchestrator/review/fila.py`), então uma decisão tomada aqui só aparece
+// no canvas se as duas páginas apontarem para o MESMO dataset. Uma constante
+// duplicada nos dois arquivos é uma promessa que já quebrou uma vez — ver
+// DECISOES.md, P4.14 — porque nada além de lembrança humana as mantinha
+// iguais. A URL é a única fonte que as duas podem compartilhar sem depender
+// disso.
+const QUERY = new URLSearchParams(location.search);
+
+function parametro(nome, padrao) {
+  const bruto = QUERY.get(nome);
+  if (bruto === null || bruto === "") return padrao;
+  const numero = Number(bruto);
+  return Number.isFinite(numero) ? numero : padrao;
+}
+
+// Mesmos padrões de `RunRequest` (api/schemas.py) e de `canvas.js`.
+const PARAMS = new URLSearchParams({
+  seed: parametro("seed", 1),
+  n: parametro("n", 300),
+  taxa_divergencia: parametro("taxa_divergencia", 0.15),
+});
+
+// O link de volta ao canvas carrega o MESMO dataset.
+document.getElementById("link-canvas").href = `/?${PARAMS}`;
 
 // A taxonomia do <select> de "corrigir" vem de `corpo.tipos`, servido pela
 // API — nunca de uma lista escrita aqui. Duplicar os valores no front seria

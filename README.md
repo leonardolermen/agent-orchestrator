@@ -133,13 +133,27 @@ orchestrator-eval --via assinatura --seed 1 --n 30 --fila
 ```
 
 Isso escreve `data/fila/conciliacao/s1-n30-t0.15.jsonl` — um append-only por
-`(workflow, dataset)`. Com o servidor no ar (`uvicorn orchestrator.api.app:app
---port 8000`), abra `http://localhost:8000/fila.html`: cada proposta pendente
-aparece com o lançamento bancário e o contábil lado a lado, e três botões —
-aceitar, rejeitar ou corrigir o tipo e os ids a conciliar. Decidir grava uma
-`Decision` na mesma fila e invalida o cache do canvas, que passa a mostrar o
-`revisor` — o resolver de classe `HUMANO` que fecha a cascata — com o match
-aprovado.
+`(workflow, dataset)`, escopado por `seed`/`n`/`taxa_divergencia` porque o
+mesmo id de divergência aponta para lançamentos diferentes conforme o dataset
+muda. Com o servidor no ar (`uvicorn orchestrator.api.app:app --port 8000`),
+abra `http://localhost:8000/fila.html?seed=1&n=30&taxa_divergencia=0.15`: cada
+proposta pendente aparece com o lançamento bancário e o contábil lado a lado,
+e três botões — aceitar, rejeitar ou corrigir o tipo e os ids a conciliar.
+Decidir grava uma `Decision` na mesma fila e invalida o cache do canvas, que
+passa a mostrar o `revisor` — o resolver de classe `HUMANO` que fecha a
+cascata — com o match aprovado.
+
+`seed`, `n` e `taxa_divergencia` vêm da query string em `/` e em `/fila.html`
+— as duas páginas usam os MESMOS padrões (`seed=1`, `n=300`,
+`taxa_divergencia=0.15`, os mesmos de `RunRequest` na API) quando nenhum
+parâmetro é passado, então basta abrir as duas sem query para as duas
+apontarem para o mesmo dataset. Cada página tem um link para a outra que
+carrega a query string atual, para navegar entre a cascata e a fila sem
+perder de vista o dataset. Ao testar com um dataset menor (como `n=30` acima,
+para manter uma avaliação real barata), abra as duas páginas com a MESMA
+query string — a fila é escopada por dataset, então uma decisão tomada em
+`/fila.html?n=30` só aparece em `/?n=30`, nunca em `/` sozinho (que usa o
+padrão `n=300`).
 
 A frase que resume a fatia inteira: **decisão é o que resolve; proposta nunca
 resolve.** `reconcile()` continua puro — só lê a fila através do `revisor`, só
