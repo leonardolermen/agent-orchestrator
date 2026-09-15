@@ -1,9 +1,19 @@
 from random import Random
 
 from orchestrator.agent.proposal import Cost, InvestigationOutput, Proposal
-from orchestrator.matching.engine import default_matchers, reconcile
+from orchestrator.cli import build_benchmark
+from orchestrator.matching.engine import default_resolvers, reconcile
 from orchestrator.synth.generator import build_dataset, generate_clean_pairs
 from orchestrator.synth.injectors import DefasagemTemporal, DevolucaoFundos
+from orchestrator.workflow.cost_class import CostClass
+from orchestrator.workflow.resolver import ResolverDescription, ResolverOutput
+from orchestrator.workflow.workset import WorkSet
+
+# Benchmark pequeno com divergências garantidas: n=60 na semente 1 produz 6
+# divergências, o suficiente para os testes de pool não serem degenerados.
+_DATASET_DE_TESTE = build_benchmark(seed=1, n=60, taxa_divergencia=0.15)
+BANCO_DE_TESTE = _DATASET_DE_TESTE.bank
+CONTABIL_DE_TESTE = _DATASET_DE_TESTE.ledger
 
 
 def test_dataset_limpo_nao_gera_divergencia():
@@ -60,18 +70,18 @@ def test_nenhum_lancamento_aparece_em_match_e_divergencia():
     assert casados & divergentes == set()
 
 
-def test_matchers_sao_injetaveis():
+def test_resolvers_sao_injetaveis():
     pares = generate_clean_pairs(seed=8, n=5)
     ds = build_dataset(pares, injections=[])
 
-    r = reconcile(ds.bank, ds.ledger, matchers=[])
+    r = reconcile(ds.bank, ds.ledger, resolvers=[])
 
     assert r.matches == []
     assert len(r.divergences) > 0
 
 
-def test_default_matchers_tem_tres_camadas():
-    assert [m.layer for m in default_matchers()] == ["L1", "L2", "L3"]
+def test_default_resolvers_tem_tres_camadas():
+    assert [r.name for r in default_resolvers()] == ["L1", "L2", "L3"]
 
 
 class _InvestigadorFalso:
@@ -132,3 +142,83 @@ def test_custo_do_agente_e_agregado_no_resultado():
     r = reconcile(ds.bank, ds.ledger, investigator=_InvestigadorFalso())
 
     assert r.agent_cost.calls == len(r.divergences)
+
+
+class _ResolverEspiao:
+    """Registra a ordem em que foi chamado. Não resolve nada."""
+
+    def __init__(self, name: str, cost_class: CostClass, registro: list[str]) -> None:
+        self.name = name
+        self.cost_class = cost_class
+        self._registro = registro
+
+    def resolve(self, work: WorkSet) -> ResolverOutput:
+        self._registro.append(self.name)
+        return ResolverOutput()
+
+    def describe(self) -> ResolverDescription:
+        return ResolverDescription(self.name, self.cost_class, "espião")
+
+
+def test_agente_roda_depois_da_regra_mesmo_declarado_antes():
+    # A ordem entre classes de custo é DERIVADA, não escolhida. Não existe
+    # lista de entrada que ponha o agente na frente da regra — é isso que faz
+    # a armadilha cara deixar de ser um erro possível.
+    registro: list[str] = []
+    cascata = [
+        _ResolverEspiao("agente", CostClass.AGENTE, registro),
+        _ResolverEspiao("regra", CostClass.REGRA, registro),
+    ]
+
+    reconcile([], [], resolvers=cascata)
+
+    assert registro == ["regra", "agente"]
+
+
+def test_ordem_dentro_da_mesma_classe_e_preservada():
+    # Dentro da mesma classe de custo a ordem é conhecimento de domínio do
+    # especialista e tem que sobreviver. Isso depende de `sorted` ser estável.
+    registro: list[str] = []
+    cascata = [
+        _ResolverEspiao("segunda", CostClass.REGRA, registro),
+        _ResolverEspiao("primeira", CostClass.REGRA, registro),
+    ]
+
+    reconcile([], [], resolvers=cascata)
+
+    assert registro == ["segunda", "primeira"]
+
+
+def test_proposta_nao_remove_nada_do_pool():
+    # Um resolver que só propõe não pode encolher o pool. Se encolher, o item
+    # sai de divergente sem ninguém ter aprovado nada.
+    from orchestrator.agent.proposal import Confidence, Proposal
+    from orchestrator.taxonomy import DivergenceType
+
+    class _SoPropoe:
+        name = "propositor"
+        cost_class = CostClass.AGENTE
+
+        def resolve(self, work: WorkSet) -> ResolverOutput:
+            return ResolverOutput(
+                proposals=[
+                    Proposal(
+                        divergence_id=d.id,
+                        tipo=DivergenceType.NAO_IDENTIFICADO,
+                        explicacao="",
+                        evidencia=[],
+                        confianca=Confidence.BAIXA,
+                        acao_sugerida="investigar_manual",
+                    )
+                    for d in work.as_divergences()
+                ]
+            )
+
+        def describe(self) -> ResolverDescription:
+            return ResolverDescription(self.name, self.cost_class, "só propõe")
+
+    sem = reconcile(BANCO_DE_TESTE, CONTABIL_DE_TESTE, resolvers=[])
+    com = reconcile(BANCO_DE_TESTE, CONTABIL_DE_TESTE, resolvers=[_SoPropoe()])
+
+    assert len(com.divergences) == len(sem.divergences)
+    assert len(com.proposals) == len(sem.divergences)

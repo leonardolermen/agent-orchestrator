@@ -83,12 +83,14 @@ def test_retencao_sobra_para_o_agente():
     # medidos em benchmark antes de alguém notar.
     from orchestrator.matching.exact import ExactMatcher
     from orchestrator.matching.tolerance import ToleranceMatcher
+    from orchestrator.workflow.workset import WorkSet
 
     par = _par()
     r = RetencaoImposto().apply(Random(0), par)
+    work = WorkSet(bank=r.bank, ledger=r.ledger)
 
-    assert ExactMatcher().match(r.bank, r.ledger) == []
-    assert ToleranceMatcher().match(r.bank, r.ledger) == []
+    assert ExactMatcher().resolve(work).matches == []
+    assert ToleranceMatcher().resolve(work).matches == []
 
 
 def test_retencao_e_deterministica():

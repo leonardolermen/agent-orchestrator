@@ -3,13 +3,14 @@ from random import Random
 from orchestrator.matching.grouping import GroupingMatcher
 from orchestrator.synth.generator import generate_clean_pairs
 from orchestrator.synth.injectors import DevolucaoFundos, PagamentoAgregado
+from orchestrator.workflow.workset import WorkSet
 
 
 def test_casa_pagamento_agregado_de_tres_notas():
     pares = generate_clean_pairs(seed=6, n=3)
     inj = PagamentoAgregado().apply_many(Random(0), pares)
 
-    r = GroupingMatcher().match(inj.bank, inj.ledger)
+    r = GroupingMatcher().resolve(WorkSet(bank=inj.bank, ledger=inj.ledger)).matches
 
     assert len(r) == 1
     assert r[0].ledger_ids == frozenset(le.id for le in inj.ledger)
@@ -20,7 +21,10 @@ def test_nao_casa_grupo_maior_que_o_limite():
     pares = generate_clean_pairs(seed=6, n=6)
     inj = PagamentoAgregado().apply_many(Random(0), pares)
 
-    assert GroupingMatcher(max_group_size=4).match(inj.bank, inj.ledger) == []
+    assert (
+        GroupingMatcher(max_group_size=4).resolve(WorkSet(bank=inj.bank, ledger=inj.ledger)).matches
+        == []
+    )
 
 
 def test_nao_resolve_devolucao_de_fundos():
@@ -28,14 +32,14 @@ def test_nao_resolve_devolucao_de_fundos():
     par = generate_clean_pairs(seed=6, n=1)[0]
     inj = DevolucaoFundos().apply(Random(0), par)
 
-    assert GroupingMatcher().match(inj.bank, inj.ledger) == []
+    assert GroupingMatcher().resolve(WorkSet(bank=inj.bank, ledger=inj.ledger)).matches == []
 
 
 def test_registra_as_parcelas_na_evidencia():
     pares = generate_clean_pairs(seed=6, n=2)
     inj = PagamentoAgregado().apply_many(Random(0), pares)
 
-    r = GroupingMatcher().match(inj.bank, inj.ledger)[0]
+    r = GroupingMatcher().resolve(WorkSet(bank=inj.bank, ledger=inj.ledger)).matches[0]
 
     assert r.evidence["quantidade"] == 2
     assert r.evidence["soma"] == abs(inj.bank[0].amount)
@@ -49,7 +53,7 @@ def test_evidencia_registra_o_valor_de_cada_documento_agrupado():
     pares = generate_clean_pairs(seed=6, n=2)
     inj = PagamentoAgregado().apply_many(Random(0), pares)
 
-    r = GroupingMatcher().match(inj.bank, inj.ledger)[0]
+    r = GroupingMatcher().resolve(WorkSet(bank=inj.bank, ledger=inj.ledger)).matches[0]
 
     valores = r.evidence["valores_por_documento"]
     for le in inj.ledger:
@@ -66,7 +70,7 @@ def test_nao_agrupa_fornecedores_diferentes():
     inj = PagamentoAgregado().apply_many(Random(0), pares)
     contabeis = [inj.ledger[0], replace(inj.ledger[1], supplier="OUTRO FORNECEDOR SA")]
 
-    assert GroupingMatcher().match(inj.bank, contabeis) == []
+    assert GroupingMatcher().resolve(WorkSet(bank=inj.bank, ledger=contabeis)).matches == []
 
 
 def test_rejeita_configuracao_que_nunca_agrupa():
@@ -98,8 +102,14 @@ def test_ignora_pool_de_candidatos_grande_demais():
     ruido = [replace(p.ledger, supplier=fornecedor, cash_date=data) for p in pares[3:]]
     contabeis = inj.ledger + ruido
 
-    assert GroupingMatcher(max_candidates=4).match(inj.bank, contabeis) == []
-    assert GroupingMatcher(max_candidates=6).match(inj.bank, contabeis) != []
+    assert (
+        GroupingMatcher(max_candidates=4).resolve(WorkSet(bank=inj.bank, ledger=contabeis)).matches
+        == []
+    )
+    assert (
+        GroupingMatcher(max_candidates=6).resolve(WorkSet(bank=inj.bank, ledger=contabeis)).matches
+        != []
+    )
 
 
 def test_ignora_creditos():
@@ -112,7 +122,7 @@ def test_ignora_creditos():
     inj = PagamentoAgregado().apply_many(Random(0), pares)
     credito = [replace(inj.bank[0], amount=abs(inj.bank[0].amount))]
 
-    assert GroupingMatcher().match(credito, inj.ledger) == []
+    assert GroupingMatcher().resolve(WorkSet(bank=credito, ledger=inj.ledger)).matches == []
 
 
 def test_nao_consome_o_contabil_de_uma_devolucao_vizinha():
@@ -128,7 +138,11 @@ def test_nao_consome_o_contabil_de_uma_devolucao_vizinha():
     )
     inj = DevolucaoFundos().apply(Random(0), pares[0])
 
-    r = GroupingMatcher().match(inj.bank, [inj.ledger[0], vizinho])
+    r = (
+        GroupingMatcher()
+        .resolve(WorkSet(bank=inj.bank, ledger=[inj.ledger[0], vizinho]))
+        .matches
+    )
 
     consumidos = {i for m in r for i in m.ledger_ids}
     assert inj.ledger[0].id not in consumidos

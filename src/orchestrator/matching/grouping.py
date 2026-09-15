@@ -10,6 +10,9 @@ from itertools import combinations
 
 from orchestrator.dates import business_days_between
 from orchestrator.models import BankEntry, LedgerEntry, MatchResult
+from orchestrator.workflow.cost_class import CostClass
+from orchestrator.workflow.resolver import ResolverDescription, ResolverOutput
+from orchestrator.workflow.workset import WorkSet
 
 
 @dataclass
@@ -17,7 +20,8 @@ class GroupingMatcher:
     max_group_size: int = 4
     max_business_days: int = 3
     max_candidates: int = 24
-    layer: str = field(default="L3", init=False)
+    name: str = field(default="L3", init=False)
+    cost_class: CostClass = field(default=CostClass.REGRA, init=False)
 
     def __post_init__(self) -> None:
         # Tamanho menor que 2 esvazia o range de combinações e a camada nunca
@@ -36,7 +40,19 @@ class GroupingMatcher:
                 f"o tamanho máximo de grupo ({self.max_group_size})"
             )
 
-    def match(self, bank: list[BankEntry], ledger: list[LedgerEntry]) -> list[MatchResult]:
+    def describe(self) -> ResolverDescription:
+        return ResolverDescription(
+            name=self.name,
+            cost_class=self.cost_class,
+            summary="um lançamento bancário cobrindo N contábeis do mesmo fornecedor",
+        )
+
+    def resolve(self, work: WorkSet) -> ResolverOutput:
+        return ResolverOutput(matches=self._casar(work.bank, work.ledger))
+
+    def _casar(
+        self, bank: list[BankEntry], ledger: list[LedgerEntry]
+    ) -> list[MatchResult]:
         por_fornecedor: dict[str, list[LedgerEntry]] = {}
         for le in ledger:
             if le.cash_date is not None:
@@ -85,7 +101,7 @@ class GroupingMatcher:
                 MatchResult(
                     bank_ids=frozenset({be.id}),
                     ledger_ids=frozenset(le.id for le in grupo),
-                    layer=self.layer,
+                    layer=self.name,
                     rule=(
                         f"agrupamento: soma de {len(grupo)} líquidos do mesmo "
                         f"fornecedor iguala o lançamento bancário"

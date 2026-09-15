@@ -1,6 +1,6 @@
-"""Orquestra as camadas determinísticas e apura o que sobrou.
+"""Orquestra a cascata de resolução e apura o que sobrou.
 
-Cada camada recebe apenas o que as anteriores não casaram. O que nenhuma
+Cada resolver recebe apenas o que os anteriores não resolveram. O que nenhum
 resolveu vira Divergence — e é isso, e só isso, que o agente de investigação
 recebe. Ver spec 4.3.
 """
@@ -11,15 +11,16 @@ from typing import Protocol
 from orchestrator.agent.proposal import Cost, InvestigationOutput, Proposal
 from orchestrator.matching.exact import ExactMatcher
 from orchestrator.matching.grouping import GroupingMatcher
-from orchestrator.matching.protocol import Matcher
 from orchestrator.matching.tolerance import ToleranceMatcher
 from orchestrator.models import BankEntry, Divergence, LedgerEntry, MatchResult
+from orchestrator.workflow.resolver import Resolver
+from orchestrator.workflow.workset import WorkSet
 
 
 class Investigator(Protocol):
-    """Quem investiga o que as camadas determinísticas não resolveram.
+    """Quem investiga o que a cascata determinística não resolveu.
 
-    Diferente de um Matcher: não resolve nada. Produz proposta, e o item
+    Diferente de um Resolver: não resolve nada. Produz proposta, e o item
     continua divergente até um humano aprovar.
     """
 
@@ -36,51 +37,43 @@ class ReconcileResult:
     agent_cost: Cost = field(default_factory=Cost.zero)
 
 
-def default_matchers() -> list[Matcher]:
-    """As três camadas, da mais barata para a mais cara."""
+def default_resolvers() -> list[Resolver]:
+    """As três regras, da mais barata para a mais cara dentro da classe."""
     return [ExactMatcher(), ToleranceMatcher(), GroupingMatcher()]
 
 
 def reconcile(
     bank: list[BankEntry],
     ledger: list[LedgerEntry],
-    matchers: list[Matcher] | None = None,
+    resolvers: list[Resolver] | None = None,
     investigator: Investigator | None = None,
 ) -> ReconcileResult:
-    camadas = default_matchers() if matchers is None else matchers
-
-    banco_restante = list(bank)
-    contabil_restante = list(ledger)
+    cascata = default_resolvers() if resolvers is None else resolvers
+    work = WorkSet(bank=list(bank), ledger=list(ledger))
     todos: list[MatchResult] = []
+    propostas: list[Proposal] = []
 
-    for camada in camadas:
-        resultados = camada.match(banco_restante, contabil_restante)
-        if not resultados:
-            continue
+    # `sorted` é estável: entre classes a ordem é derivada, dentro da classe a
+    # ordem que veio na lista sobrevive. Uma linha entrega as duas regras.
+    for resolver in sorted(cascata, key=lambda r: r.cost_class):
+        saida = resolver.resolve(work)
+        todos.extend(saida.matches)
+        propostas.extend(saida.proposals)
+        # Só `matches` encolhe o pool. `saida.proposals` não aparece aqui, e
+        # é essa ausência que torna a invariante estrutural.
+        work = work.without(saida.matches)
 
-        todos.extend(resultados)
-        casados_banco = {i for m in resultados for i in m.bank_ids}
-        casados_contabil = {i for m in resultados for i in m.ledger_ids}
-        banco_restante = [e for e in banco_restante if e.id not in casados_banco]
-        contabil_restante = [e for e in contabil_restante if e.id not in casados_contabil]
-
-    divergencias = [
-        Divergence(id=f"d-b-{e.id}", bank_ids=frozenset({e.id}), ledger_ids=frozenset())
-        for e in banco_restante
-    ] + [
-        Divergence(id=f"d-l-{e.id}", bank_ids=frozenset(), ledger_ids=frozenset({e.id}))
-        for e in contabil_restante
-    ]
+    divergencias = work.as_divergences()
 
     if investigator is None:
-        return ReconcileResult(matches=todos, divergences=divergencias)
+        return ReconcileResult(
+            matches=todos, divergences=divergencias, proposals=propostas
+        )
 
-    # O investigador recebe SÓ o que sobrou, e o que ele devolve não remove
-    # nada do pool: proposta não é resolução.
-    saida = investigator.investigate(divergencias)
+    saida_agente = investigator.investigate(divergencias)
     return ReconcileResult(
         matches=todos,
         divergences=divergencias,
-        proposals=saida.proposals,
-        agent_cost=saida.cost,
+        proposals=[*propostas, *saida_agente.proposals],
+        agent_cost=saida_agente.cost,
     )

@@ -7,6 +7,9 @@ from orchestrator.models import MatchResult
 from orchestrator.money import format_brl
 from orchestrator.synth.generator import build_dataset, generate_clean_pairs
 from orchestrator.synth.injectors import DefasagemTemporal, PagamentoAgregado
+from orchestrator.workflow.cost_class import CostClass
+from orchestrator.workflow.resolver import ResolverOutput
+from orchestrator.workflow.workset import WorkSet
 
 
 def test_dataset_limpo_tem_taxa_total():
@@ -37,39 +40,44 @@ def test_falso_positivo_quando_casa_o_que_deveria_divergir():
     inj = DefasagemTemporal().apply(Random(0), pares[0])
     ds = build_dataset(pares, injections=[inj])
 
-    r = reconcile(ds.bank, ds.ledger, matchers=[ToleranceMatcher(max_business_days=999)])
+    r = reconcile(ds.bank, ds.ledger, resolvers=[ToleranceMatcher(max_business_days=999)])
     m = evaluate(ds, r)
 
     assert m.false_positives == 1
 
 
 def test_taxa_fica_entre_zero_e_um():
-    # Matcher hostil: devolve ids que não existem no dataset. `matchers` é um
+    # Resolver hostil: devolve ids que não existem no dataset. `resolvers` é um
     # ponto de extensão anunciado (reconcile aceita qualquer lista), então um
-    # matcher com bug ou malicioso é um cenário alcançável, não hipotético.
+    # resolver com bug ou malicioso é um cenário alcançável, não hipotético.
     # Sem interseção com o dataset real, cada "casamento" fantasma infla o
     # numerador sem tocar o denominador — a taxa passa de 1.0 sem limite.
-    class MatcherHostil:
-        layer = "HOSTIL"
+    class ResolverHostil:
+        name = "HOSTIL"
+        cost_class = CostClass.REGRA
 
-        def match(self, bank, ledger):
+        def resolve(self, work: WorkSet) -> ResolverOutput:
             # Mais ids fantasma que lançamentos reais no dataset: se o código
             # não intersectar com o dataset, o numerador ultrapassa o
             # denominador e a taxa passa de 1.0.
-            return [
-                MatchResult(
-                    bank_ids=frozenset({f"id-fora-do-dataset-{i}" for i in range(10)}),
-                    ledger_ids=frozenset({f"outro-id-fora-do-dataset-{i}" for i in range(10)}),
-                    layer=self.layer,
-                    rule="finge casar ids que não existem no dataset",
-                    evidence={},
-                )
-            ]
+            return ResolverOutput(
+                matches=[
+                    MatchResult(
+                        bank_ids=frozenset({f"id-fora-do-dataset-{i}" for i in range(10)}),
+                        ledger_ids=frozenset(
+                            {f"outro-id-fora-do-dataset-{i}" for i in range(10)}
+                        ),
+                        layer=self.name,
+                        rule="finge casar ids que não existem no dataset",
+                        evidence={},
+                    )
+                ]
+            )
 
     pares = generate_clean_pairs(seed=9, n=2)
     ds = build_dataset(pares, injections=[])
 
-    m = evaluate(ds, reconcile(ds.bank, ds.ledger, matchers=[MatcherHostil()]))
+    m = evaluate(ds, reconcile(ds.bank, ds.ledger, resolvers=[ResolverHostil()]))
 
     assert 0.0 <= m.deterministic_rate <= 1.0
 
@@ -101,7 +109,7 @@ def test_falso_negativo_quando_camada_nao_resolve_o_que_deveria():
     ds = build_dataset(pares, injections=[inj])
 
     # sem nenhuma camada, o agregado deixa de ser resolvido
-    m = evaluate(ds, reconcile(ds.bank, ds.ledger, matchers=[]))
+    m = evaluate(ds, reconcile(ds.bank, ds.ledger, resolvers=[]))
 
     assert m.false_negatives == 1
 
@@ -143,27 +151,30 @@ def test_resolucao_parcial_de_agregado_conta_falso_negativo():
     # Um agregado só está resolvido se TODOS os seus ids foram casados. Casar
     # um dos três e deixar dois em divergência é falha parcial, e contar isso
     # como resolvido esconderia exatamente o que esta métrica existe para expor.
-    class MatcherParcial:
-        layer = "PARCIAL"
+    class ResolverParcial:
+        name = "PARCIAL"
+        cost_class = CostClass.REGRA
 
-        def match(self, bank, ledger):
-            if not bank or not ledger:
-                return []
-            return [
-                MatchResult(
-                    bank_ids=frozenset({bank[0].id}),
-                    ledger_ids=frozenset({ledger[0].id}),
-                    layer=self.layer,
-                    rule="casa só um dos contábeis, de propósito",
-                    evidence={},
-                )
-            ]
+        def resolve(self, work: WorkSet) -> ResolverOutput:
+            if not work.bank or not work.ledger:
+                return ResolverOutput()
+            return ResolverOutput(
+                matches=[
+                    MatchResult(
+                        bank_ids=frozenset({work.bank[0].id}),
+                        ledger_ids=frozenset({work.ledger[0].id}),
+                        layer=self.name,
+                        rule="casa só um dos contábeis, de propósito",
+                        evidence={},
+                    )
+                ]
+            )
 
     pares = generate_clean_pairs(seed=9, n=3)
     inj = PagamentoAgregado().apply_many(Random(0), pares)
     ds = build_dataset(pares, injections=[inj])
 
-    m = evaluate(ds, reconcile(ds.bank, ds.ledger, matchers=[MatcherParcial()]))
+    m = evaluate(ds, reconcile(ds.bank, ds.ledger, resolvers=[ResolverParcial()]))
 
     assert m.false_negatives == 1
 
