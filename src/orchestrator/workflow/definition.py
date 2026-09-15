@@ -13,10 +13,11 @@ from orchestrator.matching.engine import default_resolvers
 from orchestrator.workflow.resolver import Resolver
 
 if TYPE_CHECKING:
-    # Só para o type checker: em tempo de execução este import viraria
-    # circular (`revisor.py` importa deste módulo). O import de verdade,
-    # usado dentro de `default_definition`, é local de propósito — mesma
-    # razão do import local em `engine.py`.
+    # Só para o type checker: um import em tempo de execução aqui não seria
+    # circular hoje, mas manteria o pacote `workflow` dependendo do pacote
+    # `review` só para uma anotação — o mesmo cuidado que `agent/investigator.py`
+    # já toma com `Fila`. O import de verdade, usado dentro de
+    # `default_definition`, é local de propósito.
     from orchestrator.review.fila import Fila
 
 
