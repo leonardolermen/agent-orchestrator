@@ -51,23 +51,32 @@ function desenhar(item) {
     <ul class="evidencia">${evidencia}</ul>
     <div class="acoes">
       <button data-v="aceitar">Aceitar</button>
-      <button data-v="corrigir">Corrigir</button>
+      <button data-v="corrigir" class="btn-corrigir" type="button">Corrigir</button>
       <button data-v="rejeitar">Rejeitar</button>
     </div>
-    <div class="correcao" hidden>
+    <div class="correcao">
       <select class="tipo-corrigido">${TIPOS.map((t) => `<option>${t}</option>`).join("")}</select>
       <input class="ids-corrigidos" placeholder="ids a conciliar, separados por vírgula">
+      <button class="confirmar-correcao" type="button">Confirmar correção</button>
     </div>`;
 
+  // "Corrigir" só abre/fecha a caixa — nunca decide nada sozinho. Um clique
+  // perdido (ou dois seguidos por engano) nesse botão não pode gravar uma
+  // correção vazia no log; só "Confirmar correção", dentro da caixa, chama
+  // `decidir`. Antes os dois papéis estavam no mesmo botão: o 1º clique
+  // abria, o 2º já caía direto em `decidir("corrigir", ...)` com o `<select>`
+  // ainda no primeiro tipo da lista e nenhum id — um "corrigir" inventado
+  // que o backend aceita de bom grado (lista vazia é abstenção legítima) e
+  // grava como decisão humana de verdade.
   const correcao = el.querySelector(".correcao");
-  el.querySelectorAll(".acoes button").forEach((b) => {
-    b.addEventListener("click", () => {
-      if (b.dataset.v === "corrigir" && correcao.hidden) {
-        correcao.hidden = false;
-        return;
-      }
-      decidir(item, b.dataset.v, correcao, el);
-    });
+  el.querySelector(".btn-corrigir").addEventListener("click", () => {
+    correcao.classList.toggle("aberta");
+  });
+  el.querySelectorAll('.acoes button:not(.btn-corrigir)').forEach((b) => {
+    b.addEventListener("click", () => decidir(item, b.dataset.v, correcao, el));
+  });
+  correcao.querySelector(".confirmar-correcao").addEventListener("click", () => {
+    decidir(item, "corrigir", correcao, el);
   });
   return el;
 }
@@ -84,10 +93,20 @@ async function decidir(item, veredito, correcao, el) {
       .split(",").map((s) => s.trim()).filter(Boolean);
   }
 
-  const r = await fetch(
-    `/api/fila/conciliacao/${item.divergence_id}/decisao?${PARAMS}`,
-    { method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify(corpo) });
+  let r;
+  try {
+    r = await fetch(
+      `/api/fila/conciliacao/${item.divergence_id}/decisao?${PARAMS}`,
+      { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify(corpo) });
+  } catch (erroDeRede) {
+    // `fetch` rejeita ANTES de existir uma resposta quando a rede cai, o DNS
+    // falha ou o pedido é abortado — sem este catch essa rejeição não tem
+    // handler, e a tela não diz nada: o clique parece ter sumido no vácuo,
+    // sem alerta e sem mudança nenhuma na lista.
+    alert(`falha de rede ao decidir: ${erroDeRede}`);
+    return;
+  }
   if (!r.ok) {
     // O corpo de um 422 carrega em `detail` a razão exata — "corrigir exige
     // `tipo`", ids inexistentes, ação malformada pedindo `corrigir` no lugar
