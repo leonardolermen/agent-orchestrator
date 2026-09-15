@@ -21,6 +21,17 @@ header { max-width: 46rem; margin: 0 auto 1.5rem; }
 h1 { font-size: 1.4rem; margin: 0 0 .25rem; }
 .proveniencia { margin: 0; color: #6b6660; font-size: .85rem; }
 
+/* Leva o mesmo dataset (seed/n/taxa) de uma página para a outra — o `href`
+   real é montado em JS, com a query string atual, antes de qualquer fetch. */
+.link-outro {
+  display: inline-block;
+  margin-top: .5rem;
+  color: var(--humano);
+  font-size: .85rem;
+  text-decoration: none;
+}
+.link-outro:hover { text-decoration: underline; }
+
 main { max-width: 46rem; margin: 0 auto; }
 
 .stage {

@@ -4,7 +4,7 @@ import pytest
 
 from orchestrator.agent.investigator import SYSTEM, Investigator
 from orchestrator.agent.llm import FakeLLMClient, LLMResponse, ToolCall
-from orchestrator.agent.proposal import _PRECOS, Confidence, Cost, TraceKind
+from orchestrator.agent.proposal import _PRECOS, Confidence, Cost, Proposal, TraceKind
 from orchestrator.agent.tools import TOOL_SCHEMAS, ToolContext
 from orchestrator.models import Divergence
 from orchestrator.synth.generator import build_dataset, generate_clean_pairs
@@ -532,3 +532,183 @@ def test_multiplas_chamadas_de_ferramenta_voltam_em_uma_unica_mensagem():
     assert len(mensagens_de_resultado[0]["content"]) == 2
     ids = {b["tool_use_id"] for b in mensagens_de_resultado[0]["content"]}
     assert ids == {"t1", "t2"}
+
+
+def test_interpretar_proposta_e_funcao_de_modulo_reusavel():
+    """O parsing da proposta precisa ser reusável fora do Investigator.
+
+    O investigador movido a assinatura (eval/assinatura.py) roda um laço
+    diferente mas tem que produzir EXATAMENTE a mesma Proposal a partir do
+    mesmo JSON. Duplicar o parsing significaria dois caminhos divergindo em
+    silêncio no dia em que um deles ganhasse uma guarda nova.
+    """
+    from orchestrator.agent.investigator import interpretar_proposta
+
+    texto = (
+        '{"tipo":"DEFASAGEM_TEMPORAL","explicacao":"liquidou depois",'
+        '"evidencia":["b1: 2026-01-05"],"confianca":"MEDIA",'
+        '"acao_sugerida":"conciliar_com(l1)"}'
+    )
+
+    p = interpretar_proposta("d-1", texto, Cost.zero(), [])
+
+    assert p is not None
+    assert p.divergence_id == "d-1"
+    assert p.tipo is DivergenceType.DEFASAGEM_TEMPORAL
+    assert p.confianca is Confidence.MEDIA
+    assert p.evidencia == ["b1: 2026-01-05"]
+    assert p.acao_sugerida == "conciliar_com(l1)"
+
+
+def test_descrever_divergencia_e_funcao_de_modulo_reusavel():
+    """A entrada do agente também precisa ser compartilhada.
+
+    Se os dois caminhos montarem o texto da divergência por conta própria, o
+    agente por assinatura estaria sendo avaliado sobre uma entrada diferente
+    da que o caminho pago envia — e a comparação entre eles, que é o motivo
+    de existir os dois, não valeria nada.
+    """
+    import json
+
+    from orchestrator.agent.investigator import descrever_divergencia
+    from orchestrator.agent.tools import ToolContext
+    from orchestrator.models import Divergence
+    from orchestrator.synth.generator import generate_clean_pairs
+
+    pares = generate_clean_pairs(seed=2, n=1)
+    ctx = ToolContext(bank=[pares[0].bank], ledger=[pares[0].ledger])
+    d = Divergence(
+        id="d-1",
+        bank_ids=frozenset({pares[0].bank.id}),
+        ledger_ids=frozenset(),
+    )
+
+    dados = json.loads(descrever_divergencia(ctx, d))
+
+    assert dados["divergencia_id"] == "d-1"
+    assert [e["id"] for e in dados["lancamentos_bancarios"]] == [pares[0].bank.id]
+    assert dados["lancamentos_contabeis"] == []
+
+
+# ---------------------------------------------------------------------------
+# Idempotência — a guarda contra reinvestigar o que já está na fila.
+# ---------------------------------------------------------------------------
+
+
+def test_divergencia_ja_proposta_nao_chama_o_modelo_de_novo():
+    """Idempotência do Tier 1, aplicada à chamada mais cara do sistema.
+
+    O agente é classe AGENTE e o revisor é HUMANO, então o agente roda ANTES
+    em toda passagem. Sem esta guarda, a passagem 2 reinvestigaria tudo o que
+    a passagem 1 já investigou — e pagaria de novo por respostas que já estão
+    na fila.
+    """
+    from orchestrator.review.fila import Fila
+    from orchestrator.workflow.workset import WorkSet
+
+    pares = generate_clean_pairs(seed=2, n=1)
+    work = WorkSet(bank=[pares[0].bank], ledger=[])
+    ja_proposta = work.as_divergences()[0]
+
+    fila = Fila.vazia()
+    fila.gravar_proposta(
+        Proposal(
+            divergence_id=ja_proposta.id,
+            tipo=DivergenceType.DEFASAGEM_TEMPORAL,
+            explicacao="da passagem anterior",
+            evidencia=["e"],
+            confianca=Confidence.MEDIA,
+            acao_sugerida="conciliar_com(l1)",
+        )
+    )
+
+    class _ClienteQueAcusa:
+        model = "claude-haiku-4-5"
+
+        def complete(self, system, messages, tools):
+            raise AssertionError("o agente reinvestigou o que já estava na fila")
+
+    saida = Investigator(
+        client=_ClienteQueAcusa(), context=CONTEXTO_DE_TESTE, fila=fila
+    ).resolve(work)
+
+    assert len(saida.proposals) == 1
+    assert saida.proposals[0].explicacao == "da passagem anterior"
+    assert saida.cost.calls == 0
+
+
+def test_divergencia_sem_proposta_na_fila_e_investigada_normalmente():
+    """A guarda precisa ser seletiva por id, não um interruptor de tudo-ou-nada.
+
+    Uma fila que cobre A mas não B: A vem da fila, B é investigado de
+    verdade. Um guard que só é exercitado quando a fila cobre 100% do lote
+    não testa o caso em que ele de fato precisa discriminar.
+    """
+    from orchestrator.review.fila import Fila
+
+    fila = Fila.vazia()
+    fila.gravar_proposta(
+        Proposal(
+            divergence_id="a",
+            tipo=DivergenceType.DEFASAGEM_TEMPORAL,
+            explicacao="da passagem anterior",
+            evidencia=["e"],
+            confianca=Confidence.MEDIA,
+            acao_sugerida="conciliar_com(l1)",
+        )
+    )
+
+    cliente = FakeLLMClient([RESPOSTA_VALIDA])
+    inv = Investigator(client=cliente, context=CONTEXTO_DE_TESTE, fila=fila)
+
+    out = inv.investigate([_div("a"), _div("b")])
+
+    assert len(out.proposals) == 2
+    por_id = {p.divergence_id: p for p in out.proposals}
+    assert por_id["a"].explicacao == "da passagem anterior"
+    assert por_id["b"].tipo is DivergenceType.RETENCAO_IMPOSTO
+    # só "b" gerou chamada ao modelo
+    assert len(cliente.chamadas) == 1
+    assert out.cost.calls == 1
+
+
+def test_proposta_guardada_com_custo_historico_nao_entra_na_conta_desta_passagem():
+    """Regressão do CRITICAL apontado na revisão: `serial.py` persiste os
+    cinco campos de `Cost`, então uma proposta vinda do disco carrega o
+    gasto REAL da investigação original. Somar esse custo em `total` faria
+    o teto por execução estourar sobre gasto histórico — de uma passagem
+    que não chamou o modelo nenhuma vez — e inflaria `agent_cost_microcents`
+    com dinheiro já contado numa execução anterior.
+    """
+    from orchestrator.review.fila import Fila
+
+    custo_historico = Cost(input_tokens=90_000, output_tokens=20_000, calls=6)
+    fila = Fila.vazia()
+    fila.gravar_proposta(
+        Proposal(
+            divergence_id="a",
+            tipo=DivergenceType.DEFASAGEM_TEMPORAL,
+            explicacao="da passagem anterior",
+            evidencia=["e"],
+            confianca=Confidence.MEDIA,
+            acao_sugerida="conciliar_com(l1)",
+            cost=custo_historico,
+        )
+    )
+
+    class _ClienteQueAcusa:
+        model = "claude-haiku-4-5"
+
+        def complete(self, system, messages, tools):
+            raise AssertionError("o agente reinvestigou o que já estava na fila")
+
+    inv = Investigator(client=_ClienteQueAcusa(), context=CONTEXTO_DE_TESTE, fila=fila)
+    out = inv.investigate([_div("a")])
+
+    # A passagem não gastou nada: nenhuma chamada ao modelo, custo agregado
+    # zerado — mesmo a proposta guardada carregando um custo histórico alto.
+    assert out.cost.calls == 0
+    assert out.cost.microcents(inv.client.model) == 0
+    # O registro de auditoria da proposta em si continua intacto: ela ainda
+    # carrega o custo de quando foi de fato investigada.
+    assert out.proposals[0].cost == custo_historico

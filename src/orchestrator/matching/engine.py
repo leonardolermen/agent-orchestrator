@@ -13,6 +13,7 @@ from orchestrator.matching.exact import ExactMatcher
 from orchestrator.matching.grouping import GroupingMatcher
 from orchestrator.matching.tolerance import ToleranceMatcher
 from orchestrator.models import BankEntry, Divergence, LedgerEntry, MatchResult
+from orchestrator.workflow.cost_class import CostClass
 from orchestrator.workflow.resolver import Resolver
 from orchestrator.workflow.workset import WorkSet
 
@@ -41,6 +42,11 @@ class ReconcileResult:
     # é o que a tela precisa para nunca reportar 0% de um resolver que rodou
     # e apenas estampou seus matches com uma proveniência diferente do nome.
     matches_by_resolver: dict[str, int] = field(default_factory=dict)
+    # Os matches agrupados pela CLASSE do resolver que os produziu, capturada
+    # no laço. Sem isto, a única forma de separar match de regra de match
+    # humano seria olhar `MatchResult.layer` — proveniência, não classe — que
+    # é o mesmo join frágil que P3.2 manda evitar.
+    matches_by_class: dict[CostClass, list[MatchResult]] = field(default_factory=dict)
 
 
 def default_resolvers() -> list[Resolver]:
@@ -63,6 +69,7 @@ def reconcile(
     propostas: list[Proposal] = []
     custos: dict[str, Cost] = {}
     matches_por_resolver: dict[str, int] = {}
+    matches_por_classe: dict[CostClass, list[MatchResult]] = {}
 
     # A ordenação é POR STAGE, não global: um stage posterior não pode ter
     # seus resolvers embaralhados com os de um anterior. Com um stage só — o
@@ -80,6 +87,7 @@ def reconcile(
             # Chave por identidade do resolver, não por `layer` do match — a
             # mesma distinção do comentário em `matches_by_resolver` acima.
             matches_por_resolver[resolver.name] = len(saida.matches)
+            matches_por_classe.setdefault(resolver.cost_class, []).extend(saida.matches)
             # Só `matches` encolhe o pool. `saida.proposals` não aparece
             # nesta expressão, e é essa ausência que torna a invariante
             # estrutural em vez de uma regra que alguém precisa lembrar.
@@ -91,4 +99,5 @@ def reconcile(
         proposals=propostas,
         cost_by_resolver=custos,
         matches_by_resolver=matches_por_resolver,
+        matches_by_class=matches_por_classe,
     )

@@ -10,6 +10,7 @@ O gabarito não precisou ser construído para isto — ele já existe desde a pl
 import argparse
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 from orchestrator.agent.investigator import Investigator
 from orchestrator.agent.llm import LLMClient
@@ -18,9 +19,19 @@ from orchestrator.agent.tools import ToolContext
 from orchestrator.cli import build_benchmark
 from orchestrator.matching.engine import default_resolvers, reconcile
 from orchestrator.metrics import evaluate
+from orchestrator.review.fila import Fila, caminho_da_fila, dataset_id
 from orchestrator.workflow.definition import Stage, WorkflowDefinition
 
 MODELOS_PADRAO = ("claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5")
+
+# "api" gasta crédito da Console; "assinatura" usa o processo local do
+# Claude Code e serve só para avaliar — não exercita anthropic_client.py.
+VIAS = ("api", "assinatura")
+
+# Raiz da fila em disco. Atributo de módulo, mesmo padrão de
+# `api/app.py::_RAIZ_FILA`, para o teste poder trocá-la por um tmp_path sem
+# escrever no repositório.
+_RAIZ_FILA: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -36,6 +47,11 @@ class EvalResult:
     # chamada NENHUMA sai com exatamente os mesmos números de uma em que o
     # modelo tentou e errou tudo — MEDIDO em 2026-09-15, ver o teste.
     proposals_api_failed: int = 0
+    # Falso quando a execução foi pela assinatura: ela consome, mas não tem
+    # preço por chamada. Imprimir US$ 0,0000 nesse caso seria relatar
+    # ausência de medição como medição — o defeito que esta avaliação já
+    # cometeu uma vez com falha de API.
+    custo_medido: bool = True
 
     @property
     def precision(self) -> float:
@@ -78,11 +94,19 @@ class EvalResult:
         linhas += [
             f"Precisão (das que arriscaram): {self.precision:.1%}",
             f"Taxa de abstenção:             {self.abstention_rate:.1%}",
-            f"Custo total:                   "
-            f"US$ {self.total_microcents / 100_000_000:.4f}",
-            f"Custo por divergência:         "
-            f"US$ {self.microcents_per_divergence / 100_000_000:.6f}",
         ]
+        if self.custo_medido:
+            linhas += [
+                f"Custo total:                   "
+                f"US$ {self.total_microcents / 100_000_000:.4f}",
+                f"Custo por divergência:         "
+                f"US$ {self.microcents_per_divergence / 100_000_000:.6f}",
+            ]
+        else:
+            linhas.append(
+                "Custo:                         não medido — execução por "
+                "assinatura não tem preço por chamada"
+            )
         if self.proposals_api_failed:
             linhas.append(
                 f"ATENÇÃO — FALHA DE API em {self.proposals_api_failed} de "
@@ -107,22 +131,40 @@ def avaliar(
     n: int,
     taxa_divergencia: float,
     client_factory: Callable[[], LLMClient] | None = None,
+    via: str = "api",
+    investigator_factory: Callable[[ToolContext], object] | None = None,
+    gravar_fila: bool = False,
 ) -> EvalResult:
-    dataset = build_benchmark(seed=seed, n=n, taxa_divergencia=taxa_divergencia)
-    cliente = (client_factory or _fabrica_real(model))()
+    if via not in VIAS:
+        raise ValueError(f"via desconhecida: {via!r}; use uma de {VIAS}")
 
-    # O rótulo do resultado vem do modelo PEDIDO; o preço vem do modelo que o
-    # cliente REPORTA. Se divergirem, o relatório sai precificado numa tabela e
-    # rotulado como outra — corrupção silenciosa que derrota exatamente o
-    # propósito desta avaliação, que é transformar escolha de modelo em medição.
-    if cliente.model != model:
-        raise ValueError(
-            f"a fábrica devolveu um cliente de {cliente.model!r} quando "
-            f"{model!r} foi pedido; o custo sairia precificado errado"
-        )
-    investigador = Investigator(
-        client=cliente, context=ToolContext(bank=dataset.bank, ledger=dataset.ledger)
-    )
+    dataset = build_benchmark(seed=seed, n=n, taxa_divergencia=taxa_divergencia)
+    contexto = ToolContext(bank=dataset.bank, ledger=dataset.ledger)
+
+    # Assinatura consome, mas não tem preço por chamada. Sem esta distinção o
+    # relatório imprimiria US$ 0,0000 e passaria por medição.
+    custo_medido = via == "api"
+
+    if investigator_factory is not None:
+        investigador = investigator_factory(contexto)
+    elif via == "assinatura":
+        # Import local: o extra `[assinatura]` é opcional e o núcleo não pode
+        # depender do Claude Code para importar este módulo.
+        from orchestrator.eval.assinatura import InvestigadorAssinatura
+
+        investigador = InvestigadorAssinatura(context=contexto)
+    else:
+        cliente = (client_factory or _fabrica_real(model))()
+        # O rótulo do resultado vem do modelo PEDIDO; o preço vem do modelo que
+        # o cliente REPORTA. Se divergirem, o relatório sai precificado numa
+        # tabela e rotulado como outra — corrupção silenciosa que derrota
+        # exatamente o propósito desta avaliação.
+        if cliente.model != model:
+            raise ValueError(
+                f"a fábrica devolveu um cliente de {cliente.model!r} quando "
+                f"{model!r} foi pedido; o custo sairia precificado errado"
+            )
+        investigador = Investigator(client=cliente, context=contexto)
 
     definicao = WorkflowDefinition(
         id="conciliacao-com-agente",
@@ -135,7 +177,20 @@ def avaliar(
         ),
     )
     resultado = reconcile(dataset.bank, dataset.ledger, definition=definicao)
-    metricas = evaluate(dataset, resultado, model=cliente.model)
+    if gravar_fila:
+        # Quem grava é o CLI, nunca `reconcile`. O motor continua puro, e é
+        # disso que o golden e o teste do dinheiro dependem.
+        fila = Fila(
+            caminho_da_fila(
+                "conciliacao", dataset_id(seed, n, taxa_divergencia), raiz=_RAIZ_FILA
+            )
+        )
+        for p in resultado.proposals:
+            fila.gravar_proposta(p)
+    # Pela assinatura `model` não está na tabela de preços; isso só não
+    # estoura porque todo custo é Cost.zero() e `metrics` curto-circuita
+    # antes de converter. O teste de `via=assinatura` pina esse caminho.
+    metricas = evaluate(dataset, resultado, model=model)
     falhas_api = sum(
         1
         for p in resultado.proposals
@@ -150,6 +205,7 @@ def avaliar(
         proposals_abstained=metricas.proposals_abstained,
         total_microcents=metricas.agent_cost_microcents,
         proposals_api_failed=falhas_api,
+        custo_medido=custo_medido,
     )
 
 
@@ -208,14 +264,40 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--n", type=int, default=100)
     parser.add_argument("--taxa-divergencia", type=float, default=0.15)
+    parser.add_argument(
+        "--via",
+        choices=VIAS,
+        default="api",
+        help="api gasta crédito da Console; assinatura usa o Claude Code local "
+             "e NÃO exercita anthropic_client.py",
+    )
+    parser.add_argument(
+        "--fila", action="store_true", help="grava as propostas na fila de revisão"
+    )
     args = parser.parse_args(argv)
 
-    modelos = args.model or list(MODELOS_PADRAO)
-    print(f"Avaliação ao vivo — GASTA DINHEIRO. Modelos: {', '.join(modelos)}")
+    if args.via == "assinatura":
+        # O modelo é o que o Claude Code local estiver usando — não é escolha
+        # nossa, e por isso não faz sentido varrer a lista de modelos aqui.
+        modelos = ["assinatura"]
+        print(
+            "Avaliação ao vivo pela ASSINATURA (Claude Code local). Não gasta "
+            "crédito da Console e não mede custo."
+        )
+        print(
+            "NÃO exercita anthropic_client.py: o protocolo de ferramentas da "
+            "Messages API continua sem prova por este caminho."
+        )
+    else:
+        modelos = args.model or list(MODELOS_PADRAO)
+        print(f"Avaliação ao vivo — GASTA DINHEIRO. Modelos: {', '.join(modelos)}")
     print()
     resultados = []
     for modelo in modelos:
-        r = avaliar(modelo, args.seed, args.n, args.taxa_divergencia)
+        r = avaliar(
+            modelo, args.seed, args.n, args.taxa_divergencia, via=args.via,
+            gravar_fila=args.fila,
+        )
         print(r.render())
         print()
         resultados.append(r)

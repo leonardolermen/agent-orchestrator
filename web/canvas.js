@@ -1,6 +1,37 @@
 // O canvas desenha o que a API mediu. Nenhum número é escrito aqui:
 // se a API não mediu, a tela diz "não medido" em vez de inventar.
-const PEDIDO = { seed: 1, n: 300, taxa_divergencia: 0.15 };
+//
+// `seed`/`n`/`taxa_divergencia` vêm da URL, não de uma constante local. Esta
+// página e `fila.html` precisam concordar sobre QUAL dataset estão olhando —
+// a fila é escopada por `dataset_id(seed, n, taxa)` (ver
+// `orchestrator/review/fila.py`), então uma decisão tomada na fila só
+// aparece aqui se as duas páginas apontarem para o MESMO dataset. Uma
+// constante duplicada nos dois arquivos é uma promessa que já quebrou uma
+// vez — ver DECISOES.md, P4.14 — porque nada além de lembrança humana as
+// mantinha iguais. A URL é a única fonte que as duas podem compartilhar sem
+// depender disso.
+const QUERY = new URLSearchParams(location.search);
+
+function parametro(nome, padrao) {
+  const bruto = QUERY.get(nome);
+  if (bruto === null || bruto === "") return padrao;
+  const numero = Number(bruto);
+  return Number.isFinite(numero) ? numero : padrao;
+}
+
+// Os mesmos padrões de `RunRequest` (api/schemas.py) e de `fila.js` — os
+// três arquivos concordam porque os três leem do mesmo lugar (a URL) com o
+// mesmo valor de reserva, não porque alguém copiou o número três vezes.
+const PEDIDO = {
+  seed: parametro("seed", 1),
+  n: parametro("n", 300),
+  taxa_divergencia: parametro("taxa_divergencia", 0.15),
+};
+
+// O link para a fila carrega o MESMO dataset — é o que permite ao revisor
+// sair do canvas, decidir, e voltar sem perder de vista o que estava vendo.
+document.getElementById("link-fila").href =
+  `/fila.html?${new URLSearchParams(PEDIDO)}`;
 
 async function carregar() {
   const [definicao, execucao] = await Promise.all([

@@ -14,6 +14,7 @@ from orchestrator.matching.engine import ReconcileResult
 from orchestrator.money import format_brl
 from orchestrator.synth.dataset import Dataset
 from orchestrator.taxonomy import DivergenceType
+from orchestrator.workflow.cost_class import CostClass
 
 
 @dataclass(frozen=True)
@@ -25,6 +26,10 @@ class Metrics:
     # dataset.bank. O lado contábil nunca entra no denominador, então um
     # órfão contábil puro não move esta taxa.
     deterministic_rate: float
+    # Todas as classes, não só REGRA: é a taxa que um operador lê como
+    # "quanto do fechamento está fechado".
+    bank_matched_total: int
+    resolution_rate: float
     divergences: int
     truth_divergences: int
     false_positives: int
@@ -54,6 +59,13 @@ class Metrics:
             f"Lançamentos contábeis:         {self.ledger_total}",
             f"Casados deterministicamente:   {self.bank_matched}",
             f"Taxa determinística (lado bancário): {self.deterministic_rate:.1%}",
+        ]
+        if self.bank_matched_total != self.bank_matched:
+            linhas.append(
+                f"Taxa de resolução total:       {self.resolution_rate:.1%} "
+                f"(inclui revisão humana)"
+            )
+        linhas += [
             "",
             f"Lançamentos sem contrapartida: {self.divergences}",
             f"Casos injetados no gabarito:   {self.truth_divergences}",
@@ -62,8 +74,9 @@ class Metrics:
             f"Falsos positivos:              {self.false_positives}",
             f"Falsos negativos:              {self.false_negatives}",
             "",
-            f"Valor conciliado:              {format_brl(self.matched_amount)}",
-            f"Valor em divergência (lado bancário): {format_brl(self.divergent_amount)}",
+            f"Valor conciliado (todas as classes): {format_brl(self.matched_amount)}",
+            f"Valor em divergência (lado bancário, todas as classes): "
+            f"{format_brl(self.divergent_amount)}",
             "",
             "Gabarito por tipo:",
         ]
@@ -101,9 +114,26 @@ def evaluate(
     # intersectar, esses ids fantasma inflam o numerador sem limite e a taxa
     # passa de 1.0. A interseção com os ids reais do dataset é a garantia de
     # domínio que o tipo por si só não dá.
-    casados_banco = {i for m in result.matches for i in m.bank_ids} & ids_banco
-    casados_todos = ({i for m in result.matches for i in m.bank_ids | m.ledger_ids}
+    # Só REGRA: `deterministic_rate` tem "determinística" no nome, e falso
+    # positivo/negativo medem o CATÁLOGO DE REGRAS. Somar trabalho humano
+    # aqui faria o número subir sem que nenhuma regra tivesse melhorado, e
+    # transformaria uma aprovação correta em falso positivo.
+    #
+    # O default é `[]`, não `result.matches`. Uma cascata sem resolver REGRA
+    # nenhum — um stage só de revisão humana, por exemplo — legitimamente não
+    # tem match determinístico algum; cair para `result.matches` contaria
+    # trabalho humano como determinístico, exatamente o defeito que esta
+    # tarefa corrige. `matches_by_class` sempre tem a chave quando ALGUM
+    # resolver REGRA rodou (mesmo sem casar nada, a chave existe com lista
+    # vazia); ela só falta quando nenhum rodou, e aí `[]` é a resposta certa.
+    de_regra = result.matches_by_class.get(CostClass.REGRA, [])
+    casados_banco = {i for m in de_regra for i in m.bank_ids} & ids_banco
+    casados_todos = ({i for m in de_regra for i in m.bank_ids | m.ledger_ids}
                       & (ids_banco | ids_contabil))
+
+    # Todas as classes: estas duas respondem "quanto foi resolvido" e "quanto
+    # ainda está em aberto" — perguntas de negócio, não do catálogo.
+    casados_banco_total = {i for m in result.matches for i in m.bank_ids} & ids_banco
 
     def ids(gt) -> set[str]:
         return set(gt.bank_ids | gt.ledger_ids)
@@ -131,8 +161,10 @@ def evaluate(
 
     # Valor é o que o comprador entende. Contagem de lançamentos não diz se o
     # que sobrou foi R$ 300 ou R$ 300 mil.
-    conciliado = sum(abs(e.amount) for e in dataset.bank if e.id in casados_banco)
-    divergente = sum(abs(e.amount) for e in dataset.bank if e.id not in casados_banco)
+    conciliado = sum(abs(e.amount) for e in dataset.bank if e.id in casados_banco_total)
+    divergente = sum(
+        abs(e.amount) for e in dataset.bank if e.id not in casados_banco_total
+    )
 
     # Conta MatchResults, não lançamentos casados — um único MatchResult pode
     # cobrir vários ids de uma vez (ex.: PAGAMENTO_AGREGADO casa 1 bancário +
@@ -178,6 +210,10 @@ def evaluate(
         ledger_total=len(dataset.ledger),
         bank_matched=len(casados_banco),
         deterministic_rate=(len(casados_banco) / bank_total) if bank_total else 0.0,
+        bank_matched_total=len(casados_banco_total),
+        resolution_rate=(
+            (len(casados_banco_total) / bank_total) if bank_total else 0.0
+        ),
         divergences=len(result.divergences),
         truth_divergences=len(dataset.truth),
         false_positives=falsos_positivos,

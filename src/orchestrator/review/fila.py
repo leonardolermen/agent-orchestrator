@@ -1,0 +1,116 @@
+"""As propostas e decisões de um workflow sobre um dataset.
+
+Um JSONL append-only por `(workflow, dataset)`. Append-only NÃO é economia de
+esforço: é a trilha de auditoria que o Tier 1 do spec pai pede, saindo como
+subproduto do formato em vez de funcionalidade construída depois.
+
+Escrita concorrente de dois processos não tem lock. Uma máquina, um usuário,
+`open("a")` por linha é seguro o bastante; multiusuário é multi-tenant, Tier 4.
+"""
+
+import json
+from pathlib import Path
+from typing import Any
+
+from orchestrator.agent.proposal import Proposal
+from orchestrator.review.decision import Decision
+from orchestrator.review.serial import (
+    decisao_de_dict,
+    decisao_para_dict,
+    proposta_de_dict,
+    proposta_para_dict,
+)
+
+_RAIZ_PADRAO = Path("data")
+
+
+def dataset_id(seed: int, n: int, taxa: float) -> str:
+    """A identidade do conjunto sobre o qual uma decisão foi tomada.
+
+    `d-b-b00003` existe em toda semente. Sem este escopo, uma decisão tomada
+    olhando a semente 1 se aplicaria a um lançamento diferente na semente 7.
+    """
+    return f"s{seed}-n{n}-t{taxa}"
+
+
+def caminho_da_fila(workflow_id: str, dataset: str, raiz: Path | None = None) -> Path:
+    return (raiz or _RAIZ_PADRAO) / "fila" / workflow_id / f"{dataset}.jsonl"
+
+
+class Fila:
+    def __init__(self, caminho: Path | None) -> None:
+        self._caminho = caminho
+        self._propostas: dict[str, Proposal] = {}
+        self._decisoes: dict[str, Decision] = {}
+        self._ordem: list[str] = []
+        if caminho is not None and caminho.exists():
+            linhas = caminho.read_text(encoding="utf-8").splitlines()
+            for numero, linha in enumerate(linhas, start=1):
+                if not linha.strip():
+                    continue
+                try:
+                    self._aplicar(json.loads(linha))
+                except Exception as erro:
+                    # A fila é a trilha de auditoria. Um KeyError mudo diz
+                    # "faltou um campo" sem dizer QUAL registro — e quem lê
+                    # isso é um humano investigando por que uma decisão
+                    # sumiu, não um dev com o traceback do parser na cabeça.
+                    raise ValueError(
+                        f"registro inválido em {caminho} na linha {numero}: {erro}"
+                    ) from erro
+
+    @staticmethod
+    def vazia() -> "Fila":
+        """Uma fila em memória que nunca toca o disco.
+
+        É o que `default_definition()` usa quando ninguém passa fila: o
+        revisor existe na cascata, não emite nada, e o golden segue idêntico.
+        """
+        return Fila(None)
+
+    def _aplicar(self, registro: dict[str, Any]) -> None:
+        if registro["kind"] == "proposta":
+            p = proposta_de_dict(registro["dados"])
+            # PRIMEIRA vence: o agente não se repete, e uma segunda proposta
+            # apagaria o que o revisor já leu.
+            if p.divergence_id not in self._propostas:
+                self._propostas[p.divergence_id] = p
+                self._ordem.append(p.divergence_id)
+        else:
+            # ÚLTIMA vence: um humano muda de ideia, e o estado é a decisão
+            # mais recente. O log guarda todas — é ele a auditoria.
+            d = decisao_de_dict(registro["dados"])
+            self._decisoes[d.divergence_id] = d
+
+    def _acrescentar(self, kind: str, dados: dict[str, Any]) -> None:
+        if self._caminho is None:
+            return
+        self._caminho.parent.mkdir(parents=True, exist_ok=True)
+        with self._caminho.open("a", encoding="utf-8") as f:
+            f.write(json.dumps({"kind": kind, "dados": dados}, ensure_ascii=False) + "\n")
+
+    def proposta(self, divergence_id: str) -> Proposal | None:
+        return self._propostas.get(divergence_id)
+
+    def decisao(self, divergence_id: str) -> Decision | None:
+        return self._decisoes.get(divergence_id)
+
+    def pendentes(self) -> list[Proposal]:
+        return [self._propostas[i] for i in self._ordem if i not in self._decisoes]
+
+    def decididas(self) -> list[tuple[Proposal, Decision]]:
+        return [
+            (self._propostas[i], self._decisoes[i]) for i in self._ordem if i in self._decisoes
+        ]
+
+    def gravar_proposta(self, p: Proposal) -> None:
+        """Ignora proposta para id que já tem uma — ver `_aplicar`."""
+        if p.divergence_id in self._propostas:
+            return
+        self._acrescentar("proposta", proposta_para_dict(p))
+        self._propostas[p.divergence_id] = p
+        self._ordem.append(p.divergence_id)
+
+    def gravar_decisao(self, d: Decision) -> None:
+        self._acrescentar("decisao", decisao_para_dict(d))
+        self._decisoes[d.divergence_id] = d

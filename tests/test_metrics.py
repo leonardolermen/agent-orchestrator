@@ -393,11 +393,163 @@ def test_custo_e_reportado_por_resolver_nao_so_no_total():
 
 def test_resolver_que_nao_custou_nada_aparece_com_zero_e_nao_some():
     # Um resolver ausente do dicionário e um resolver de custo zero são
-    # coisas diferentes na tela: um é "não rodou", o outro é "de graça".
+    # coisas diferentes na tela: um é "não rodou", o outro é "de graça". Desde
+    # que o revisor entrou na definição padrão (sempre presente, sempre a
+    # custo zero) ele também roda aqui e aparece com 0 — é o mesmo caso do L1,
+    # L2 e L3, não uma exceção.
     dataset = build_benchmark(seed=1, n=100, taxa_divergencia=0.15)
     resultado = reconcile(dataset.bank, dataset.ledger)
 
     m = evaluate(dataset, resultado)
 
-    assert set(m.cost_by_resolver_microcents) == {"L1", "L2", "L3"}
+    assert set(m.cost_by_resolver_microcents) == {"L1", "L2", "L3", "revisor"}
     assert all(v == 0 for v in m.cost_by_resolver_microcents.values())
+
+
+class _ResolverHumanoFalso:
+    """Casa o primeiro bancário com o primeiro contábil, como um humano faria."""
+
+    name = "revisor"
+    cost_class = CostClass.HUMANO
+
+    def resolve(self, work):
+        if not work.bank or not work.ledger:
+            return ResolverOutput()
+        return ResolverOutput(
+            matches=[
+                MatchResult(
+                    bank_ids=frozenset({work.bank[0].id}),
+                    ledger_ids=frozenset({work.ledger[0].id}),
+                    layer="revisor",
+                    rule="decisão humana",
+                )
+            ]
+        )
+
+    def describe(self):
+        return ResolverDescription(self.name, self.cost_class, "humano falso")
+
+
+def _com_humano():
+    from orchestrator.matching.engine import default_resolvers
+    from orchestrator.workflow.definition import Stage, WorkflowDefinition
+
+    return WorkflowDefinition(
+        id="com-humano",
+        name="com humano",
+        stages=(
+            Stage("conciliar", (*default_resolvers(), _ResolverHumanoFalso())),
+        ),
+    )
+
+
+def test_match_humano_nao_conta_como_falso_positivo():
+    """O defeito que esta tarefa corrige.
+
+    A regra de falso positivo conta QUALQUER toque num caso reservado ao
+    agente. Escrita quando todo match era determinístico, ela estava certa.
+    Com um humano na cascata ela se volta contra o produto: um controller
+    aprovando o que o agente propôs seria registrado como erro.
+    """
+    dataset = build_benchmark(seed=1, n=300, taxa_divergencia=0.15)
+    so_regras = evaluate(dataset, reconcile(dataset.bank, dataset.ledger))
+    com_humano = evaluate(
+        dataset, reconcile(dataset.bank, dataset.ledger, definition=_com_humano())
+    )
+
+    assert com_humano.false_positives == so_regras.false_positives
+    # A mesma separação por classe vale para falso negativo: um match humano
+    # completando um caso parcialmente casado por regra mudaria esta contagem
+    # se a separação REGRA-only fosse removida — mesmo raciocínio do brief,
+    # agora com cobertura própria.
+    assert com_humano.false_negatives == so_regras.false_negatives
+
+
+def _so_humano():
+    """Cascata com SÓ o revisor humano — nenhum resolver REGRA na definição.
+
+    É o cenário que o Finding 1 da revisão descobriu: um stage só de revisão
+    humana, sem nenhuma regra, é a forma óbvia que a cascata assume assim que
+    o revisor humano for ligado antes de qualquer regra ou sem regra nenhuma.
+    `matches_by_class` nunca ganha a chave REGRA nesse caso — não porque uma
+    regra rodou e não casou nada, mas porque nenhuma rodou.
+    """
+    from orchestrator.workflow.definition import Stage, WorkflowDefinition
+
+    return WorkflowDefinition(
+        id="so-humano", name="só humano", stages=(Stage("revisar", (_ResolverHumanoFalso(),)),)
+    )
+
+
+def test_cascata_sem_regra_nenhuma_nao_finge_determinismo():
+    """O fallback de `de_regra` precisa ser `[]`, não `result.matches`.
+
+    Sem nenhum resolver REGRA na cascata, `matches_by_class` nunca cria a
+    chave REGRA. Cair para `result.matches` nesse caso contaria a aprovação
+    humana como determinística — o mesmo defeito desta tarefa, só que por uma
+    porta diferente da que os outros testes cobrem.
+    """
+    dataset = build_benchmark(seed=1, n=300, taxa_divergencia=0.15)
+
+    m = evaluate(dataset, reconcile(dataset.bank, dataset.ledger, definition=_so_humano()))
+
+    assert m.false_positives == 0
+    assert m.deterministic_rate == 0.0
+
+
+def test_match_humano_nao_move_a_taxa_deterministica():
+    # "Determinística" está no nome. Somar trabalho humano ali faria o número
+    # que vende o produto — quanto as REGRAS resolvem — subir sem que nenhuma
+    # regra tivesse melhorado.
+    dataset = build_benchmark(seed=1, n=300, taxa_divergencia=0.15)
+    so_regras = evaluate(dataset, reconcile(dataset.bank, dataset.ledger))
+    com_humano = evaluate(
+        dataset, reconcile(dataset.bank, dataset.ledger, definition=_com_humano())
+    )
+
+    assert com_humano.deterministic_rate == so_regras.deterministic_rate
+    assert com_humano.bank_matched == so_regras.bank_matched
+
+
+def test_match_humano_sobe_a_taxa_de_resolucao_total():
+    dataset = build_benchmark(seed=1, n=300, taxa_divergencia=0.15)
+    so_regras = evaluate(dataset, reconcile(dataset.bank, dataset.ledger))
+    com_humano = evaluate(
+        dataset, reconcile(dataset.bank, dataset.ledger, definition=_com_humano())
+    )
+
+    assert com_humano.bank_matched_total == so_regras.bank_matched_total + 1
+    assert com_humano.resolution_rate > so_regras.resolution_rate
+
+
+def test_dinheiro_conciliado_conta_o_trabalho_humano():
+    # `divergent_amount` responde "quanto ainda está em aberto". Dinheiro que
+    # um humano conciliou não está em aberto.
+    dataset = build_benchmark(seed=1, n=300, taxa_divergencia=0.15)
+    so_regras = evaluate(dataset, reconcile(dataset.bank, dataset.ledger))
+    com_humano = evaluate(
+        dataset, reconcile(dataset.bank, dataset.ledger, definition=_com_humano())
+    )
+
+    assert com_humano.matched_amount > so_regras.matched_amount
+    assert com_humano.divergent_amount < so_regras.divergent_amount
+    # Direção sozinha passa para qualquer deslocamento não-nulo, incluindo um
+    # errado (contar o lado contábil, contar em dobro, errar por N). Os dois
+    # extratos bancários são o mesmo dataset, então a soma dos dois valores
+    # tem que ser a mesma nos dois cenários — dinheiro só muda de coluna,
+    # nunca de total.
+    assert (
+        com_humano.matched_amount + com_humano.divergent_amount
+        == so_regras.matched_amount + so_regras.divergent_amount
+    )
+
+
+def test_so_regras_o_total_e_o_deterministico_coincidem():
+    # Enquanto a cascata é só de regras, os dois números são o mesmo — é isso
+    # que mantém o golden intacto.
+    dataset = build_benchmark(seed=1, n=300, taxa_divergencia=0.15)
+
+    m = evaluate(dataset, reconcile(dataset.bank, dataset.ledger))
+
+    assert m.bank_matched_total == m.bank_matched
+    assert m.resolution_rate == m.deterministic_rate
