@@ -713,6 +713,15 @@ def test_enum_de_resolver_vem_do_catalogo():
     assert item["properties"]["nome"]["enum"] == sorted(CATALOGO)
 
 
+def test_o_nome_da_entrada_bate_com_a_chave_do_catalogo():
+    # `_catalogo_em_texto` usa `entrada.nome` na DESCRIÇÃO da ferramenta,
+    # enquanto o `enum` vem das CHAVES do dict. São dois ecos do mesmo fato sem
+    # nada amarrando um ao outro: se divergirem, a descrição nomeia um resolver
+    # que o `enum` não aceita — e o modelo obedece a descrição, porque é ela que
+    # ele lê como instrução.
+    assert all(chave == entrada.nome for chave, entrada in CATALOGO.items())
+
+
 def test_propor_workflow_nao_aceita_id():
     # O id vem do --id da CLI, validado ANTES do primeiro turno. Deixar o
     # modelo propor um criaria duas fontes de verdade para a mesma chave, e a
@@ -1030,7 +1039,7 @@ def interpretar(chamada: ToolCall) -> Pergunta | PropostaBruta | Recusa:
 ```bash
 pytest tests/grill/test_ferramentas.py -v
 ```
-Esperado: 12 passed.
+Esperado: 13 passed.
 
 - [ ] **Step 6: Mutação**
 
