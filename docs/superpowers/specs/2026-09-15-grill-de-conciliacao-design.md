@@ -183,6 +183,39 @@ propor e o que a receita grava; o cliente é injetado por quem constrói e nunca
 atravessa o disco. Confundir os dois poria um objeto não serializável na
 receita.
 
+### 3.4 O agente é ligado aos dados na construção
+
+`Investigator` exige `context: ToolContext(bank, ledger)` — as ferramentas
+dele buscam no razão inteiro, não só na divergência. E `__post_init__` chama
+`Cost.zero().microcents(self.client.model)`, logo exige um modelo
+**precificado** já ao construir. É por isso que `default_definition()` nunca
+teve agente.
+
+Portanto a assinatura é:
+
+```python
+construir(
+    receita: Receita,
+    *,
+    fila: Fila | None = None,        # default: Fila.vazia()
+    cliente: LLMClient | None = None, # default: ClienteAusente()
+    context: ToolContext | None = None, # default: ToolContext([], [])
+) -> WorkflowDefinition
+```
+
+Os três defaults são **inertes**: fila vazia não resolve nada, `ClienteAusente`
+levanta ao ser chamado, contexto vazio não acha nada.
+
+### 3.5 A API nunca passa cliente nem contexto reais
+
+Consequência que fortalece o §7: como `POST /runs` responde 409 antes de
+`reconcile` para qualquer cascata com classe `AGENTE`, **nenhum workflow com
+agente chega a executar por um endpoint** — então a API pode sempre construir
+com os defaults inertes. Não há caminho em que um endpoint precise de um
+agente funcional, e portanto não existe código que o construa.
+
+Só a CLI passa cliente e contexto de verdade.
+
 ---
 
 ## 4. As três ferramentas
@@ -364,6 +397,11 @@ A API constrói a entrada `agente` com um `LLMClient` sentinela cujo
   [`definition.py`](../../../src/orchestrator/workflow/definition.py) — nunca
   uma descrição paralela ao motor — fica intacto.
 - Qualquer tentativa real de chamar o modelo por um endpoint explode alto.
+
+`ClienteAusente.model` precisa ser um modelo **da tabela de preços**:
+`Investigator.__post_init__` chama `Cost.zero().microcents(self.client.model)`
+e um nome inventado faria a construção levantar — o que impediria até de
+desenhar. O sentinela levanta em `complete()`, nunca em `model`.
 
 ### 7.4 O 409
 
