@@ -3,9 +3,10 @@
 from datetime import date
 
 from orchestrator.kernel.cost import CostClass
-from orchestrator.models import BankEntry, LedgerEntry, MatchResult
+from orchestrator.kernel.resolution import Resolution
+from orchestrator.kernel.work import WorkSet
+from orchestrator.models import LedgerEntry, banco, conciliacao, contabil
 from orchestrator.workflow.resolver import ResolverDescription, ResolverOutput
-from orchestrator.workflow.workset import WorkSet
 
 
 class ExactMatcher:
@@ -20,18 +21,17 @@ class ExactMatcher:
         )
 
     def resolve(self, work: WorkSet) -> ResolverOutput:
-        return ResolverOutput(matches=self._casar(work.bank, work.ledger))
+        return ResolverOutput(resolutions=self._casar(work))
 
-    def _casar(
-        self, bank: list[BankEntry], ledger: list[LedgerEntry]
-    ) -> list[MatchResult]:
+    def _casar(self, work: WorkSet) -> list[Resolution]:
+        bank, ledger = banco(work), contabil(work)
         indice: dict[tuple[str, int, date], list[LedgerEntry]] = {}
         for le in ledger:
             if le.document is None or le.cash_date is None:
                 continue
             indice.setdefault((le.document, le.net_amount, le.cash_date), []).append(le)
 
-        resultados: list[MatchResult] = []
+        resultados: list[Resolution] = []
         usados: set[str] = set()
 
         for be in bank:
@@ -45,10 +45,10 @@ class ExactMatcher:
             escolhido = candidatos[0]
             usados.add(escolhido.id)
             resultados.append(
-                MatchResult(
-                    bank_ids=frozenset({be.id}),
-                    ledger_ids=frozenset({escolhido.id}),
-                    layer=self.name,
+                conciliacao(
+                    work,
+                    frozenset({be.id, escolhido.id}),
+                    produced_by=self.name,
                     rule="exato: documento, valor e data coincidem",
                     evidence={
                         "documento": be.document,

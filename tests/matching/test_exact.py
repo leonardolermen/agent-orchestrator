@@ -1,9 +1,9 @@
 from random import Random
 
 from orchestrator.matching.exact import ExactMatcher
+from orchestrator.models import pool
 from orchestrator.synth.generator import generate_clean_pairs
 from orchestrator.synth.injectors import DefasagemTemporal
-from orchestrator.workflow.workset import WorkSet
 
 
 def test_casa_todos_os_pares_limpos():
@@ -11,10 +11,10 @@ def test_casa_todos_os_pares_limpos():
     banco = [p.bank for p in pares]
     contabil = [p.ledger for p in pares]
 
-    resultados = ExactMatcher().resolve(WorkSet(bank=banco, ledger=contabil)).matches
+    resultados = ExactMatcher().resolve(pool(bank=banco, ledger=contabil)).resolutions
 
     assert len(resultados) == 25
-    assert all(r.layer == "L1" for r in resultados)
+    assert all(r.produced_by == "L1" for r in resultados)
 
 
 def test_nao_casa_quando_a_data_diverge():
@@ -23,8 +23,8 @@ def test_nao_casa_quando_a_data_diverge():
 
     resultados = (
         ExactMatcher()
-        .resolve(WorkSet(bank=injetado.bank, ledger=injetado.ledger))
-        .matches
+        .resolve(pool(bank=injetado.bank, ledger=injetado.ledger))
+        .resolutions
     )
 
     assert resultados == []
@@ -36,7 +36,7 @@ def test_nao_casa_quando_o_valor_diverge():
     par = generate_clean_pairs(seed=2, n=1)[0]
     banco = [replace(par.bank, amount=par.bank.amount - 1)]
 
-    resultados = ExactMatcher().resolve(WorkSet(bank=banco, ledger=[par.ledger])).matches
+    resultados = ExactMatcher().resolve(pool(bank=banco, ledger=[par.ledger])).resolutions
 
     assert resultados == []
 
@@ -45,8 +45,8 @@ def test_resultado_registra_a_regra():
     pares = generate_clean_pairs(seed=2, n=1)
     r = (
         ExactMatcher()
-        .resolve(WorkSet(bank=[pares[0].bank], ledger=[pares[0].ledger]))
-        .matches[0]
+        .resolve(pool(bank=[pares[0].bank], ledger=[pares[0].ledger]))
+        .resolutions[0]
     )
     assert "exato" in r.rule.lower()
     assert r.evidence["documento"] == pares[0].ledger.document
@@ -61,8 +61,8 @@ def test_cada_lancamento_e_usado_uma_vez_so():
 
     resultados = (
         ExactMatcher()
-        .resolve(WorkSet(bank=[par.bank], ledger=[par.ledger, gemeo]))
-        .matches
+        .resolve(pool(bank=[par.bank], ledger=[par.ledger, gemeo]))
+        .resolutions
     )
 
     assert len(resultados) == 1

@@ -12,10 +12,11 @@ dependem.
 from dataclasses import dataclass, field
 
 from orchestrator.kernel.cost import Cost, CostClass
-from orchestrator.models import MatchResult
+from orchestrator.kernel.resolution import Resolution
+from orchestrator.kernel.work import WorkSet
+from orchestrator.models import conciliacao, divergencias, lados
 from orchestrator.review.fila import Fila
 from orchestrator.workflow.resolver import ResolverDescription, ResolverOutput
-from orchestrator.workflow.workset import WorkSet
 
 
 @dataclass
@@ -33,10 +34,7 @@ class RevisorHumano:
         )
 
     def resolve(self, work: WorkSet) -> ResolverOutput:
-        no_banco = {e.id for e in work.bank}
-        no_contabil = {e.id for e in work.ledger}
-
-        matches: list[MatchResult] = []
+        matches: list[Resolution] = []
         # `no_banco`/`no_contabil` são o pool no INÍCIO da passagem: `work` só
         # encolhe entre passagens, via `WorkSet.without()` depois que
         # `resolve()` retorna — nunca durante o laço. Por isso um id que uma
@@ -56,42 +54,41 @@ class RevisorHumano:
         # aqui — é assim que "decisão obsoleta" (regra resolveu antes, id fora
         # do pool; ou outra decisão já fechou o caso, id em `consumidos`) vira
         # silêncio em vez de erro.
-        for divergencia in work.as_divergences():
+        for divergencia in divergencias(work):
             decisao = self.fila.decisao(divergencia.id)
             if decisao is None or not decisao.concilia:
                 continue
 
-            bank = set(divergencia.bank_ids)
-            ledger = set(divergencia.ledger_ids)
-            # Se o próprio id da divergência ou algum id citado em
-            # `conciliar_com` já foi consumido por uma decisão anterior nesta
-            # passagem, a decisão inteira é obsoleta — mesma regra de
+            citados = (
+                set(divergencia.bank_ids)
+                | set(divergencia.ledger_ids)
+                | set(decisao.conciliar_com)
+            )
+            # Se algum id citado já foi consumido por uma decisão anterior
+            # nesta passagem, a decisão inteira é obsoleta — mesma regra de
             # tudo-ou-nada do id fantasma abaixo.
-            if consumidos & (bank | ledger | decisao.conciliar_com):
+            if consumidos & citados:
                 continue
             # O lado de cada id vem do POOL, nunca do prefixo do id nem do
             # tipo da divergência. Um id que não está em nenhum dos dois lados
-            # é obsoleto, e a decisão inteira é descartada — emitir um match
-            # parcial seria fabricar vínculo com id fantasma.
-            obsoleta = False
-            for i in decisao.conciliar_com:
-                if i in no_banco:
-                    bank.add(i)
-                elif i in no_contabil:
-                    ledger.add(i)
-                else:
-                    obsoleta = True
-                    break
-            if obsoleta or not bank or not ledger:
+            # é obsoleto, e a decisão inteira é descartada — emitir um vínculo
+            # parcial seria fabricar ligação com id fantasma.
+            #
+            # `lados()` responde as duas coisas de uma vez: o que é de cada
+            # lado, e (pelo que sobra) o que não está no pool. A checagem
+            # deixou de ser um laço com `break`; a REGRA é a mesma.
+            de_banco, de_contabil = lados(work, frozenset(citados))
+            if len(de_banco) + len(de_contabil) != len(citados):
+                continue
+            if not de_banco or not de_contabil:
                 continue
 
-            consumidos.update(bank)
-            consumidos.update(ledger)
+            consumidos.update(citados)
             matches.append(
-                MatchResult(
-                    bank_ids=frozenset(bank),
-                    ledger_ids=frozenset(ledger),
-                    layer=self.name,
+                conciliacao(
+                    work,
+                    frozenset(citados),
+                    produced_by=self.name,
                     rule="decisão humana",
                     evidence={
                         "autor": decisao.autor,
@@ -102,4 +99,4 @@ class RevisorHumano:
                 )
             )
         # Trabalho humano custa, mas não em tokens — e `Cost` só mede tokens.
-        return ResolverOutput(matches=matches, cost=Cost.zero())
+        return ResolverOutput(resolutions=matches, cost=Cost.zero())

@@ -10,22 +10,25 @@ from typing import Protocol
 
 from orchestrator.agent.proposal import Proposal
 from orchestrator.kernel.cost import Cost, CostClass
-from orchestrator.models import MatchResult
-from orchestrator.workflow.workset import WorkSet
+from orchestrator.kernel.resolution import Resolution
+from orchestrator.kernel.work import WorkSet
 
 
 @dataclass(frozen=True)
 class ResolverOutput:
     """O que um resolver produziu.
 
-    `matches` e `proposals` são campos separados, e é deliberado: um match
-    RESOLVE — sai do pool —, uma proposta apenas explica e o item continua
-    divergente até um humano aprovar. Unificar os dois num tipo só com um
-    campo de status transformaria uma garantia de tipo numa convenção
-    verificada, e um filtro esquecido viraria conciliação fantasma.
+    `resolutions` e `proposals` são campos separados, e é deliberado: uma
+    resolução RESOLVE — sai do pool —, uma proposta apenas explica e o item
+    continua em aberto até um humano aprovar. Unificar os dois num tipo só com
+    um campo de status transformaria uma garantia de tipo numa convenção
+    verificada, e um filtro esquecido viraria resolução fantasma.
+
+    O campo chamava-se `matches` — palavra de conciliação. `resolutions` diz a
+    mesma coisa sem supor que resolver seja casar.
     """
 
-    matches: list[MatchResult] = field(default_factory=list)
+    resolutions: list[Resolution] = field(default_factory=list)
     proposals: list[Proposal] = field(default_factory=list)
     cost: Cost = field(default_factory=Cost.zero)
 

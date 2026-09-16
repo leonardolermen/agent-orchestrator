@@ -47,31 +47,42 @@ from .camadas import (
     violacoes,
 )
 
-# As 23 arestas ilegais que existem hoje, agrupadas pela CAUSA, não pelo arquivo.
+# As 22 arestas ilegais que existem hoje, agrupadas pela CAUSA, não pelo arquivo.
 #
 # Uma entrada sai daqui no mesmo PR que a elimina — nunca antes, nunca depois.
 # O PR anotado ao lado de cada grupo é o de `§27` do spec desta migração.
 VIOLACOES_CONHECIDAS: frozenset[tuple[str, str]] = frozenset(
     {
         # ---------------------------------------------------------------
-        # CAUSA 1 — tipos de domínio dentro do núcleo. 13 das 23 arestas.
+        # CAUSA 1 — tipos de domínio dentro do núcleo. 12 das 22 arestas.
         # É a lacuna nº 1 do §1.2: `WorkSet` conhece `BankEntry`, `Proposal`
         # conhece `DivergenceType`. Fecha nos PRs #3 (WorkItem) e #4 (Resolution).
         # ---------------------------------------------------------------
-        ("workflow.workset", "models"),
-        ("workflow.resolver", "models"),
+        # PR #3 fechou `workflow.workset -> models` e `workflow.resolver ->
+        # models`: `WorkSet` e `Resolution` são genéricos, e o domínio virou
+        # payload opaco.
         ("agent.proposal", "taxonomy"),
         ("matching.engine", "models"),
         ("agent.investigator", "models"),
         ("agent.investigator", "taxonomy"),
         ("agent.investigator", "agent.tools"),
         ("eval.assinatura", "agent.tools"),
+        # ENTROU no PR #3, e não é regressão — é um acoplamento que já existia
+        # e estava ESCONDIDO. `eval/assinatura.py` chamava
+        # `work.as_divergences()`, e como `as_divergences` morava dentro do
+        # próprio `WorkSet`, a dependência de conciliação não aparecia como
+        # import nenhum. Mover o método para o domínio (`models.divergencias`)
+        # revelou a seta que sempre esteve lá.
+        #
+        # É o caso mais forte a favor da catraca: ela não só barra acoplamento
+        # novo, ela acha o que o desenho antigo camuflava.
+        ("eval.assinatura", "models"),
         ("review.revisor", "models"),
         ("review.decision", "taxonomy"),
         ("review.serial", "taxonomy"),
         ("metrics", "taxonomy"),
         ("metrics", "money"),
-        # Esta é a mais consequente das treze: a avaliação importa o GERADOR
+        # Esta é a mais consequente das doze: a avaliação importa o GERADOR
         # sintético, e por isso só sabe medir contra gabarito fabricado. É a
         # lacuna nº 4 do §1.2 na forma de uma seta. Fecha no PR que introduz
         # `ExpectedOutcome` com duas procedências (M6).

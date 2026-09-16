@@ -7,10 +7,9 @@ from orchestrator.agent.llm import FakeLLMClient, LLMResponse, ToolCall
 from orchestrator.agent.proposal import Confidence, Proposal, TraceKind
 from orchestrator.agent.tools import TOOL_SCHEMAS, ToolContext
 from orchestrator.kernel.cost import _PRECOS, Cost, CostClass
-from orchestrator.models import Divergence
+from orchestrator.models import Divergence, divergencias, pool
 from orchestrator.synth.generator import build_dataset, generate_clean_pairs
 from orchestrator.taxonomy import DivergenceType
-from orchestrator.workflow.workset import WorkSet
 
 
 def _ctx() -> ToolContext:
@@ -55,11 +54,11 @@ def test_resolve_recebe_o_workset_e_devolve_propostas_sem_matches():
         client=FakeLLMClient(respostas=[RESPOSTA_VALIDA] * 4),
         context=CONTEXTO_DE_TESTE,
     )
-    work = WorkSet(bank=[pares[0].bank], ledger=[])
+    work = pool(bank=[pares[0].bank], ledger=[])
 
     saida = inv.resolve(work)
 
-    assert saida.matches == []
+    assert saida.resolutions == []
     assert len(saida.proposals) == 1
     assert saida.cost.calls >= 1
 
@@ -604,11 +603,10 @@ def test_divergencia_ja_proposta_nao_chama_o_modelo_de_novo():
     na fila.
     """
     from orchestrator.review.fila import Fila
-    from orchestrator.workflow.workset import WorkSet
 
     pares = generate_clean_pairs(seed=2, n=1)
-    work = WorkSet(bank=[pares[0].bank], ledger=[])
-    ja_proposta = work.as_divergences()[0]
+    work = pool(bank=[pares[0].bank], ledger=[])
+    ja_proposta = divergencias(work)[0]
 
     fila = Fila.vazia()
     fila.gravar_proposta(

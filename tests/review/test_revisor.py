@@ -1,17 +1,18 @@
 from datetime import UTC, datetime
 
 from orchestrator.kernel.cost import CostClass
+from orchestrator.kernel.work import WorkSet
+from orchestrator.models import lados, pool
 from orchestrator.review.decision import Decision, Veredito
 from orchestrator.review.fila import Fila
 from orchestrator.review.revisor import RevisorHumano
 from orchestrator.synth.generator import generate_clean_pairs
 from orchestrator.taxonomy import DivergenceType
-from orchestrator.workflow.workset import WorkSet
 
 
 def _work() -> tuple[WorkSet, str, str]:
     pares = generate_clean_pairs(seed=2, n=2)
-    work = WorkSet(bank=[pares[0].bank], ledger=[pares[1].ledger])
+    work = pool(bank=[pares[0].bank], ledger=[pares[1].ledger])
     return work, pares[0].bank.id, pares[1].ledger.id
 
 
@@ -43,7 +44,7 @@ def test_fila_vazia_nao_emite_nada():
 
     saida = RevisorHumano(fila=Fila.vazia()).resolve(work)
 
-    assert saida.matches == []
+    assert saida.resolutions == []
     assert saida.proposals == []
 
 
@@ -56,11 +57,17 @@ def test_aceitar_vira_match_com_os_ids_classificados_pelo_pool():
 
     saida = RevisorHumano(fila=fila).resolve(work)
 
-    assert len(saida.matches) == 1
-    m = saida.matches[0]
-    assert m.bank_ids == frozenset({id_banco})
-    assert m.ledger_ids == frozenset({id_contabil})
-    assert m.layer == "revisor"
+    assert len(saida.resolutions) == 1
+    m = saida.resolutions[0]
+    # O lado NÃO está mais na `Resolution` — ela guarda um `item_ids` só.
+    # Ele sai do POOL, e asseverá-lo assim é o que impede uma troca de lados
+    # passar despercebida: com `item_ids`, trocar os dois produziria o mesmo
+    # objeto. Ver `models.conciliacao`.
+    assert lados(work, m.item_ids) == (
+        frozenset({id_banco}),
+        frozenset({id_contabil}),
+    )
+    assert m.produced_by == "revisor"
     assert m.evidence["autor"] == "controller@cliente"
 
 
@@ -71,7 +78,7 @@ def test_rejeitar_nao_emite_match():
         _decisao(f"d-b-{id_banco}", {id_contabil}, veredito=Veredito.REJEITAR)
     )
 
-    assert RevisorHumano(fila=fila).resolve(work).matches == []
+    assert RevisorHumano(fila=fila).resolve(work).resolutions == []
 
 
 def test_decisao_com_id_fora_do_pool_e_ignorada():
@@ -81,7 +88,7 @@ def test_decisao_com_id_fora_do_pool_e_ignorada():
     fila = Fila.vazia()
     fila.gravar_decisao(_decisao(f"d-b-{id_banco}", {"l-que-nao-existe"}))
 
-    assert RevisorHumano(fila=fila).resolve(work).matches == []
+    assert RevisorHumano(fila=fila).resolve(work).resolutions == []
 
 
 def test_decisao_com_um_id_valido_e_outro_fantasma_e_ignorada_por_inteiro():
@@ -96,7 +103,7 @@ def test_decisao_com_um_id_valido_e_outro_fantasma_e_ignorada_por_inteiro():
     fila = Fila.vazia()
     fila.gravar_decisao(_decisao(f"d-b-{id_banco}", {id_contabil, "l-fantasma"}))
 
-    assert RevisorHumano(fila=fila).resolve(work).matches == []
+    assert RevisorHumano(fila=fila).resolve(work).resolutions == []
 
 
 def test_decisao_sobre_divergencia_fora_do_pool_e_ignorada():
@@ -104,7 +111,7 @@ def test_decisao_sobre_divergencia_fora_do_pool_e_ignorada():
     fila = Fila.vazia()
     fila.gravar_decisao(_decisao("d-b-b-inexistente", {id_contabil}))
 
-    assert RevisorHumano(fila=fila).resolve(work).matches == []
+    assert RevisorHumano(fila=fila).resolve(work).resolutions == []
 
 
 def test_decidir_duas_vezes_nao_duplica_o_match():
@@ -116,7 +123,7 @@ def test_decidir_duas_vezes_nao_duplica_o_match():
     fila.gravar_decisao(_decisao(f"d-b-{id_banco}", {id_contabil}))
     fila.gravar_decisao(_decisao(f"d-b-{id_banco}", {id_contabil}))
 
-    assert len(RevisorHumano(fila=fila).resolve(work).matches) == 1
+    assert len(RevisorHumano(fila=fila).resolve(work).resolutions) == 1
 
 
 def test_decisao_sobre_d_l_vira_match_com_os_ids_classificados_pelo_pool():
@@ -131,10 +138,16 @@ def test_decisao_sobre_d_l_vira_match_com_os_ids_classificados_pelo_pool():
 
     saida = RevisorHumano(fila=fila).resolve(work)
 
-    assert len(saida.matches) == 1
-    m = saida.matches[0]
-    assert m.bank_ids == frozenset({id_banco})
-    assert m.ledger_ids == frozenset({id_contabil})
+    assert len(saida.resolutions) == 1
+    m = saida.resolutions[0]
+    # O lado NÃO está mais na `Resolution` — ela guarda um `item_ids` só.
+    # Ele sai do POOL, e asseverá-lo assim é o que impede uma troca de lados
+    # passar despercebida: com `item_ids`, trocar os dois produziria o mesmo
+    # objeto. Ver `models.conciliacao`.
+    assert lados(work, m.item_ids) == (
+        frozenset({id_banco}),
+        frozenset({id_contabil}),
+    )
 
 
 def test_duas_decisoes_sobre_o_mesmo_par_emitem_um_unico_match():
@@ -152,10 +165,16 @@ def test_duas_decisoes_sobre_o_mesmo_par_emitem_um_unico_match():
 
     saida = RevisorHumano(fila=fila).resolve(work)
 
-    assert len(saida.matches) == 1
-    m = saida.matches[0]
-    assert m.bank_ids == frozenset({id_banco})
-    assert m.ledger_ids == frozenset({id_contabil})
+    assert len(saida.resolutions) == 1
+    m = saida.resolutions[0]
+    # O lado NÃO está mais na `Resolution` — ela guarda um `item_ids` só.
+    # Ele sai do POOL, e asseverá-lo assim é o que impede uma troca de lados
+    # passar despercebida: com `item_ids`, trocar os dois produziria o mesmo
+    # objeto. Ver `models.conciliacao`.
+    assert lados(work, m.item_ids) == (
+        frozenset({id_banco}),
+        frozenset({id_contabil}),
+    )
 
 
 def test_o_resolver_nao_custa_nada():

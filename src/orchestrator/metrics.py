@@ -125,14 +125,21 @@ def evaluate(
     # tarefa corrige. `matches_by_class` sempre tem a chave quando ALGUM
     # resolver REGRA rodou (mesmo sem casar nada, a chave existe com lista
     # vazia); ela só falta quando nenhum rodou, e aí `[]` é a resposta certa.
+    #
+    # `item_ids` unificou `bank_ids`/`ledger_ids`: o LADO agora sai da
+    # interseção com `ids_banco`, não de um campo. Isso só é correto porque
+    # nenhum id bancário é igual a um contábil — e essa disjunção deixou de ser
+    # suposição sobre o gerador para virar invariante estrutural: os dois lados
+    # entram no mesmo `WorkSet`, que recusa id repetido na construção. Ver
+    # `models.pool`.
     de_regra = result.matches_by_class.get(CostClass.REGRA, [])
-    casados_banco = {i for m in de_regra for i in m.bank_ids} & ids_banco
-    casados_todos = ({i for m in de_regra for i in m.bank_ids | m.ledger_ids}
+    casados_banco = {i for m in de_regra for i in m.item_ids} & ids_banco
+    casados_todos = ({i for m in de_regra for i in m.item_ids}
                       & (ids_banco | ids_contabil))
 
     # Todas as classes: estas duas respondem "quanto foi resolvido" e "quanto
     # ainda está em aberto" — perguntas de negócio, não do catálogo.
-    casados_banco_total = {i for m in result.matches for i in m.bank_ids} & ids_banco
+    casados_banco_total = {i for m in result.matches for i in m.item_ids} & ids_banco
 
     def ids(gt) -> set[str]:
         return set(gt.bank_ids | gt.ledger_ids)
@@ -169,7 +176,7 @@ def evaluate(
     # cobrir vários ids de uma vez (ex.: PAGAMENTO_AGREGADO casa 1 bancário +
     # N contábeis num resultado só). Unidade correta, deixada assim de
     # propósito: contar ids infla camadas que resolvem casos agregados.
-    por_camada = dict(Counter(m.layer for m in result.matches))
+    por_camada = dict(Counter(m.produced_by for m in result.matches))
 
     # A precisão das propostas sai de graça: o gabarito da plano 1 já carrega o
     # tipo de cada divergência injetada. Uma proposta está correta quando o tipo

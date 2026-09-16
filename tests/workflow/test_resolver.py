@@ -1,5 +1,5 @@
 from orchestrator.kernel.cost import Cost, CostClass
-from orchestrator.models import MatchResult
+from orchestrator.kernel.resolution import Resolution
 from orchestrator.workflow.resolver import ResolverDescription, ResolverOutput
 
 
@@ -8,7 +8,7 @@ def test_saida_vazia_e_o_default():
     # devolve ResolverOutput() e não precisa saber montar três coleções.
     saida = ResolverOutput()
 
-    assert saida.matches == []
+    assert saida.resolutions == []
     assert saida.proposals == []
     assert saida.cost == Cost.zero()
 
@@ -17,15 +17,15 @@ def test_matches_e_proposals_sao_campos_separados():
     # O dia em que virarem um campo só com flag, a garantia de tipo que
     # impede conciliação fantasma some. Este teste existe para quebrar nesse
     # dia.
-    m = MatchResult(
-        bank_ids=frozenset({"b1"}),
-        ledger_ids=frozenset({"l1"}),
-        layer="L1",
+    m = Resolution(
+                        item_ids=frozenset({"b1"})
+                        | frozenset({"l1"}),
+                        produced_by="L1",
         rule="teste",
     )
-    saida = ResolverOutput(matches=[m])
+    saida = ResolverOutput(resolutions=[m])
 
-    assert saida.matches == [m]
+    assert saida.resolutions == [m]
     assert saida.proposals == []
 
 

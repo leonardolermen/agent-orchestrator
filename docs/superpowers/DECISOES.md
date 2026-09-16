@@ -913,3 +913,96 @@ de `deslocados()`, que é a outra metade da catraca.
 Se as duas checagens não estivessem separadas, este PR pareceria não ter feito
 nada — ou, pior, teria sido escrito para "fechar uma violação" mexendo em
 acoplamento que não precisava mudar.
+
+## P6.14. PRs #3 e #4 entram juntos, como o próprio plano previu
+
+O plano separava `WorkItem` (#3) de `Resolution` (#4). Entraram no mesmo commit.
+
+Razão técnica, não de conveniência: `WorkSet.without()` recebe resoluções e
+NUNCA um `ResolverOutput`, e é essa assinatura que torna "proposta não resolve"
+uma coisa que o tipo não sabe expressar (invariante nº 1 do §1.5). Com `WorkSet`
+genérico e `MatchResult` ainda de dois lados, `without` teria de receber ou (a)
+`MatchResult`, e aí o kernel continuaria conhecendo conciliação, ou (b) ids
+crus, e aí qualquer um poderia passar ids de proposta. As duas quebram a
+invariante.
+
+O §27 do plano já antecipava: "#4 completa o par com #3; adiar deixaria o kernel
+meio de-domainizado, que é pior que qualquer um dos dois estados."
+
+Custo se errado: um PR de ~700 linhas em vez de dois de ~350. Mitigado por os
+critérios de aceitação serem binários (golden, 85,3%, FP=0, FN=0) e por eles
+terem sido verificados, não presumidos.
+
+## P6.15. `conciliacao()` recebe o POOL, e não os dois lados já separados
+
+Desvio do desenho do §5.2 do spec, que previa `Resolution` construída
+diretamente pelos resolvers.
+
+O defeito que motivou: com `item_ids` unificado, um resolver que TROCASSE os dois
+lados — id bancário em `ledger_ids` e vice-versa — produziria exatamente a mesma
+`Resolution`. Nenhum teste conseguiria notar, e o teste do revisor que hoje pina
+"o lado vem do pool" perderia a força inteira. Percebido ao migrar
+`test_revisor.py`, não por análise prévia.
+
+Correção: `models.conciliacao(work, item_ids, ...)` deriva o lado de
+`lados(work, ...)`. A troca deixa de ser exprimível, porque o chamador não
+informa lado nenhum.
+
+Dois ganhos que não estavam no plano:
+
+1. **Guarda de id fantasma na CONSTRUÇÃO.** Ids fora do pool levantam ali. O
+   plano agendava essa guarda para o PR #7 (`_validar()` no motor); ela chegou
+   três PRs antes e num lugar melhor — protege o ESTADO, não só a métrica.
+   A guarda de `metrics.evaluate` continua, como defesa em profundidade contra
+   resolver que não use o helper (o teste de taxa > 1.0 agora constrói
+   `Resolution` direto, justamente para continuar exercitando esse caminho).
+2. **A disjunção banco/contábil virou invariante.** `metrics` separa lado
+   intersectando `item_ids` com os ids de cada lado, o que exige que nenhum id
+   se repita entre lados. Era suposição sobre os prefixos `b`/`l` do gerador;
+   agora `WorkSet.__post_init__` recusa id repetido e os dois lados entram no
+   mesmo `WorkSet`. Verificado em 3 sementes antes de depender disso.
+
+Custo se errado: `_casar` dos três matchers passa a receber `WorkSet` em vez das
+duas listas. Assinatura interna, sem chamador de teste.
+
+## P6.16. A catraca achou um acoplamento que estava ESCONDIDO
+
+`eval.assinatura -> models` entrou na baseline neste PR, e não é regressão.
+
+`eval/assinatura.py` chamava `work.as_divergences()`. Como `as_divergences`
+morava DENTRO do `WorkSet`, a dependência de conciliação não aparecia como
+import nenhum — o método era do kernel, e o kernel é quem conhecia o domínio.
+Mover a derivação para `models.divergencias()` revelou a seta que sempre esteve
+lá.
+
+Vale registrar porque é o argumento mais forte a favor do desenho do PR #1: a
+catraca não só barra acoplamento novo, ela acha o que a estrutura antiga
+camuflava. O número de violações subiu de 22 para 23 e depois voltou para 22 —
+duas fechadas, uma revelada.
+
+## P6.17. `ReconcileResult.matches` NÃO foi renomeado, de propósito
+
+`ResolverOutput.matches` virou `resolutions` (tipo do kernel, precisa ser
+genérico). `ReconcileResult.matches` ficou como está.
+
+Razão: `ReconcileResult` é o tipo de saída do conciliador e vai ser substituído
+por `Run` no PR #7. Renomear agora custaria tocar `metrics.py`, `api/app.py`,
+`grill/cli.py` e uma dezena de testes para um campo que deixa de existir em dois
+PRs. O plano (§19.4) manda o alias sumir "no PR que migra o último chamador" —
+aqui, o campo inteiro some.
+
+Custo se errado: por dois PRs, `saida.resolutions` e `resultado.matches`
+convivem, e é preciso saber qual objeto se tem na mão. Mitigado por serem tipos
+diferentes: acessar o campo errado levanta `AttributeError` na hora.
+
+## P6.18. Testes de kernel ganharam diretório próprio, sem payload de domínio
+
+`tests/workflow/test_workset.py` virou `tests/kernel/test_work.py` +
+`tests/kernel/test_cost.py`, e os testes do adaptador foram para
+`tests/test_models.py`.
+
+O ponto não é arrumação: `tests/kernel/test_work.py` usa payloads inventados
+(`str`, `int`) e não importa NADA de `models.py`. É a prova executável de que o
+kernel não conhece conciliação — se um teste de lá precisar do domínio, a
+de-domainização falhou. Um teste de kernel escrito com `BankEntry` provaria
+menos, e provaria errado.

@@ -29,8 +29,9 @@ from orchestrator.agent.investigator import (
 from orchestrator.agent.proposal import Proposal, TraceEvent, TraceKind
 from orchestrator.agent.tools import TOOL_SCHEMAS, ToolContext
 from orchestrator.kernel.cost import Cost, CostClass
+from orchestrator.kernel.work import WorkSet
+from orchestrator.models import divergencias
 from orchestrator.workflow.resolver import ResolverDescription, ResolverOutput
-from orchestrator.workflow.workset import WorkSet
 
 _SERVIDOR = "conciliacao"
 
@@ -102,7 +103,7 @@ class InvestigadorAssinatura:
         )
 
     def resolve(self, work: WorkSet) -> ResolverOutput:
-        propostas = [self._uma(d) for d in work.as_divergences()]
+        propostas = [self._uma(d) for d in divergencias(work)]
         return ResolverOutput(proposals=propostas, cost=Cost.zero())
 
     def _uma(self, divergencia: Any) -> Proposal:

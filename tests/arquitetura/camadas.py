@@ -58,7 +58,6 @@ PERMITIDO: dict[str, frozenset[str]] = {
 DESTINO: dict[str, str] = {
     # --- núcleo: o contrato de resolução, hoje em `workflow/` ---
     "workflow.resolver": "kernel",
-    "workflow.workset": "kernel",
     "workflow.definition": "kernel",
     # `proposal.py` carrega DUAS coisas: Cost/Confidence/TraceEvent (kernel) e
     # a Proposal amarrada a DivergenceType (hoje, domínio). Vai para kernel

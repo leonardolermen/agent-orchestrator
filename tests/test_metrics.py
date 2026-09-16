@@ -3,15 +3,16 @@ from random import Random
 from orchestrator.agent.proposal import Confidence, InvestigationOutput, Proposal
 from orchestrator.cli import build_benchmark
 from orchestrator.kernel.cost import Cost, CostClass
+from orchestrator.kernel.resolution import Resolution
+from orchestrator.kernel.work import WorkSet
 from orchestrator.matching.engine import default_resolvers, reconcile
 from orchestrator.metrics import evaluate
-from orchestrator.models import MatchResult
+from orchestrator.models import banco, contabil, divergencias
 from orchestrator.money import format_brl
 from orchestrator.synth.generator import build_dataset, generate_clean_pairs
 from orchestrator.synth.injectors import DefasagemTemporal, PagamentoAgregado
 from orchestrator.workflow.definition import Stage, WorkflowDefinition
 from orchestrator.workflow.resolver import Resolver, ResolverDescription, ResolverOutput
-from orchestrator.workflow.workset import WorkSet
 
 
 def _definicao(cascade: list[Resolver]) -> WorkflowDefinition:
@@ -30,10 +31,10 @@ class _ResolverInvestigadorFalso:
     cost_class = CostClass.AGENTE
 
     def resolve(self, work: WorkSet) -> ResolverOutput:
-        divergencias = work.as_divergences()
+        divs = divergencias(work)
         return ResolverOutput(
-            proposals=[Proposal.abstencao(d.id, "teste") for d in divergencias],
-            cost=Cost(input_tokens=100 * len(divergencias), calls=len(divergencias)),
+            proposals=[Proposal.abstencao(d.id, "teste") for d in divs],
+            cost=Cost(input_tokens=100 * len(divs), calls=len(divs)),
         )
 
     def describe(self) -> ResolverDescription:
@@ -100,13 +101,13 @@ def test_taxa_fica_entre_zero_e_um():
             # não intersectar com o dataset, o numerador ultrapassa o
             # denominador e a taxa passa de 1.0.
             return ResolverOutput(
-                matches=[
-                    MatchResult(
-                        bank_ids=frozenset({f"id-fora-do-dataset-{i}" for i in range(10)}),
-                        ledger_ids=frozenset(
+                resolutions=[
+                    Resolution(
+                        item_ids=frozenset({f"id-fora-do-dataset-{i}" for i in range(10)})
+                        | frozenset(
                             {f"outro-id-fora-do-dataset-{i}" for i in range(10)}
                         ),
-                        layer=self.name,
+                        produced_by=self.name,
                         rule="finge casar ids que não existem no dataset",
                         evidence={},
                     )
@@ -195,14 +196,14 @@ def test_resolucao_parcial_de_agregado_conta_falso_negativo():
         cost_class = CostClass.REGRA
 
         def resolve(self, work: WorkSet) -> ResolverOutput:
-            if not work.bank or not work.ledger:
+            if not banco(work) or not contabil(work):
                 return ResolverOutput()
             return ResolverOutput(
-                matches=[
-                    MatchResult(
-                        bank_ids=frozenset({work.bank[0].id}),
-                        ledger_ids=frozenset({work.ledger[0].id}),
-                        layer=self.name,
+                resolutions=[
+                    Resolution(
+                        item_ids=frozenset({banco(work)[0].id})
+                        | frozenset({contabil(work)[0].id}),
+                        produced_by=self.name,
                         rule="casa só um dos contábeis, de propósito",
                         evidence={},
                     )
@@ -267,7 +268,7 @@ class _InvestigadorQueAcerta:
                                                    calls=len(propostas)))
 
     def resolve(self, work: WorkSet) -> ResolverOutput:
-        saida = self.investigate(work.as_divergences())
+        saida = self.investigate(divergencias(work))
         return ResolverOutput(proposals=saida.proposals, cost=saida.cost)
 
     def describe(self) -> ResolverDescription:
@@ -325,7 +326,7 @@ def test_abstencao_nao_conta_como_acerto_nem_como_erro():
             return InvestigationOutput(ps, Cost.zero())
 
         def resolve(self, work: WorkSet) -> ResolverOutput:
-            saida = self.investigate(work.as_divergences())
+            saida = self.investigate(divergencias(work))
             return ResolverOutput(proposals=saida.proposals, cost=saida.cost)
 
         def describe(self) -> ResolverDescription:
@@ -413,14 +414,14 @@ class _ResolverHumanoFalso:
     cost_class = CostClass.HUMANO
 
     def resolve(self, work):
-        if not work.bank or not work.ledger:
+        if not banco(work) or not contabil(work):
             return ResolverOutput()
         return ResolverOutput(
-            matches=[
-                MatchResult(
-                    bank_ids=frozenset({work.bank[0].id}),
-                    ledger_ids=frozenset({work.ledger[0].id}),
-                    layer="revisor",
+                resolutions=[
+                Resolution(
+                        item_ids=frozenset({banco(work)[0].id})
+                        | frozenset({contabil(work)[0].id}),
+                        produced_by="revisor",
                     rule="decisão humana",
                 )
             ]

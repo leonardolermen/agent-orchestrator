@@ -20,10 +20,10 @@ from orchestrator.agent.proposal import (
 )
 from orchestrator.agent.tools import TOOL_SCHEMAS, ToolContext
 from orchestrator.kernel.cost import Cost, CostClass
-from orchestrator.models import Divergence
+from orchestrator.kernel.work import WorkSet
+from orchestrator.models import Divergence, divergencias
 from orchestrator.taxonomy import DivergenceType
 from orchestrator.workflow.resolver import ResolverDescription, ResolverOutput
-from orchestrator.workflow.workset import WorkSet
 
 if TYPE_CHECKING:
     # Só para o type checker: um import em tempo de execução aqui não seria
@@ -162,7 +162,7 @@ class Investigator:
 
     def resolve(self, work: WorkSet) -> ResolverOutput:
         """Investiga o que sobrou. Nunca devolve `matches`: proposta não resolve."""
-        saida = self.investigate(work.as_divergences())
+        saida = self.investigate(divergencias(work))
         return ResolverOutput(proposals=saida.proposals, cost=saida.cost)
 
     def investigate(self, divergences: list[Divergence]) -> InvestigationOutput:
