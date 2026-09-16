@@ -1,66 +1,93 @@
 """O adaptador de assinatura para a entrevista — Task 10, a última do plano.
 
-**A sonda (Step 1) e o que ela encontrou.**
+**Rodada de correção 1.** A primeira versão deste docstring afirmava que "o
+chamador nunca recebe uma `tool_call` pendente" e que o histórico "nunca"
+fica numa lista que o chamador replica. As duas são FALSAS — refutadas por
+execução, não por leitura de assinatura. O que segue é o resultado
+re-sondado com código rodado de verdade (`Transport` falso, zero rede, zero
+subprocesso — os experimentos, reproduzíveis, viviam em
+`sonda_sdk.py`/`sonda_sdk2.py` no scratchpad da sessão que fez a revisão).
 
-Rodado contra `claude-agent-sdk` instalado (o mesmo extra `[assinatura]` que
-`eval/assinatura.py` já usa)::
+**O que o SDK EXPÕE de verdade (provado por execução).**
 
-    >>> import claude_agent_sdk as s
-    >>> [n for n in dir(s) if "Client" in n or "query" in n]
-    ['ClaudeSDKClient', 'query']
-    >>> import inspect
-    >>> inspect.signature(s.ClaudeSDKClient.__init__)
-    (self, options: ClaudeAgentOptions | None = None, transport: Transport | None = None)
-    >>> inspect.signature(s.ClaudeSDKClient.query)
-    (self, prompt: str | AsyncIterable[dict] | None, session_id: str = "default") -> None
-    >>> inspect.signature(s.query)
-    (*, prompt: str | AsyncIterable[dict], options: ClaudeAgentOptions | None = None, ...)
+1. Interceptação de ferramenta ANTES da execução — dois caminhos:
+   - `ClaudeAgentOptions.can_use_tool` (tipo `CanUseTool`, `types.py`): um
+     callback assíncrono chamado com `(tool_name, tool_input,
+     ToolPermissionContext)` — `ToolPermissionContext.tool_use_id` garantido
+     não-nulo pelo protocolo — ANTES de qualquer execução. Confirmado
+     despachando o frame `control_request`/`can_use_tool` direto em
+     `Query._handle_control_request`: o callback recebeu
+     `{"nome": "Pergunta", "entrada": {"texto": "..."}, "tool_use_id":
+     "toolu_abc123"}`.
+   - Hook `PreToolUse` devolvendo `{"hookSpecificOutput": {"hookEventName":
+     "PreToolUse", "permissionDecision": "defer"}}`: o turno PARA sem
+     executar a ferramenta, e a chamada não-executada volta em
+     `ResultMessage.deferred_tool_use` — `DeferredToolUse(id, name, input)`
+     (`types.py`, classe `DeferredToolUse`, campo documentado como "Tool use
+     that was deferred by a PreToolUse hook"). Confirmado: o hook recebeu o
+     `tool_input` completo, e um frame `result` sintético com
+     `deferred_tool_use` populado foi parseado de volta num
+     `DeferredToolUse` real via `message_parser.parse_message`.
+   - **Armadilha, achada pela revisão dentro do próprio isolamento que este
+     brief manda usar:** `permission_mode="bypassPermissions"` desativa
+     `can_use_tool` EM SILÊNCIO — o SDK emite
+     `CanUseToolShadowedWarning("can_use_tool will not be invoked:
+     permission_mode 'bypassPermissions' auto-approves every tool call ...
+     before the callback is consulted. To gate every tool call, use a
+     PreToolUse hook instead.")`. Ou seja: com o isolamento que a Task 10
+     exige, só o caminho do hook `PreToolUse` + `"defer"` funciona — o
+     caminho `can_use_tool` está fechado por uma opção que o próprio brief
+     manda ligar.
+2. Histórico montado pelo CHAMADOR, não pelo processo — `SessionStore`
+   (`InMemorySessionStore` publicamente exportado), `ClaudeAgentOptions.
+   session_store` + `resume`, e `import_session_to_store`/
+   `materialize_resume_session`: um transcript INVENTADO na hora (três
+   linhas JSONL fabricadas — user, assistant com `tool_use`, user com
+   `tool_result` — nunca produzidas por uma sessão real) foi aceito e
+   materializado com sucesso como histórico de uma sessão retomada
+   (`resume_session_id` bateu com o id fabricado).
 
-`ClaudeSDKClient` de fato SUPORTA multi-turno: `connect()` uma vez, depois
-`query()`/`receive_response()` repetidos preservam a conversa — mas o
-histórico mora no PROCESSO do Claude Code que o SDK sobe (`session_id`,
-`resume`, `continue_conversation`), nunca numa lista que o chamador constrói,
-inspeciona e devolve. Não existe um método com a forma que `LLMClient` exige:
+**O que continua faltando — e é por isso que a decisão é de CUSTO, não de
+impossibilidade.** Não existe um `complete(system, messages, tools) ->
+LLMResponse` pronto — um método que aceite a Messages API (`system`,
+`messages`, `tools` como JSON Schema) por chamada e devolva um turno cru.
+Construí-lo por cima do que existe exigiria:
 
-- `complete(system, messages, tools) -> LLMResponse` recebe `system`,
-  `messages` (histórico REPLICADO pelo chamador — é o que `blocos_assistente`
-  em `agent/llm.py` existe para produzir) e `tools` (schemas JSON) a CADA
-  chamada, e devolve UM turno cru do assistente: texto e `tool_calls` NÃO
-  executadas, para o chamador decidir o que fazer.
-- `ClaudeSDKClient.query()`/`connect()` recebem só um `prompt` (string ou um
-  fluxo assíncrono de dicts num envelope próprio do SDK —
-  `{"type": "user", "message": {...}, "parent_tool_use_id": None,
-  "session_id": ...}`, documentado no docstring de `query()`, não o formato
-  de `messages` da Messages API). Não há parâmetro para passar histórico
-  replicado nem lista de ferramentas por chamada.
-- Ferramentas no SDK são registradas como servidor MCP com handlers Python
-  (é o que `eval/assinatura.py._montar_servidor` já faz) e EXECUTADAS pelo
-  próprio SDK dentro do laço interno dele — o chamador nunca recebe uma
-  `tool_call` pendente para inspecionar e decidir.
+- Serializar o histórico no formato de transcript INTERNO do CLI a cada
+  chamada — não a Messages API que `AnthropicClient`/`FakeLLMClient` falam.
+  `SessionStoreEntry` (`types.py`) documenta o próprio formato como "the
+  CLI's on-disk transcript format (a large discriminated union) ... That
+  union is internal" — acoplar `ClienteAssinatura` a isso é acoplar a algo
+  que o próprio pacote se recusa a versionar como contrato público.
+- Ou manter uma sessão `ClaudeSDKClient` viva (via `connect()`) pela
+  entrevista inteira, com a interceptação de "Pergunta" vivendo dentro de um
+  hook `PreToolUse` assíncrono — o que move o ponto de controle da
+  entrevista para dentro do ciclo de vida do SDK (registro de hook, resposta
+  ao `control_request`, resumo do turno) em vez do laço síncrono e trivial
+  de inspecionar que `LLMClient.complete()` dá hoje a QUALQUER
+  implementação, inclusive ao `FakeLLMClient` que prova o laço inteiro sem
+  rede.
+- Um subprocesso do Claude Code por entrevista (ou por turno, se a sessão
+  não for mantida viva) — custo de latência e de operação que
+  `AnthropicClient` não paga.
 
-Isso quebra exatamente a costura de que a entrevista depende. O laço em
-`entrevistador.py` intercepta a chamada de ferramenta "Pergunta" ANTES de
-qualquer coisa ser executada, pausa para chamar `responder()` — que fala com
-um humano, fora do SDK — e só então constrói o `tool_result` e chama
-`complete()` de novo, mais o histórico crescido. Para reproduzir isso sobre
-`ClaudeSDKClient` seria preciso: (a) registrar "Pergunta" como ferramenta MCP
-cujo handler assíncrono chama `responder()` por dentro — o que moveria o
-controle da entrevista para dentro do handler da ferramenta, invertendo quem
-manda no laço; e (b) abrir mão inteiramente do formato `messages`/`tools`
-por chamada que `LLMClient` promete a QUALQUER cliente — inclusive ao
-`FakeLLMClient` que prova o laço hoje sem rede. Nenhuma das duas é "usar o
-SDK sobre o protocolo"; as duas são reescrever o protocolo em torno do SDK,
-o que o brief da Task 10 explicitamente proíbe (o entrevistador muda UMA
-classe, nenhum outro arquivo).
+Nenhuma dessas três é "impossível" — as três são reescrever a costura do
+protocolo em torno do ciclo de vida do SDK (subprocesso, hooks assíncronos,
+formato de transcript interno), o que o brief da Task 10 proíbe para esta
+tarefa (o entrevistador muda UMA classe, nenhum outro arquivo) e que carrega
+risco de quebra silenciosa numa versão futura do SDK, por depender de um
+formato que o próprio pacote declara não-público.
 
-**Decisão:** não há, no `claude-agent-sdk` instalado, um cliente que aceite
-turnos sucessivos com histórico REPLICADO pelo chamador (`messages` +
-`tools` por chamada, resposta com `tool_calls` cruas). `ClienteAssinatura`
-é portanto um alias documentado do cliente de chave de API já provado em
-`agent/anthropic_client.py` — mesmo desfecho que `eval/assinatura.py`
-registrou como aceitável para o Investigador (linha "não farei a chamada
-real..." em `DECISOES.md`, Plano 2), agora estendido à entrevista. Ver
-`docs/superpowers/DECISOES.md`, seção "Plano 5", para o registro formal.
+**Decisão:** `ClienteAssinatura` é um alias documentado do cliente de chave
+de API já provado em `agent/anthropic_client.py` — ele já satisfaz
+`LLMClient` exatamente, sobre um formato de fio estável e público (a
+Messages API), sem subprocesso. Mesmo desfecho que `eval/assinatura.py`
+registrou como aceitável para o Investigador (P2.27 em `DECISOES.md`, Plano
+2 — "não farei a chamada real..."), agora estendido à entrevista, mas por um
+motivo diferente e mais estreito: lá era dinheiro do dono; aqui é também
+acoplamento a uma API interna não versionada. Ver
+`docs/superpowers/DECISOES.md`, seção "Plano 5" (P5.1), para o registro
+formal — incluindo a alternativa rejeitada e por que ela é reversível.
 
 Consequência prática: rodar `orchestrator-grill` gasta crédito de API (chave
 em `ANTHROPIC_API_KEY`), não a assinatura do Claude Code. O nome do módulo
