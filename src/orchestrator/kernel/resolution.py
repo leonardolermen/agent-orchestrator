@@ -87,13 +87,25 @@ class TraceEvent:
 
 @dataclass(frozen=True)
 class Proposal:
-    """O que o agente propõe para uma divergência.
+    """O que um resolver de classe paga PROPÕE para um item. Nunca resolve.
 
-    Uma proposta NÃO resolve a divergência. Ela explica e sugere; quem resolve
-    é o humano ao aprovar.
+    Ela explica e sugere; quem resolve é o humano ao aprovar.
+
+    `item_id`, não `divergence_id`: "divergência" é vocabulário de conciliação,
+    e este é um tipo de kernel. Foi o segundo defeito que os domínios esqueleto
+    acharam — um pedido de compra não é uma divergência, e uma issue também
+    não. O formato SERIALIZADO da fila e o campo da API continuam se chamando
+    `divergence_id`, porque ali o nome está certo: é a fila de conciliação, e
+    `serial.py` é justamente a fronteira que traduz.
+
+    Os demais campos continuam em português (`tipo`, `explicacao`, `evidencia`,
+    `confianca`, `acao_sugerida`). São neutros de domínio — uma proposta sobre
+    qualquer coisa tem tipo, explicação e evidência — e traduzi-los é o
+    ADR-10, que entra no PR #12 junto com o `Agent` genérico, não num rename
+    solto sem ganho.
     """
 
-    divergence_id: str
+    item_id: str
     tipo: str
     explicacao: str
     evidencia: list[str]
@@ -121,12 +133,12 @@ class Proposal:
         # credibilidade do produto mais rápido que qualquer erro.
         if self.confianca is Confidence.ALTA and not self.evidencia:
             raise ValueError(
-                f"proposta {self.divergence_id} declara confiança alta sem evidência"
+                f"proposta {self.item_id} declara confiança alta sem evidência"
             )
 
     @staticmethod
     def abstencao(
-        divergence_id: str,
+        item_id: str,
         tipo: str,
         motivo: str,
         cost: Cost | None = None,
@@ -139,7 +151,7 @@ class Proposal:
         domínio novo passa o que for o não-sei dele.
         """
         return Proposal(
-            divergence_id=divergence_id,
+            item_id=item_id,
             tipo=tipo,
             explicacao=motivo,
             evidencia=[],

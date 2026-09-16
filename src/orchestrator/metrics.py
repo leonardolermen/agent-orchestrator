@@ -195,7 +195,7 @@ def evaluate(
         # Nome diferente da função `ids` acima de propósito: a mesma
         # divergência aqui não é o `gt` que a função recebe, e reusar o nome
         # sombreava a função dentro deste laço.
-        ids_tocados = divergencia_por_id.get(p.divergence_id, frozenset())
+        ids_tocados = divergencia_por_id.get(p.item_id, frozenset())
         if any(tipo_por_id.get(i) is p.tipo for i in ids_tocados):
             corretas += 1
 

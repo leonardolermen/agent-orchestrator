@@ -61,7 +61,7 @@ def test_custos_somam_campo_a_campo():
 
 def test_proposta_carrega_evidencia_e_confianca():
     p = Proposal(
-        divergence_id="d-b-b00001",
+        item_id="d-b-b00001",
         tipo=DivergenceType.RETENCAO_IMPOSTO,
         explicacao="ISS de 5% retido na fonte",
         evidencia=["l00001: bruto 254925", "b00001: líquido 242179"],
@@ -82,7 +82,7 @@ def test_abstencao_e_proposta_valida():
     para provar que o kernel aceita qualquer um.
     """
     p = Proposal.abstencao(
-        divergence_id="d-b-b00002",
+        item_id="d-b-b00002",
         tipo="NAO_SEI",
         motivo="sem contexto suficiente",
     )
@@ -105,7 +105,7 @@ def test_tipo_NAO_e_coagido_pelo_kernel():
     identidade. Nenhum caminho de produção faz isso.
     """
     p = Proposal(
-        divergence_id="d1",
+        item_id="d1",
         tipo="RETENCAO_IMPOSTO",
         explicacao="x",
         evidencia=["l1"],
@@ -120,7 +120,7 @@ def test_confianca_vinda_como_string_e_coagida_ao_enum():
     # O plano 3 vai desserializar propostas; sem coerção, uma string crua
     # contornaria o guard de evidência e toda verificação por identidade.
     p = Proposal(
-        divergence_id="d1",
+        item_id="d1",
         tipo="RETENCAO_IMPOSTO",
         explicacao="x",
         evidencia=["l1"],
@@ -134,7 +134,7 @@ def test_confianca_vinda_como_string_e_coagida_ao_enum():
 def test_confianca_alta_como_string_tambem_exige_evidencia():
     with pytest.raises(ValueError):
         Proposal(
-            divergence_id="d1",
+            item_id="d1",
             tipo="RETENCAO_IMPOSTO",
             explicacao="x",
             evidencia=[],
@@ -149,7 +149,7 @@ def test_proposta_com_confianca_alta_exige_evidencia():
     # credibilidade do produto.
     with pytest.raises(ValueError):
         Proposal(
-            divergence_id="d1",
+            item_id="d1",
             tipo=DivergenceType.RETENCAO_IMPOSTO,
             explicacao="acho que é retenção",
             evidencia=[],

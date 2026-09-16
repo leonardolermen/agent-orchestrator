@@ -14,7 +14,7 @@ from orchestrator.taxonomy import DivergenceType
 
 def _proposta() -> Proposal:
     return Proposal(
-        divergence_id="d-b-b00003",
+        item_id="d-b-b00003",
         tipo=DivergenceType.DEFASAGEM_TEMPORAL,
         explicacao="liquidou 8 dias úteis depois",
         evidencia=["b00003: data 2026-08-26", "l00003: caixa 2026-08-15"],

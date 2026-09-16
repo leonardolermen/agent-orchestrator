@@ -395,7 +395,7 @@ def interpretar_proposta(
         acao = "investigar_manual"
 
     return Proposal(
-        divergence_id=divergence_id,
+        item_id=divergence_id,
         tipo=tipo,
         explicacao=str(dados.get("explicacao", "")),
         evidencia=evidencia,

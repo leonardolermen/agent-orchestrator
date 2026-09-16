@@ -59,11 +59,11 @@ class Triador:
             proposals=[
                 Proposal(
                     item_id=i.id,
-                    kind="BUG" if "erro" in i.payload.titulo.lower() else "FEATURE",
-                    explanation=f"pelo título: {i.payload.titulo!r}",
-                    evidence=(f"issue {i.id}",),
-                    confidence=Confidence.BAIXA,
-                    suggested_action="revisar_manual",
+                    tipo="BUG" if "erro" in i.payload.titulo.lower() else "FEATURE",
+                    explicacao=f"pelo título: {i.payload.titulo!r}",
+                    evidencia=[f"issue {i.id}"],
+                    confianca=Confidence.BAIXA,
+                    acao_sugerida="revisar_manual",
                 )
                 for i in work.of_kind(ISSUE)
             ],

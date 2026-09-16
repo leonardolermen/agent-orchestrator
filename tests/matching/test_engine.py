@@ -349,7 +349,7 @@ def test_proposta_nao_remove_nada_do_pool():
             return ResolverOutput(
                 proposals=[
                     Proposal(
-                        divergence_id=d.id,
+                        item_id=d.id,
                         tipo=DivergenceType.NAO_IDENTIFICADO,
                         explicacao="",
                         evidencia=[],

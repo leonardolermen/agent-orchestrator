@@ -12,7 +12,7 @@ from orchestrator.taxonomy import DivergenceType
 
 def _proposta(divergence_id: str, tipo=DivergenceType.DEFASAGEM_TEMPORAL) -> Proposal:
     return Proposal(
-        divergence_id=divergence_id,
+        item_id=divergence_id,
         tipo=tipo,
         explicacao="x",
         evidencia=["e"],
@@ -57,7 +57,7 @@ def test_grava_e_le_proposta(tmp_path):
     recarregada = Fila(caminho_da_fila("w", "d", raiz=tmp_path))
 
     assert recarregada.proposta("d-1") == _proposta("d-1")
-    assert [p.divergence_id for p in recarregada.pendentes()] == ["d-1"]
+    assert [p.item_id for p in recarregada.pendentes()] == ["d-1"]
 
 
 def test_primeira_proposta_vence_e_a_segunda_nem_e_gravada(tmp_path):
@@ -143,8 +143,8 @@ def test_pendentes_exclui_o_que_ja_foi_decidido(tmp_path):
     f.gravar_proposta(_proposta("d-2"))
     f.gravar_decisao(_decisao("d-1"))
 
-    assert [p.divergence_id for p in f.pendentes()] == ["d-2"]
-    assert [p.divergence_id for p, _ in f.decididas()] == ["d-1"]
+    assert [p.item_id for p in f.pendentes()] == ["d-2"]
+    assert [p.item_id for p, _ in f.decididas()] == ["d-1"]
 
 
 def test_fila_vazia_nao_escreve_nada(tmp_path, monkeypatch):

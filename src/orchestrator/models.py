@@ -198,7 +198,7 @@ def lados(work: WorkSet, ids: frozenset[str]) -> tuple[frozenset[str], frozenset
 
 
 def abstencao(
-    divergence_id: str,
+    item_id: str,
     motivo: str,
     cost: "Cost | None" = None,
     trace: "list[TraceEvent] | None" = None,
@@ -215,5 +215,5 @@ def abstencao(
     já evita: oito lugares que precisam concordar sobre qual é o não-sei.
     """
     return Proposal.abstencao(
-        divergence_id, DivergenceType.NAO_IDENTIFICADO, motivo, cost, trace
+        item_id, DivergenceType.NAO_IDENTIFICADO, motivo, cost, trace
     )

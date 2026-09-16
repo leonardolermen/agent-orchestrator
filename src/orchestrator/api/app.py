@@ -292,7 +292,7 @@ def _item(proposta, decisao, por_id) -> ItemFilaJSON:
     ids = ids_de_conciliar_com(proposta.acao_sugerida)
     # O revisor precisa ver extrato e contábil lado a lado — o veredito do
     # agente sozinho não dá para julgar nada.
-    do_item = _ids_da_divergencia(proposta.divergence_id) | ids
+    do_item = _ids_da_divergencia(proposta.item_id) | ids
     lancamentos = []
     for i in sorted(do_item):
         par = por_id.get(i)
@@ -304,7 +304,7 @@ def _item(proposta, decisao, por_id) -> ItemFilaJSON:
         decisao.tipo is not proposta.tipo or decisao.conciliar_com != ids
     )
     return ItemFilaJSON(
-        divergence_id=proposta.divergence_id,
+        divergence_id=proposta.item_id,
         tipo=proposta.tipo.value,
         confianca=proposta.confianca.value,
         explicacao=proposta.explicacao,

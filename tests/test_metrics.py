@@ -254,7 +254,7 @@ class _InvestigadorQueAcerta:
             else:
                 propostas.append(
                     Proposal(
-                        divergence_id=d.id,
+                        item_id=d.id,
                         tipo=tipo,
                         explicacao="acertou",
                         evidencia=["evidência"],

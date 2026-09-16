@@ -39,7 +39,7 @@ def _grava_proposta(divergence_id: str, **overrides) -> None:
     import orchestrator.api.app as modulo
 
     campos = {
-        "divergence_id": divergence_id,
+        "item_id": divergence_id,
         "tipo": DivergenceType.DEFASAGEM_TEMPORAL,
         "explicacao": "atraso de compensação bancária",
         "evidencia": ["extrato e razão citam o mesmo documento"],
