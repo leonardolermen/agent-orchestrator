@@ -1,0 +1,109 @@
+# Por que duas variantes de instalação, e não só a completa:
+#
+# `api` é extra OPCIONAL (`pyproject.toml`). Numa instalação `[dev]`, os testes
+# que tocam fastapi precisam se PULAR — e um arquivo sem `pytest.importorskip`
+# não pula: ele derruba a COLETA da suíte inteira, inclusive dos testes que
+# nada têm a ver com API.
+#
+# Isso não é hipotético. Três arquivos entraram assim na fatia do grill e
+# passaram por dez revisões de tarefa e uma revisão ampla da branch sem
+# ninguém ver, porque todo mundo rodava no venv completo. Foi o primeiro
+# commit deste CI que achou.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Um push novo cancela a execução anterior da mesma ref: o sinal que importa é
+# o do topo, e fila de runs obsoletos só atrasa quem está esperando.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  testes:
+    name: pytest (py${{ matrix.python }}, extras ${{ matrix.extras }})
+    runs-on: ubuntu-latest
+    strategy:
+      # Uma variante quebrada não esconde o resultado das outras — saber que
+      # `[dev]` falhou E que `[dev,api]` passou é o diagnóstico.
+      fail-fast: false
+      matrix:
+        # 3.11 é o piso declarado em `requires-python`. Piso que ninguém testa
+        # é alegação, não fato. 3.13 é o que a máquina de desenvolvimento usa.
+        python: ["3.11", "3.13"]
+        extras: ["dev", "dev,api"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Instalar
+        run: pip install -e ".[${{ matrix.extras }}]"
+
+      - name: pytest
+        run: pytest tests/ -q
+
+  lint:
+    name: ruff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Instalar
+        run: pip install -e ".[dev]"
+
+      # Só o LINT. `ruff format` NÃO roda aqui: o repositório nunca foi
+      # formatado com ele, 39 arquivos seriam reformatados, e um check de
+      # formato vermelho desde o primeiro dia é um check que as pessoas
+      # aprendem a ignorar. Adotar `ruff format` é uma decisão própria, com a
+      # reformatação num commit só — não um efeito colateral do CI.
+      - name: ruff check
+        run: ruff check src tests
+
+  conciliador:
+    name: o número que o produto reporta
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Instalar
+        run: pip install -e ".[dev]"
+
+      # O golden de 12 sementes já trava a saída do motor, mas ele é um
+      # artefato interno. Esta é a linha que aparece para uma pessoa, e é a
+      # alegação que o README e os PRs repetem. Travá-la aqui faz uma
+      # regressão de qualidade aparecer como CI vermelho em vez de como um
+      # número que ninguém reconferiu.
+      - name: 85,3% com zero falso positivo e zero falso negativo
+        # A saída tem acento, e o grep abaixo casa a linha inteira. Fixar o
+        # encoding tira o locale do runner da equação: um check que fica
+        # vermelho por mojibake é um check que as pessoas aprendem a ignorar.
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          set -o pipefail
+          saida=$(orchestrator --seed 1 --n 500)
+          echo "$saida"
+          echo "$saida" | grep -q "Taxa determinística (lado bancário): 85.3%"
+          echo "$saida" | grep -qE "Falsos positivos: +0$"
+          echo "$saida" | grep -qE "Falsos negativos: +0$"
