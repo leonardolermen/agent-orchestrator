@@ -1130,3 +1130,190 @@ daquele domínio em vez de um degrau da cascata.
 
 Ele repete de propósito a política de decisão obsoleta (id fora do pool vira
 silêncio, não erro), e há teste — a política é do PADRÃO, não do `revisor.py`.
+
+## P6.27. PR #7 — o store guarda RESUMO, não o `Run` inteiro
+
+`Run` carrega o `WorkSet` que sobrou, e `WorkSet` carrega payloads do DOMÍNIO —
+dataclasses que o kernel nunca inspeciona e que ele, portanto, não sabe
+serializar. Persistir um `Run` inteiro exigiria que `storage/` conhecesse todo
+domínio, que é a dependência que a arquitetura proíbe.
+
+`StoredRun` guarda identidade, estado, tempo, custo e contagens. É o que a
+listagem de runs e a tela de custo precisam.
+
+Reconstruir a execução inteira é outro problema, com outra solução já no plano:
+`Source` + `input_ref` (PR #9) tornam a ENTRADA reproduzível, e `ReplayResume`
+(M7) reexecuta em vez de desserializar. Para trabalho de escala de minutos,
+replay é estritamente melhor que checkpoint — sem estado serializado para
+corromper, sem versão de snapshot para migrar (§12.5).
+
+Custo se errado: quem quiser inspecionar o pool pendente de um run antigo
+precisa reexecutar. É exatamente o que `resume()` faz.
+
+## P6.28. `WorkflowDefinition.version` é a FORMA da cascata, e o limite está declarado
+
+A versão é sha256 curto de `(id, nome do stage, nome e classe de cada resolver,
+na ordem de execução)`. Derivada, nunca escrita à mão — mesma razão de `_param()`
+ler o default do próprio dataclass.
+
+**Limite real:** trocar um PARÂMETRO (`L2(max_cents=5)` para `20`) não muda a
+versão. O kernel não tem como introspectar parâmetro de resolver genericamente,
+e fechar isso exige `Resolver.version` — PR #11, a mesma peça de que a chave de
+idempotência precisa.
+
+Registrado com teste próprio (`test_versao_NAO_muda_com_parametro_de_resolver`)
+para ser decisão em vez de surpresa no dia em que alguém comparar dois
+benchmarks que só diferem num parâmetro.
+
+Custo se errado: até o PR #11, a versão responde "a cascata mudou de FORMA?" e
+não "a cascata mudou?".
+
+## P6.29. `NullBus` em vez de `if bus is not None` no laço
+
+O default de `execute()` é um barramento que não emite nada, e não `None`.
+
+Assim não há uma checagem de nulo em cada ponto de emissão, e desligar
+observabilidade é trocar um objeto em vez de mudar o laço. Tem teste provando
+que ligar e desligar o barramento produz o MESMO resultado — se não produzisse,
+o golden dependeria de quem está assinando.
+
+Custo se errado: uma classe de três linhas.
+
+## P6.30. Assinante que levanta vai para stderr, não derruba o run
+
+Captura larga em `EventBus.emit`, e aqui ela é o requisito: observação não pode
+custar um fechamento. É a inversão exata da captura ESTREITA em volta de
+`client.complete()` — a mesma distinção que `Investigator` já documenta entre o
+laço e a execução de ferramenta.
+
+O preço é que um bug de assinante fica quieto. Por isso ele vai para stderr, e
+não some — a mesma política de `listar_receitas` com receita ilegível.
+
+Custo se errado: um assinante quebrado passa despercebido em execução não
+supervisionada. Aceitável enquanto assinante for observação; deixa de ser
+quando um deles gravar decisão — e aí a gravação não é assinante, é passo.
+
+## P6.31. `AGUARDANDO_HUMANO` só vale quando existe degrau humano na cascata
+
+Sobrar item não basta: `domains/swe` sem revisor sobra e ESTÁ concluído — a
+lacuna fica declarada, não pendurada. O estado é "sobrou E há quem decida".
+
+Sem essa condição, todo run de uma cascata sem humano ficaria eternamente
+"aguardando" alguém que não existe, e a listagem de pendências viraria ruído.
+
+Custo se errado: um run que deveria esperar conclui. Detectável na tela de
+runs, e o teste pina os três casos (sobrou com humano, sobrou sem humano, não
+sobrou com humano).
+
+## P6.32. PR #8 — a correção não é inspecionar melhor, é não precisar inspecionar
+
+`api/app.py::_construir_definicao` decidia repassar a fila olhando o **nome** do
+parâmetro da fábrica com `inspect.signature`, e o docstring de lá era honesto
+sobre o preço: "renomear isto para `q` deixaria a suíte inteira verde e faria
+todo workflow gerado servir fila vazia em silêncio".
+
+A tentação é tornar a inspeção mais robusta. A correção é tirar a inspeção:
+toda fábrica passa a ter a MESMA assinatura,
+`(WorkflowContext) -> WorkflowDefinition`, e quem não precisa do contexto o
+ignora.
+
+A uniformidade é a mesma disciplina que `EntradaCatalogo.construir` já aplica no
+grill — e o comentário de lá já apontava para cá: "assinaturas variáveis
+exigiriam introspecção para saber o que passar — e é exatamente esse padrão que
+já nos deu um defeito silencioso no `_construir_definicao` da API."
+
+Custo se errado: fábricas que não precisam do contexto recebem um argumento que
+ignoram. É o preço de ter um caminho em vez de três.
+
+## P6.33. `WorkflowContext` é dataclass tipado, não `dict[str, Any]`
+
+A alternativa óbvia — um saco de serviços com chave `"fila"` — trocaria um
+contrato fraco (nome de parâmetro) por outro igualmente fraco (chave de
+dicionário), e o defeito original voltaria com outra roupa. O docstring que eu
+estava corrigindo reclamava exatamente de "o nome é o único contrato"; um dict
+key chamado `"fila"` é o mesmo contrato.
+
+Ele tem um campo hoje porque há um domínio. Quando houver mais, ganha campos — e
+cada um some do `TypeError` para dentro do type checker.
+
+Custo se errado: acrescentar um serviço mexe numa classe em vez de numa chave.
+É o lado certo para errar.
+
+## P6.34. O teste do rename prova o OPOSTO do que o plano pedia, e está certo
+
+O §27 do plano pedia "um teste que renomeia o parâmetro e prova que **agora
+quebra alto**". Escrevi o contrário: um teste que renomeia o parâmetro e prova
+que **não tem consequência nenhuma**.
+
+Quebrar alto num rename seria continuar tratando o nome como contrato, só que
+com erro melhor. O objetivo nunca foi fazer o rename falhar; era torná-lo
+irrelevante. `test_renomear_o_parametro_da_fabrica_deixou_de_ter_consequencia`
+pina isso.
+
+`tests/grill/test_fabrica.py` foi REMOVIDO em vez de adaptado, e pelo mesmo
+motivo: ele travava o nome (`assert "fila" in inspect.signature(...).parameters`).
+Um teste que trava nome de parâmetro é a confissão de que o contrato é um nome
+de parâmetro. Não há mais nada ali para proteger.
+
+## P6.35. O registro de workflows saiu da API
+
+`_fabricas()` virou `workflows.registry()`, e `descrever()` levou junto o
+isolamento de receita não construível.
+
+Quais workflows existem não é assunto da camada HTTP: a CLI precisa da mesma
+resposta (PR #9 e o `orchestrator run <workflow>` de M5), e duas listas
+paralelas seriam o join frágil que P3.2 já custou uma correção.
+
+Camada `authoring`: o registro precisa conhecer as duas fontes — o embutido
+(`conciliacao`, domains) e os gerados pelo grill (authoring) — e `authoring` é a
+única camada que pode importar as duas.
+
+Custo se errado: um módulo a mais na raiz do pacote até a migração para
+`authoring/`. A catraca já registra isso como "deslocado".
+
+## P6.36. PR #9 — `build_benchmark` nunca foi código de CLI
+
+A inversão nº 3 (`api.app -> cli`) fecha movendo uma função, não criando uma
+abstração. `build_benchmark` é o gerador do dataset com gabarito; ele morava em
+`cli.py` só porque a CLI foi o primeiro chamador. A camada HTTP importar do
+ponto de entrada de linha de comando era consequência disso, não causa.
+
+Foi para `synth/benchmark.py`, junto do resto do gerador sintético.
+
+Custo se errado: nenhum. É rename com atualização de import, e `cli.py` ficou
+com 30 linhas — só o `main()`, que é o que um ponto de entrada deve ter.
+
+## P6.37. `Source` entra, parser de OFX não
+
+O `Source` é a costura; formato bancário real está fora do escopo desde §1.3.
+Duas coisas diferentes, e vale separá-las:
+
+**O que o `Source` resolve, e não é ler arquivo:** a identidade de uma execução.
+Antes, ela era a tupla `(seed, n, taxa)` — e era ela que escopava a fila de
+decisões humanas via `dataset_id`. Um framework cujo id de execução é uma tupla
+de parâmetros de benchmark não consegue representar execução nenhuma que não
+seja um benchmark, e um domínio novo não tem de onde receber trabalho sem
+inventar um segundo `build_benchmark`.
+
+**O que fica de fora:** OFX, CNAB, CSV de razão. Quem tiver o dado escreve um
+`Source` de 40 linhas — e é essa a promessa do framework, não uma tarefa dele.
+
+`SyntheticSource` tem `dataset()` além de `load()`, e a separação é deliberada:
+`load()` devolve só o trabalho, `dataset()` devolve o gabarito. O motor recebe o
+primeiro; a avaliação, o segundo. Um `Source` de dado real não tem o segundo
+método — e é por isso que `metrics.evaluate` continua exigindo um `Dataset` em
+vez de um `Source`.
+
+Custo se errado: um protocolo de dois membros sem segunda implementação. É a
+mesma aposta de `LLMClient` no plano 2, que se pagou.
+
+## P6.38. O `ref` vem da fonte, não montado no chamador
+
+`api/app.py` construía `input_ref=f"synth:{dataset_id(seed, n, taxa)}"`. Agora
+lê `fonte.ref`.
+
+São duas expressões que precisariam concordar sobre o formato de um id —
+exatamente o join frágil que P3.2 já custou uma correção, e que o `enum` do
+grill derivado do `CATALOGO` evita pelo mesmo motivo.
+
+Custo se errado: nenhum; o formato passa a ter um dono.

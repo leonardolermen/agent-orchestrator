@@ -144,7 +144,8 @@ def test_swe_cascata_sem_nenhuma_regra_barata_roda():
     r = execute(def_swe(), pool_swe(issues))
 
     assert [p.tipo for p in r.proposals] == ["BUG", "FEATURE"]
-    assert r.resolutions == []
+    # tupla, não lista: `Run` é imutável de verdade (PR #7).
+    assert r.resolutions == ()
     # Nada resolveu, então tudo continua pendente. Não é falha: é a LACUNA,
     # declarada em vez de escondida.
     assert len(r.unresolved.items) == 2

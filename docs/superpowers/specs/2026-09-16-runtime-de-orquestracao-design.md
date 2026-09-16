@@ -3951,12 +3951,22 @@ agent-orchestrator/
 | #5 `runtime/engine.execute()` | ✅ | PR #6 (M0) |
 | #6 dois domínios esqueleto | ✅ | PR #6 (M0) — em 3 commits, ver P6.24 |
 | #7 `Run` + `EventBus` + `RunStore` | ✅ | PR #7 (M1) |
-| #8 `RuntimeContext` | ⬜ | próximo |
-| #9 `Source` + `input_ref` | ⬜ | `input_ref` já existe como campo |
-| #10 `ExecutionPolicy` | ⬜ | |
+| #8 `WorkflowContext` | ✅ | PR #7 (M1) |
+| #9 `Source` + `input_ref` | ✅ | PR #7 (M1) |
+| #10 `ExecutionPolicy` | ⬜ | próximo — M3 |
 
-**Medido ao fim do PR #7:** 516 testes (eram 449), 14 arestas ilegais (eram 23),
-26 módulos deslocados (eram 30), `85.3% / FP=0 / FN=0` intactos, golden idêntico.
+**Medido ao fim do PR #9 (M0 e M1 completos):** 530 testes (eram 449), **13
+arestas ilegais** (eram 23), `85.3% / FP=0 / FN=0` intactos, golden idêntico.
+
+Três das cinco causas de acoplamento estão fechadas:
+
+| Causa | Arestas | Estado |
+|---|---|---|
+| 1 — tipos de domínio fora do domínio | 10 | kernel saiu; resta `agent` e `human` → PR #12 |
+| 2 — circularidade `engine ↔ definition` | 0 | ✅ PR #5 |
+| 3 — `api.app → cli` | 0 | ✅ PR #9 |
+| 4 — avaliação lê saída da execução | 1 | M6 |
+| 5 — agente usa a fila como cache | 1 | PR #11 |
 
 **Duas descobertas que mudaram o plano** (as duas em §27 PR #6): `Proposal` não
 era genérica (`tipo: DivergenceType`) e `Proposal.divergence_id` era vocabulário

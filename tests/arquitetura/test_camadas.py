@@ -47,22 +47,21 @@ from .camadas import (
     violacoes,
 )
 
-# As 14 arestas ilegais que existem hoje, agrupadas pela CAUSA, não pelo arquivo.
+# As 13 arestas ilegais que existem hoje, agrupadas pela CAUSA, não pelo arquivo.
 #
 # Uma entrada sai daqui no mesmo PR que a elimina — nunca antes, nunca depois.
 # O PR anotado ao lado de cada grupo é o de `§27` do spec desta migração.
 VIOLACOES_CONHECIDAS: frozenset[tuple[str, str]] = frozenset(
     {
         # ---------------------------------------------------------------
-        # CAUSA 1 — tipos de domínio dentro do núcleo. 10 das 14 arestas.
-        # O kernel já saiu dela: `Proposal.tipo` virou `str` no PR #6. O que
-        # resta é `agent` e `human` conhecendo conciliação — fecha no PR #12.
-        # É a lacuna nº 1 do §1.2: `WorkSet` conhece `BankEntry`, `Proposal`
-        # conhece `DivergenceType`. Fecha nos PRs #3 (WorkItem) e #4 (Resolution).
+        # CAUSA 1 — tipos de domínio fora do domínio. 10 das 13 arestas, e a
+        # maior das cinco. É a lacuna nº 1 do §1.2.
+        #
+        # O KERNEL já saiu dela: `WorkSet` e `Resolution` viraram genéricos no
+        # PR #3, e `Proposal.tipo` virou `str` no PR #6. O que resta é `agent` e
+        # `human` conhecendo conciliação — fecha no PR #12, com `AgentSpec` e o
+        # `ToolRegistry`.
         # ---------------------------------------------------------------
-        # PR #3 fechou `workflow.workset -> models` e `workflow.resolver ->
-        # models`: `WorkSet` e `Resolution` são genéricos, e o domínio virou
-        # payload opaco.
         ("agent.investigator", "models"),
         ("agent.investigator", "taxonomy"),
         ("agent.investigator", "agent.tools"),
@@ -97,10 +96,13 @@ VIOLACOES_CONHECIDAS: frozenset[tuple[str, str]] = frozenset(
         # o domínio.
         # ---------------------------------------------------------------
         # ---------------------------------------------------------------
-        # CAUSA 3 — a plataforma importa o gerador de benchmark (inversão 3).
-        # Fecha no PR #9, com `Source` e `input_ref`.
+        # CAUSA 3 — FECHADA no PR #9. `api/app.py` importava
+        # `build_benchmark` de `orchestrator.cli`: a camada HTTP dependendo do
+        # ponto de entrada de linha de comando. O gerador foi para
+        # `synth/benchmark.py`, onde sempre deveria ter estado, e ganhou um
+        # `Source` por cima — que é o que dá identidade reproduzível a uma
+        # execução.
         # ---------------------------------------------------------------
-        ("api.app", "cli"),
         # ---------------------------------------------------------------
         # CAUSA 4 — a avaliação lê o resultado da execução em vez de um `Run`
         # do store. Fecha no PR #7 (`Run`), consumido em M6.

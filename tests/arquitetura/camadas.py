@@ -108,10 +108,22 @@ DESTINO: dict[str, str] = {
     # `ToolContext` busca lançamento contábil e calcula retenção de imposto.
     # É ferramenta DE CONCILIAÇÃO, não do runtime de agente.
     "agent.tools": "domains",
+    # `build_benchmark` saiu de `cli.py` no PR #9. Nunca foi codigo de CLI: e o
+    # gerador do dataset com gabarito, e morava la so porque a CLI foi o
+    # primeiro chamador. Era a inversao nº 3 do §2.1 — a camada HTTP importando
+    # do ponto de entrada de linha de comando.
+    "synth.benchmark": "domains",
     "synth.dataset": "domains",
     "synth.generator": "domains",
     "synth.injectors": "domains",
     # --- autoria de workflow (hoje `grill/`) ---
+    # `workflows.py` é o REGISTRO: de um id para uma definição executável.
+    # Fica em `authoring` porque precisa conhecer as duas fontes — o embutido
+    # (`conciliacao`, domains) e os gerados pelo grill (authoring) —, e
+    # `authoring` é a camada que pode importar as duas. Saiu de `api/app.py`
+    # no PR #8: quais workflows existem não é assunto da camada HTTP, e a CLI
+    # precisa da mesma resposta.
+    "workflows": "authoring",
     "grill.catalogo": "authoring",
     "grill.receita": "authoring",
     "grill.registro": "authoring",
