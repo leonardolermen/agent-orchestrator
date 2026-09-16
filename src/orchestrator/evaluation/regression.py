@@ -20,7 +20,7 @@ abstenção, e qualquer domínio que não seja conciliação).
 """
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from orchestrator.evaluation.metrics import EvalMetrics
 

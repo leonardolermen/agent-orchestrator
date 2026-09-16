@@ -34,19 +34,18 @@ from orchestrator.agent.agent import Agent
 from orchestrator.agent.llm import LLMClient
 from orchestrator.agent.tools.registry import ToolRegistry
 from orchestrator.crew import Crew
+from orchestrator.domains.swe.casos import CASOS
+from orchestrator.domains.swe.workflow import ISSUE, Issue, triador
+from orchestrator.evaluation.benchmark import BenchmarkArm, BenchmarkResult
 from orchestrator.evaluation.case import (
     EvalDataset,
     EvaluationCase,
     ExpectedOutcome,
     Provenance,
 )
-from orchestrator.evaluation.benchmark import BenchmarkArm, BenchmarkResult
 from orchestrator.evaluation.waste import EconomiaDeFerramentas
 from orchestrator.kernel.definition import Task, WorkflowDefinition
 from orchestrator.kernel.work import WorkItem
-
-from orchestrator.domains.swe.casos import CASOS
-from orchestrator.domains.swe.workflow import ISSUE, Issue, ferramentas, triador
 
 # A data de curadoria. Fixa, e anterior a qualquer run — a guarda de
 # contaminação compara `created_at < run.started_at`, e um `datetime.now()`

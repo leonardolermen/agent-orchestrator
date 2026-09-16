@@ -17,16 +17,15 @@ motor que ainda não existe, sem tocar nesta camada.
 """
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 
+from orchestrator.evaluation.case import EvalDataset
+from orchestrator.evaluation.metrics import EvalMetrics, medir
 from orchestrator.kernel.definition import WorkflowDefinition
 from orchestrator.kernel.policy import ExecutionPolicy
 from orchestrator.kernel.run import Run
 from orchestrator.kernel.trace import Trace
-
-from orchestrator.evaluation.case import EvalDataset
-from orchestrator.evaluation.metrics import EvalMetrics, medir
 
 
 @dataclass(frozen=True)

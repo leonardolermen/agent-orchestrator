@@ -142,8 +142,7 @@ def test_os_vereditos_batem_com_os_do_REVISOR():
     """O desvio do §14.3 (receber campos em vez da `Decision`) só é seguro
     enquanto os dois lados concordarem sobre as palavras. Este teste é o que
     transforma essa concordância de suposição em verificação."""
-    from orchestrator.review.decision import Veredito
-
     from orchestrator.evaluation.harvest import _VEREDITOS
+    from orchestrator.review.decision import Veredito
 
     assert set(_VEREDITOS) == {v.value for v in Veredito}

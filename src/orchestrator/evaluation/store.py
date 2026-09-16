@@ -21,14 +21,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from orchestrator.kernel.work import WorkItem
-
 from orchestrator.evaluation.case import (
     EvalDataset,
     EvaluationCase,
     ExpectedOutcome,
     Provenance,
 )
+from orchestrator.kernel.work import WorkItem
 
 _RAIZ_PADRAO = Path("avaliacoes") / "casos"
 

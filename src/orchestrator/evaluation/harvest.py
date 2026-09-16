@@ -33,10 +33,9 @@ conhece as duas palavras.
 from dataclasses import dataclass
 from datetime import datetime
 
+from orchestrator.evaluation.case import EvaluationCase, ExpectedOutcome, Provenance
 from orchestrator.kernel.run import Run
 from orchestrator.kernel.work import WorkItem
-
-from orchestrator.evaluation.case import EvaluationCase, ExpectedOutcome, Provenance
 
 ACEITAR = "aceitar"
 REJEITAR = "rejeitar"

@@ -22,12 +22,11 @@ imprimir `US$ 0,0000`.
 from dataclasses import dataclass
 from statistics import quantiles
 
+from orchestrator.evaluation.case import EvalDataset
 from orchestrator.kernel.cost import CostClass
 from orchestrator.kernel.resolution import TraceKind
 from orchestrator.kernel.run import Run
 from orchestrator.kernel.trace import SpanKind, Trace
-
-from orchestrator.evaluation.case import EvalDataset
 
 
 @dataclass(frozen=True)

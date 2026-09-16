@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from orchestrator.agent.llm import FakeLLMClient, LLMResponse
 from orchestrator.cli.execucao import avaliar as executar
 from orchestrator.domains.swe import avaliacao
+from orchestrator.domains.swe.casos import CASOS
 from orchestrator.kernel.cost import Cost
 
 AGORA = datetime(2026, 9, 17, tzinfo=UTC)
@@ -20,8 +21,6 @@ AGORA = datetime(2026, 9, 17, tzinfo=UTC)
 # O prompt que o `AgentTask` monta é título + corpo. O título é único em cada
 # caso, então o falso identifica o item por ele — e o gabarito sai do PRÓPRIO
 # conjunto, não de uma cópia que envelheceria a cada caso novo.
-from orchestrator.domains.swe.casos import CASOS
-
 _POR_TITULO = {titulo: (cid, esperado) for cid, titulo, _, esperado, _ in CASOS}
 
 

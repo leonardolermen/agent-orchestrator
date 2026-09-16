@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 from orchestrator.agent.agent import Agent, AgentTask
+from orchestrator.crew.context import SharedContext
 from orchestrator.kernel.cost import Cost, CostClass
 from orchestrator.kernel.resolution import (
     Confidence,
@@ -40,8 +41,6 @@ from orchestrator.kernel.resolution import (
 )
 from orchestrator.kernel.resolver import ResolverDescription, ResolverOutput
 from orchestrator.kernel.work import WorkSet
-
-from orchestrator.crew.context import SharedContext
 
 
 class Process(StrEnum):

@@ -11,11 +11,10 @@ from orchestrator.evaluation.case import (
     ExpectedOutcome,
     Provenance,
 )
-from orchestrator.kernel.cost import Cost
+from orchestrator.kernel.cost import Cost, CostClass
 from orchestrator.kernel.definition import Task, WorkflowDefinition
 from orchestrator.kernel.resolution import Confidence, Proposal
 from orchestrator.kernel.resolver import ResolverDescription, ResolverOutput
-from orchestrator.kernel.cost import CostClass
 from orchestrator.kernel.run import Run, RunState
 from orchestrator.kernel.work import WorkItem
 
