@@ -5,9 +5,10 @@ por padrão cai em `Path("data")`, relativo ao CWD: `orchestrator.api.app` e
 `orchestrator.eval.agent_eval`. Sem isolar essa raiz, qualquer teste que passe
 por eles (direto ou via `TestClient`) lê e escreve em `data/fila/`, que é
 exatamente onde `orchestrator-eval --fila` e o `/fila.html` de uma sessão
-normal do desenvolvedor deixam `*.jsonl` — e `*.jsonl` está no `.gitignore`,
-então o CI nunca vê o problema e só a máquina local falha, sem nada em
-`git status` para apontar a causa.
+normal do desenvolvedor deixam `*.jsonl` — e tudo sob `data/` é ignorado pelo
+`.gitignore` (allowlist, desde esta fatia; antes era a regra `*.jsonl`, que
+cobria a fila por acidente do formato), então o CI nunca vê o problema e só a
+máquina local falha, sem nada em `git status` para apontar a causa.
 
 Esta fixture é autouse e cobre toda a suíte, não só `tests/api/`: qualquer
 teste futuro que chame `avaliar(..., gravar_fila=True)` ou bata numa rota da

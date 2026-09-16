@@ -15,7 +15,13 @@ _RAIZ_PADRAO = Path("data")
 
 
 def _raiz(raiz: Path | None) -> Path:
-    # `is None`, não `or`: `Path("")` e `Path(".")` são objetos legítimos.
+    # `is None` e não `or`: defensivo, não corretivo — a mesma disciplina, e a
+    # mesma honestidade sobre ela, que `receita.construir` já registra. Hoje
+    # `or` se comportaria IDENTICAMENTE: `Path` não define `__bool__` nem
+    # `__len__`, e tanto `Path("")` quanto `Path(".")` normalizam para `.` e
+    # são truthy. A disciplina existe para o dia em que o parâmetro deixar de
+    # ser `Path | None` — uma string vazia vinda de config, por exemplo, é
+    # falsy, e um `or` a trocaria em silêncio pelo default em vez de falhar.
     return _RAIZ_PADRAO if raiz is None else raiz
 
 

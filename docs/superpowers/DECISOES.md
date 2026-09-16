@@ -606,7 +606,12 @@ Sondado por execução contra `claude-agent-sdk` 0.2.152 instalado:
   gate every tool call, use a PreToolUse hook instead."). Com o isolamento
   que esta tarefa exige, só o caminho do hook funciona.
 - `SessionStore`/`InMemorySessionStore` + `ClaudeAgentOptions.session_store`
-  + `resume` + `materialize_resume_session`: um transcript FABRICADO na hora
+  + `resume` + `materialize_resume_session` — os três primeiros exportados
+  pelo pacote de topo, como `import_session_to_store`; o último **interno**
+  (`claude_agent_sdk._internal.session_resume`, ausente do `__init__`). Esta
+  entrada é sobre quais APIs são públicas, então a distinção fica registrada:
+  o mecanismo existe, mas metade dele não é contrato versionado. Um
+  transcript FABRICADO na hora
   (três linhas JSONL inventadas, nunca produzidas por uma sessão real —
   user, assistant com `tool_use`, user com `tool_result`) foi aceito e
   materializado com sucesso como histórico de uma sessão retomada.

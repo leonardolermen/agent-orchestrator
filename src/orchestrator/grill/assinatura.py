@@ -40,8 +40,12 @@ subprocesso — os experimentos, reproduzíveis, viviam em
      manda ligar.
 2. Histórico montado pelo CHAMADOR, não pelo processo — `SessionStore`
    (`InMemorySessionStore` publicamente exportado), `ClaudeAgentOptions.
-   session_store` + `resume`, e `import_session_to_store`/
-   `materialize_resume_session`: um transcript INVENTADO na hora (três
+   session_store` + `resume`, e `import_session_to_store` (também público) /
+   `materialize_resume_session` — este último **interno**: não é exportado
+   pelo pacote de topo, só existe em `claude_agent_sdk._internal.
+   session_resume`. Num registro cuja tese é justamente QUAIS APIs são
+   públicas, a diferença conta: apoiar-se nele é apoiar-se em algo que o
+   pacote não versiona como contrato. Um transcript INVENTADO na hora (três
    linhas JSONL fabricadas — user, assistant com `tool_use`, user com
    `tool_result` — nunca produzidas por uma sessão real) foi aceito e
    materializado com sucesso como histórico de uma sessão retomada

@@ -25,8 +25,11 @@ from orchestrator.grill.receita import Receita, construir, validar_id
 
 # Derivação (rodada em 2026-09-15, ver Step 1 da Task 4):
 #
-#   overhead fixo = len(SYSTEM) + len(json.dumps(esquemas()))
-#                 = 3851 chars ≈ 962 tokens de entrada,
+#   overhead fixo = len(SYSTEM) + len(json.dumps(esquemas(), ensure_ascii=False))
+#                 = 1421 + 2430 = 3851 chars ≈ 962 tokens de entrada,
+#   (o kwarg não é detalhe: sem ele, os acentos do schema viram `\uXXXX` e a
+#   mesma conta dá 1421 + 2680 = 4101 — a derivação precisa ser reproduzível,
+#   §9.2, e é `ensure_ascii=False` o que o teste que a pina de fato mede.)
 #   pela heurística grosseira de ~4 chars/token.
 #   saída realista por turno ≈ 200 tokens.
 #
