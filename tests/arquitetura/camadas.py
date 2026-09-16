@@ -86,7 +86,13 @@ DESTINO: dict[str, str] = {
     # porque não há nada errado ali.
     "eval.replay": "agent",
     "eval.assinatura": "agent",
-    # --- domínio de conciliação (§1.3: implementação de referência) ---
+    # --- domínios ---
+    # `domains/procurement` e `domains/swe` NÃO aparecem aqui: o diretório
+    # `domains/` já é o nome da camada. A conciliação ainda está espalhada pela
+    # raiz do pacote e por isso precisa das entradas abaixo — ela se muda para
+    # `domains/reconciliation/` num PR próprio, que é rename puro.
+    #
+    # --- conciliação (§1.3: implementação de referência) ---
     "models": "domains",
     "money": "domains",
     "dates": "domains",

@@ -1075,3 +1075,58 @@ CAUSA 4 e continua fechando no PR #7.
 Registrado porque a leitura ingênua do diff da baseline ("uma nova apareceu")
 sugere regressão, e não é. Foi o mesmo tipo de confusão que P6.16 já registrou
 em sentido inverso.
+
+## P6.23. PR #6 — os esqueletos acharam DOIS defeitos que a análise não tinha visto
+
+O argumento de §1.3 (escrever os outros domínios cedo, não em M5) era teórico
+quando foi escrito. Deixou de ser no primeiro `import` do dominio `swe`:
+
+1. **`Proposal.tipo: DivergenceType`.** A taxonomia de conciliação dentro do
+   tipo que TODO resolver de classe paga devolve. Um domínio novo não conseguia
+   propor nada. Achado na primeira linha de código de domínio.
+2. **`Proposal.divergence_id`.** "Divergência" é vocabulário de conciliação. Um
+   pedido de compra não é uma divergência; uma issue também não.
+
+Nenhum dos dois aparece numa leitura do código — `agent/proposal.py` parece
+genérico até alguém tentar usá-lo de fora. Os dois teriam sido descobertos em
+M5, depois de `Agent`, `Policy`, `Observability` e `Evaluation` terem sido
+construídos em cima deles.
+
+Custo de ter antecipado: dois commits de refactor (~1h). Custo de não ter:
+quatro milestones de retrabalho.
+
+## P6.24. O PR #6 foi partido em três commits para o critério continuar verificável
+
+O critério de aceitação do PR #6 é `git diff --stat src/orchestrator/kernel/`
+VAZIO no commit que adiciona os domínios. Com os dois defeitos acima corrigidos
+no mesmo commit, o critério seria vacuamente falso e não mediria nada.
+
+  6a  Proposal genérica (kernel muda)      — o que o esqueleto exigiu
+  6b  divergence_id -> item_id (kernel muda) — o que o esqueleto exigiu
+  6c  os dois domínios + testes (kernel NÃO muda) — o critério, verificado
+
+O terceiro commit é a medição: depois de dois ajustes, a abstração aguentou o
+segundo E o terceiro domínio sem mais nenhuma mudança de kernel.
+
+## P6.25. O caso degenerado exercitou uma guarda que estava correta e sem teste
+
+`domains/swe` é uma cascata SEM nenhum resolver de classe `REGRA`. Ela produz
+`resolutions_by_class` sem a chave `REGRA`.
+
+`metrics.evaluate` já previa isso — o comentário lá diz que o default de
+`de_regra` é `[]` e não `result.matches` porque "uma cascata sem resolver REGRA
+nenhum legitimamente não tem match determinístico algum". A guarda estava certa
+e nenhum domínio real a produzia. Agora um produz, e há teste.
+
+É o segundo caso da noite em que escrever o segundo domínio verificou uma
+afirmação que só existia como comentário.
+
+## P6.26. `CompradorHumano` existe para provar que HUMANO não é a fila de conciliação
+
+O domínio procurement tem um resolver de classe `HUMANO` que não é o
+`RevisorHumano`. Metade do teste de generalidade está nisso: se "humano" só
+pudesse ser a fila de revisão da conciliação, a classe `HUMANO` seria detalhe
+daquele domínio em vez de um degrau da cascata.
+
+Ele repete de propósito a política de decisão obsoleta (id fora do pool vira
+silêncio, não erro), e há teste — a política é do PADRÃO, não do `revisor.py`.
