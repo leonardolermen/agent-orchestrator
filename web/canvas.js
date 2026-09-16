@@ -131,7 +131,14 @@ async function carregar() {
   for (const stage of definicao.stages) {
     const caixa = document.createElement("section");
     caixa.className = "stage";
-    caixa.innerHTML = `<h2>${stage.name}</h2>`;
+    // `textContent`, como em `popularSeletor` e no `detail` de erro: hoje
+    // `stage.name` é fixo em `construir()` ("conciliar lançamentos"), mas era
+    // o único ponto deste arquivo em que texto de um objeto gerado a partir
+    // da prosa do parceiro virava markup. A exceção some antes de virar
+    // regra.
+    const titulo = document.createElement("h2");
+    titulo.textContent = stage.name;
+    caixa.appendChild(titulo);
 
     stage.cascade.forEach((resolver, i) => {
       const medida = porNome.get(resolver.name);
