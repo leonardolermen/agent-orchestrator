@@ -20,8 +20,10 @@ from typing import TYPE_CHECKING
 
 from orchestrator.kernel.cost import Cost, CostClass
 from orchestrator.kernel.definition import Stage, WorkflowDefinition
+from orchestrator.kernel.event import EventBus
 from orchestrator.kernel.resolution import Proposal, Resolution
 from orchestrator.kernel.resolver import Resolver
+from orchestrator.kernel.run import Run
 from orchestrator.matching.exact import ExactMatcher
 from orchestrator.matching.grouping import GroupingMatcher
 from orchestrator.matching.tolerance import ToleranceMatcher
@@ -37,7 +39,7 @@ class ReconcileResult:
     """O resultado de uma conciliação, na forma que a CLI, a API e as métricas
     já consomem.
 
-    É `ExecutionResult` com o resto do pool traduzido para `Divergence`. Os
+    É o `Run` do motor com o resto do pool traduzido para `Divergence`. Os
     nomes dos campos são os antigos de propósito: este PR move o motor de lugar
     e quebra a circularidade; renomear `matches` para `resolutions` aqui
     obrigaria a tocar `metrics.py`, `api/app.py`, `grill/cli.py` e uma dezena de
@@ -50,6 +52,10 @@ class ReconcileResult:
     cost_by_resolver: dict[str, Cost] = field(default_factory=dict)
     matches_by_resolver: dict[str, int] = field(default_factory=dict)
     matches_by_class: dict[CostClass, list[Resolution]] = field(default_factory=dict)
+    # O `Run` cru, para quem quiser id, estado, duração e custo total. Os
+    # campos acima são a projeção que a CLI, a API e as métricas já consomem;
+    # este é o objeto de verdade. Eles somem quando o último chamador migrar.
+    run: "Run | None" = None
 
 
 def default_resolvers() -> list[Resolver]:
@@ -91,6 +97,9 @@ def reconcile(
     bank: list[BankEntry],
     ledger: list[LedgerEntry],
     definition: WorkflowDefinition | None = None,
+    *,
+    bus: "EventBus | None" = None,
+    input_ref: str = "",
 ) -> ReconcileResult:
     """Concilia um extrato contra um razão. A porta de entrada do domínio.
 
@@ -103,12 +112,13 @@ def reconcile(
     quem tem um padrão é quem conhece o domínio.
     """
     definicao = default_definition() if definition is None else definition
-    saida = execute(definicao, pool(bank, ledger))
+    run = execute(definicao, pool(bank, ledger), bus=bus, input_ref=input_ref)
     return ReconcileResult(
-        matches=saida.resolutions,
-        divergences=divergencias(saida.unresolved),
-        proposals=saida.proposals,
-        cost_by_resolver=saida.cost_by_resolver,
-        matches_by_resolver=saida.resolved_by_resolver,
-        matches_by_class=saida.resolutions_by_class,
+        matches=list(run.resolutions),
+        divergences=divergencias(run.unresolved),
+        proposals=list(run.proposals),
+        cost_by_resolver=run.cost_by_resolver,
+        matches_by_resolver=run.resolved_by_resolver,
+        matches_by_class=run.resolutions_by_class,
+        run=run,
     )

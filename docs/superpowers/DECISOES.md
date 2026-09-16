@@ -1130,3 +1130,77 @@ daquele domínio em vez de um degrau da cascata.
 
 Ele repete de propósito a política de decisão obsoleta (id fora do pool vira
 silêncio, não erro), e há teste — a política é do PADRÃO, não do `revisor.py`.
+
+## P6.27. PR #7 — o store guarda RESUMO, não o `Run` inteiro
+
+`Run` carrega o `WorkSet` que sobrou, e `WorkSet` carrega payloads do DOMÍNIO —
+dataclasses que o kernel nunca inspeciona e que ele, portanto, não sabe
+serializar. Persistir um `Run` inteiro exigiria que `storage/` conhecesse todo
+domínio, que é a dependência que a arquitetura proíbe.
+
+`StoredRun` guarda identidade, estado, tempo, custo e contagens. É o que a
+listagem de runs e a tela de custo precisam.
+
+Reconstruir a execução inteira é outro problema, com outra solução já no plano:
+`Source` + `input_ref` (PR #9) tornam a ENTRADA reproduzível, e `ReplayResume`
+(M7) reexecuta em vez de desserializar. Para trabalho de escala de minutos,
+replay é estritamente melhor que checkpoint — sem estado serializado para
+corromper, sem versão de snapshot para migrar (§12.5).
+
+Custo se errado: quem quiser inspecionar o pool pendente de um run antigo
+precisa reexecutar. É exatamente o que `resume()` faz.
+
+## P6.28. `WorkflowDefinition.version` é a FORMA da cascata, e o limite está declarado
+
+A versão é sha256 curto de `(id, nome do stage, nome e classe de cada resolver,
+na ordem de execução)`. Derivada, nunca escrita à mão — mesma razão de `_param()`
+ler o default do próprio dataclass.
+
+**Limite real:** trocar um PARÂMETRO (`L2(max_cents=5)` para `20`) não muda a
+versão. O kernel não tem como introspectar parâmetro de resolver genericamente,
+e fechar isso exige `Resolver.version` — PR #11, a mesma peça de que a chave de
+idempotência precisa.
+
+Registrado com teste próprio (`test_versao_NAO_muda_com_parametro_de_resolver`)
+para ser decisão em vez de surpresa no dia em que alguém comparar dois
+benchmarks que só diferem num parâmetro.
+
+Custo se errado: até o PR #11, a versão responde "a cascata mudou de FORMA?" e
+não "a cascata mudou?".
+
+## P6.29. `NullBus` em vez de `if bus is not None` no laço
+
+O default de `execute()` é um barramento que não emite nada, e não `None`.
+
+Assim não há uma checagem de nulo em cada ponto de emissão, e desligar
+observabilidade é trocar um objeto em vez de mudar o laço. Tem teste provando
+que ligar e desligar o barramento produz o MESMO resultado — se não produzisse,
+o golden dependeria de quem está assinando.
+
+Custo se errado: uma classe de três linhas.
+
+## P6.30. Assinante que levanta vai para stderr, não derruba o run
+
+Captura larga em `EventBus.emit`, e aqui ela é o requisito: observação não pode
+custar um fechamento. É a inversão exata da captura ESTREITA em volta de
+`client.complete()` — a mesma distinção que `Investigator` já documenta entre o
+laço e a execução de ferramenta.
+
+O preço é que um bug de assinante fica quieto. Por isso ele vai para stderr, e
+não some — a mesma política de `listar_receitas` com receita ilegível.
+
+Custo se errado: um assinante quebrado passa despercebido em execução não
+supervisionada. Aceitável enquanto assinante for observação; deixa de ser
+quando um deles gravar decisão — e aí a gravação não é assinante, é passo.
+
+## P6.31. `AGUARDANDO_HUMANO` só vale quando existe degrau humano na cascata
+
+Sobrar item não basta: `domains/swe` sem revisor sobra e ESTÁ concluído — a
+lacuna fica declarada, não pendurada. O estado é "sobrou E há quem decida".
+
+Sem essa condição, todo run de uma cascata sem humano ficaria eternamente
+"aguardando" alguém que não existe, e a listagem de pendências viraria ruído.
+
+Custo se errado: um run que deveria esperar conclui. Detectável na tela de
+runs, e o teste pina os três casos (sobrou com humano, sobrou sem humano, não
+sobrou com humano).
