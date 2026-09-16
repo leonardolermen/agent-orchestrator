@@ -3953,10 +3953,14 @@ agent-orchestrator/
 | #7 `Run` + `EventBus` + `RunStore` | ✅ | PR #7 (M1) |
 | #8 `WorkflowContext` | ✅ | PR #7 (M1) |
 | #9 `Source` + `input_ref` | ✅ | PR #7 (M1) |
-| #10 `ExecutionPolicy` | ⬜ | próximo — M3 |
+| #10 `ExecutionPolicy` | ✅ | PR #9 (M3) |
 
-**Medido ao fim do PR #9 (M0 e M1 completos):** 530 testes (eram 449), **13
-arestas ilegais** (eram 23), `85.3% / FP=0 / FN=0` intactos, golden idêntico.
+**Além dos dez:** M2 inteiro (`Agent`, `AgentSpec`, `ToolRegistry`, `Task`) no
+PR #8, e M3 (`ExecutionPolicy` + as 7 regras) no PR #9.
+
+**Medido ao fim do M3:** 566 testes (eram 449), **13 arestas ilegais** (eram
+23), `85.3% / FP=0 / FN=0` intactos, golden idêntico, CI verde nas 6 checagens
+dos quatro PRs.
 
 Três das cinco causas de acoplamento estão fechadas:
 
