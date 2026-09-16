@@ -2,7 +2,13 @@ import json
 from datetime import UTC, datetime
 
 import pytest
-from fastapi.testclient import TestClient
+
+# `api` é extra opcional (`pyproject.toml`). Sem a guarda, este arquivo
+# derruba a COLETA da suíte inteira numa instalação `[dev]` — não só os
+# próprios testes. Ver `.github/workflows/ci.yml`, que roda as duas variantes.
+pytest.importorskip("fastapi")
+
+from fastapi.testclient import TestClient  # noqa: E402
 
 from orchestrator.api import app as app_mod
 from orchestrator.grill.receita import Receita, ResolverReceita, para_json
