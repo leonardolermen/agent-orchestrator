@@ -29,11 +29,14 @@ from orchestrator.api.schemas import (
 from orchestrator.conciliacao import reconcile
 from orchestrator.grill.registro import listar_receitas
 from orchestrator.kernel.cost import Cost, CostClass
+from orchestrator.kernel.event import EventBus
 from orchestrator.kernel.run import RunState
 from orchestrator.metrics import evaluate
+from orchestrator.observability.collector import SpanCollector
 from orchestrator.review.decision import Decision, Veredito, ids_de_conciliar_com
 from orchestrator.review.fila import Fila, caminho_da_fila, dataset_id
 from orchestrator.storage.jsonl.run_store import JsonlRunStore
+from orchestrator.storage.jsonl.trace_store import JsonlTraceStore
 from orchestrator.synth.benchmark import SyntheticSource, build_benchmark
 from orchestrator.taxonomy import DivergenceType
 from orchestrator.workflows import (
@@ -118,6 +121,10 @@ def _executar(workflow_id: str, seed: int, n: int, taxa: float) -> RunJSON:
     gasta em tokens. É isso que torna seguro um endpoint que qualquer F5
     dispara.
     """
+    # O coletor assina o barramento. O domínio não sabe que está sendo
+    # observado — ver `observability/collector.py`.
+    bus = EventBus()
+    coletor = SpanCollector().subscribe(bus)
     fonte = SyntheticSource(seed=seed, n=n, taxa_divergencia=taxa)
     dataset = fonte.dataset()
     fila, _ = _abrir_fila(workflow_id, seed, n, taxa)
@@ -148,11 +155,13 @@ def _executar(workflow_id: str, seed: int, n: int, taxa: float) -> RunJSON:
         # O `ref` vem da FONTE, não montado aqui: duas expressões que precisam
         # concordar sobre o formato de um id são o join frágil de sempre.
         input_ref=fonte.ref,
+        bus=bus,
     )
     # O run vai para o store ANTES de qualquer projeção para JSON: o que a tela
     # mostra é derivado, o que o store guarda é o fato.
     if resultado.run is not None:
         _run_store().save(resultado.run)
+        _trace_store().save(coletor.trace(resultado.run))
     m = evaluate(dataset, resultado)
 
     total = m.bank_total
@@ -213,6 +222,12 @@ def _run_store() -> JsonlRunStore:
     descreve.
     """
     return JsonlRunStore((_RAIZ_FILA or Path("data")) / "runs.jsonl")
+
+
+def _trace_store() -> JsonlTraceStore:
+    """Sob a MESMA raiz isolada do run store, pelo mesmo motivo: sem isso a
+    suíte passaria a escrever `data/traces/` na máquina do desenvolvedor."""
+    return JsonlTraceStore(_RAIZ_FILA or Path("data"))
 
 
 def _abrir_fila(workflow_id: str, seed: int, n: int, taxa: float) -> tuple[Fila, str]:

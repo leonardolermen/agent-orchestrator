@@ -1514,3 +1514,110 @@ workflows em vez de duas políticas.
 
 A política é observável pelo `Run`, em `policy_decisions` — que é onde ela
 precisa aparecer.
+
+---
+
+# M4 — Observabilidade
+
+## P6.52. Spans vêm do barramento; o domínio nunca sabe que está sendo observado
+
+Não por decorator, não por monkey-patching, não por context manager espalhado.
+O coletor assina o `EventBus`, e um resolver não importa nada de
+`observability/`.
+
+É o que permite testar todo resolver sem instrumentação e desligar a
+observabilidade inteira sem tocar em lógica — com teste provando que ligar e
+desligar o barramento produz o MESMO resultado. Se não produzisse, o golden
+dependeria de quem está assinando.
+
+## P6.53. LIMITAÇÃO — LLM e ferramenta são DERIVADOS, não emitidos
+
+`run`, `stage`, `policy` e `resolver` vêm do stream. `item`, `llm` e `tool` são
+derivados de `Proposal.trace` DEPOIS que o run termina.
+
+A razão é estrutural: quem sabe de LLM e ferramenta é o agente, e o agente não
+recebe o barramento. Fechar isso exige `Resolver.resolve(work, ctx)` — mudança
+de assinatura em TODO resolver, que está agendada para o M6, onde ela também
+paga por timeout e cancelamento.
+
+Consequência prática: a árvore de `orchestrator-trace` é completa, mas o detalhe
+de LLM e ferramenta só existe DEPOIS do run, não durante. Observabilidade ao
+vivo — que ninguém pediu — precisa daquele contexto.
+
+Registrado no docstring do módulo, não só aqui: quem lê o coletor precisa saber
+que metade da árvore chega por outro caminho.
+
+## P6.54. `custo_total` soma FOLHAS, e essa é a única forma correta
+
+Somar todos os spans contaria cada token duas vezes — uma no span de `llm` e
+outra no `resolver` que o contém. Custo de pai é agregação dos filhos, e agregar
+a agregação é o erro clássico desta estrutura.
+
+Tem teste que pina isso comparando o total com o custo do único span folha.
+
+## P6.55. `abstencao` e `pulado` não são erro, e é por isso que OTel é só saída
+
+`SpanStatus` tem quatro valores: OK, ERRO, ABSTENCAO, PULADO. Os dois últimos
+são desfechos legítimos e comercialmente DISTINTOS — abstenção é o agente
+dizendo "não sei" e custou dinheiro; pulado é a política dizendo "não vale a
+pena" e economizou.
+
+OTel tem dois status. O exportador mapeia os quatro para OK/ERROR e preserva o
+real em `orchestrator.status`, porque sem isso "o agente absteve" e "o agente
+respondeu" chegariam idênticos ao backend, e a taxa de abstenção — que é métrica
+de produto — sumiria.
+
+É metade do ADR-08. A outra metade é o custo: micro-centavos `int` não tem lugar
+canônico em OTel e viraria atributo float. Ponto flutuante em dinheiro é
+proibido desde `money.py`, e "só no exportador" é exatamente como esse tipo de
+erro entra. O exportador manda inteiro e deixa a divisão para quem consome.
+
+Teste verifica que `kernel/` não contém a string `opentelemetry`.
+
+## P6.56. O span de política tem custo zero e duração ~0, e não é desperdício
+
+Ele é o registro de POR QUE o runtime NÃO gastou dinheiro. Sem ele, a decisão
+mais valiosa do sistema — a única que economiza — é a única que não deixa
+rastro, e "a política pulou o agente" fica indistinguível de "o agente não achou
+nada".
+
+Mesma classe de ambiguidade que `proposals_api_failed` elimina em
+`agent_eval.py`, e a mesma razão para existir.
+
+## P6.57. A lacuna é um span declarado, não uma ausência
+
+`SpanKind.GAP` aparece na árvore com a contagem de itens que nenhum resolver
+cobriu. O canvas já a desenha, e o spec de composição §3.4 chama isso de "o
+ponto mais valioso da tela".
+
+Uma árvore que mostrasse só o que foi resolvido esconderia exatamente o que
+importa — e "não apareceu na árvore" seria indistinguível de "não sobrou nada".
+
+## P6.58. `orchestrator-trace` é entrada própria, não subcomando
+
+Mesmo motivo que `orchestrator-eval` e `orchestrator-grill` já documentam: o
+`main()` de `orchestrator` é argparse plano, e introduzir subcomandos quebraria
+a invocação de hoje sem ganho. A unificação em `orchestrator trace <run-id>` é o
+M5 (DX), onde vem com despachante e alias legado.
+
+Tem teste de que não existe caminho de código dali até o modelo — a mesma regra
+da API, pelo mesmo tipo de teste. Um `orchestrator-trace` que gastasse dinheiro
+seria a pior surpresa possível numa ferramenta de leitura.
+
+## P6.59. Um arquivo de trace POR RUN
+
+`RunStore` pode ser um arquivo só porque guarda uma linha por run. Um trace tem
+dezenas a milhares de spans, e um arquivo único faria `orchestrator-trace <id>`
+varrer o histórico inteiro para achar um.
+
+Mesma serialização campo a campo de `review/serial.py`, com os CINCO campos de
+`Cost` — perder um faria o trace reportar custo menor que o real, e há teste.
+
+## P6.60. O corte de itens na árvore é declarado, nunca silencioso
+
+`render(max_itens=5)`. Um run de 300 divergências produziria 300 subárvores e a
+saída deixaria de ser legível — que é o oposto do que um trace serve.
+
+O corte sai como `... e mais N itens`. Truncar em silêncio seria a mesma classe
+de defeito que `limite=-3` em `buscar_lancamentos` já custou uma correção:
+devolver menos do que o pedido sem dizer.
