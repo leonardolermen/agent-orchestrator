@@ -1874,3 +1874,79 @@ lacuna do M2 continua custando ~1,5 centavo de crédito de API, e continua sendo
 a forma mais barata de fechá-la.
 
 Sondas reprodutíveis no scratchpad da sessão (`sonda_llmclient.py`, `sonda2.py`).
+
+## M6 — Avaliação
+
+### P6.73. A camada de avaliação PONTUA; ela não executa
+
+`PERMITIDO["evaluation"]` é `{kernel, storage, observability}` — sem `runtime` e
+sem `agent`. O spec do §14.2 escreve `Evaluator.evaluate(run, dataset)`, que
+RECEBE um run, e a tabela de camadas concorda: o executor do benchmark entra por
+injeção (`benchmark.Executor`), e quem o fornece é a borda.
+
+Alternativa rejeitada: relaxar `PERMITIDO` para deixar `evaluation` importar
+`runtime`. Custo de estar errado: a avaliação viraria feature do runtime, e o
+caminho de produção passaria a carregar código que só existe para medir.
+
+Ganho colateral que não estava previsto: dá para pontuar um run lido do disco
+meses depois, um run de produção, ou um run de um motor que ainda não existe.
+
+### P6.74. `abstem_com` é parâmetro, e é o que impede a camada nova de herdar a violação antiga
+
+`orchestrator/metrics.py` conta abstenção comparando contra
+`DivergenceType.NAO_IDENTIFICADO`. Essa linha É a violação `metrics -> taxonomy`
+que a catraca lista há seis PRs. A camada genérica resolve a mesma pergunta
+recebendo o vocabulário na chamada.
+
+Alternativa rejeitada: detectar abstenção por `acao_sugerida ==
+"investigar_manual"`, que é o que `Proposal.abstencao` estampa. Custo de estar
+errado: um domínio que estampasse outra coisa passaria a ter zero abstenção
+medida, sem erro nenhum — e abstenção medida a menos infla precisão.
+
+### P6.75. Redução pessimista, e em duas direções diferentes
+
+Qualidade reduz por `min` entre sementes; custo reduz por `max`. Preservado da
+decisão 26. Cinco sementes a 90% e uma a 20% dão média 78% e passam em qualquer
+limiar razoável; o mínimo vê o 20%. Tem teste que demonstra numericamente.
+
+`max_abstention_increase` entra junto e não estava no spec: sem ela, "não
+responder nada" é a estratégia ótima contra o CI — a precisão das que sobraram
+sobe e nada mais é medido.
+
+### P6.76. `waste.py` mede e aponta; quem julga é o benchmark
+
+O achado do `swe` (ferramenta chamada em 5 de 5, provocando ~56% do custo) virou
+métrica. O módulo se recusa a chamar aquilo de desperdício: desperdício exige
+contrafactual, e o contrafactual tem nome nesta camada — dois `BenchmarkArm`
+sobre o mesmo conjunto.
+
+Alternativa rejeitada: um relatório "custo evitável" que somasse as chamadas
+suspeitas. Custo de estar errado: seria a mesma classe de erro que relatar custo
+zero quando nada foi medido — um número com aparência de medida e sem medição
+atrás.
+
+**Medido em 2026-09-16, com os dois braços rodando de verdade:**
+
+    braço                   precisão   abst.   US$ total   US$/acerto
+    com-ferramenta            100,0%   20,0%      0,0139     0,003474
+    sem-ferramenta            100,0%   20,0%      0,0046     0,001138
+
+Três vezes mais caro para a mesma precisão. E a diferença é MAIOR que os 56%
+atribuídos à ferramenta, porque o braço com ela também paga o schema no turno 1
+— o schema entra no custo mesmo quando a ferramenta não é chamada.
+
+Com cinco casos isto é indício, não prova, e o veredito impresso diz isso.
+
+### P6.77. ACHADO — no `swe`, "não sei" e "é uma dúvida" são a MESMA palavra
+
+`_abstain` devolve `Proposal.abstencao(item_id, "DUVIDA", ...)` e `DUVIDA` é
+também um tipo legítimo do vocabulário. Consequência medida: a issue I-3, que É
+uma dúvida e foi classificada corretamente, entra na taxa de ABSTENÇÃO em vez da
+de acerto — 20% de abstenção nos dois braços, quando o agente não se absteve
+nenhuma vez.
+
+Não é defeito da camada de avaliação; é do domínio esqueleto. A avaliação
+apenas o tornou visível, que é para isso que ela existe. Fica anotado e não
+corrigido neste PR: mudar o vocabulário do `swe` junto com a entrega do M6
+misturaria duas coisas, e o número de hoje é o que serve de linha de base para a
+mudança.

@@ -139,3 +139,39 @@ def init(args: Namespace) -> int:
     print("  python -m pip install -e .")
     print("  python -m workflows.triagem")
     return 0
+
+
+def avaliar(args: Namespace) -> int:
+    """`orchestrator eval <dominio>` — a avaliação ao vivo. GASTA DINHEIRO.
+
+    Subcomando separado do `bench` de propósito. `bench` é determinístico,
+    gratuito e roda no CI a cada push; este chama modelo e cobra. Um único
+    comando com uma flag `--ao-vivo` faria a diferença entre os dois caber num
+    caractere esquecido, e a diferença é dinheiro.
+    """
+    if args.dominio != "swe":
+        print(
+            f"domínio sem avaliação ao vivo: {args.dominio!r}. disponíveis: swe",
+            file=sys.stderr,
+        )
+        return 1
+
+    from orchestrator.agent.anthropic_client import AnthropicClient
+    from orchestrator.cli.execucao import avaliar as executar
+    from orchestrator.domains.swe import avaliacao
+
+    cliente = AnthropicClient(model=args.model)
+    dataset = avaliacao.conjunto()
+    print(
+        f"Avaliação ao vivo de {args.dominio!r} com {args.model} — GASTA "
+        f"DINHEIRO. Dois braços sobre {len(dataset)} casos curados."
+    )
+    print()
+    resultado, economias = executar(
+        dataset,
+        avaliacao.bracos(cliente),
+        cliente,
+        abstem_com=avaliacao.ABSTEM_COM,
+    )
+    print(avaliacao.render(resultado, economias))
+    return 0

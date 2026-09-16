@@ -45,6 +45,10 @@ def _parser() -> argparse.ArgumentParser:
     w = sub.add_parser("workflows", help="os workflows disponíveis")
     w.add_argument("workflow_id", nargs="?", help="omita para listar")
 
+    e = sub.add_parser("eval", help="avaliação ao vivo de um domínio (GASTA DINHEIRO)")
+    e.add_argument("dominio", help="o domínio a avaliar (hoje: swe)")
+    e.add_argument("--model", default="claude-haiku-4-5")
+
     i = sub.add_parser("init", help="cria um projeto novo")
     i.add_argument("nome")
 
@@ -80,6 +84,7 @@ def main(argv: list[str] | None = None) -> int:
         "runs": comandos.runs,
         "trace": comandos.trace,
         "workflows": comandos.workflows,
+        "eval": comandos.avaliar,
         "init": comandos.init,
         "version": comandos.version,
     }
