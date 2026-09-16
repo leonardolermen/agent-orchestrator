@@ -669,3 +669,180 @@ por `test_o_entrevistador_nao_importa_o_sdk`, que agora varre todo o pacote
 não muda: `orchestrator-grill` gasta crédito de API por chave
 (`ANTHROPIC_API_KEY`), não a assinatura pessoal do Claude Code — apesar do
 nome do módulo, herdado do vocabulário do plano.
+
+---
+
+# Plano 6 — Runtime de orquestração
+
+Spec: [`2026-09-16-runtime-de-orquestracao-design.md`](specs/2026-09-16-runtime-de-orquestracao-design.md)
+
+Decisões da auditoria e do PR #1. Mesmo critério dos planos anteriores: cada
+uma traz a alternativa rejeitada e o custo de estar errada.
+
+---
+
+## P6.1. Decisão do DONO, não minha — a regra dos três usos fica suspensa
+
+O spec §2.1 exige "três usos concretos" antes de qualquer abstração de
+plataforma; o §9 condiciona a DSL a três workflows em produção; o §10 classifica
+"deriva para plataforma cedo demais" como risco Alto. O dono decidiu construir a
+plataforma agora, a partir de uma instância.
+
+Registrada aqui **e** no §1.3 do spec novo, porque decisão que contraria um spec
+precisa aparecer onde o spec é lido — não só numa conversa.
+
+Alternativa rejeitada: seguir a regra e adiar a plataforma. Rejeitada por quem
+tem autoridade para isso.
+
+Custo se errado: a abstração é desenhada a partir de uma instância e sai errada,
+que é exatamente o que a regra existia para evitar. Mitigação em P6.2.
+
+## P6.2. O substituto de engenharia: dois domínios esqueleto em M0, não em M5
+
+A regra dos três usos existia por uma razão técnica que não desaparece com a
+decisão do dono: abstração desenhada a partir de zero instâncias costuma estar
+errada. O substituto barato não é esperar três clientes — é escrever as outras
+duas instâncias como esqueletos executáveis **junto** com a abstração, enquanto
+o kernel ainda está mole.
+
+Procurement (`REGRA → REGRA → AGENTE → HUMANO`) e Software Eng (o caso
+DEGENERADO: `AGENTE → HUMANO`, sem nenhum resolver de classe REGRA), ~80 linhas
+cada, do spec de composição §1.3. Critério binário: `git diff --stat
+src/orchestrator/kernel/` vazio no PR que os adiciona.
+
+Alternativa rejeitada: validar a generalidade em M5, como no plano original.
+Rejeitada porque descobrir que a abstração não serve custa um dia no PR #6 e um
+mês no M5.
+
+Custo se errado: dois PRs (~200 linhas) de domínio que ninguém usa. Barato
+comparado ao que protegem.
+
+## P6.3. Conciliação descartável NÃO significa suíte descartável
+
+O dono classificou a conciliação como "caso inicial, descartável". Li isso como
+**não investir nela** — sem parser de OFX/CNAB, sem camada de matching nova, sem
+feature de produto — e **não** como afrouxar os 449 testes, o golden de 12
+sementes e os três números do CI.
+
+Razão: num refactor que reescreve `WorkSet`, `Resolution`, o motor e o store, a
+única coisa que separa "generalizei corretamente" de "quebrei em silêncio" é um
+domínio complexo o bastante (cardinalidade N:M, dinheiro em inteiros, três
+classes de custo, FP/FN assimétricos) com saída travada. A conciliação vale mais
+como fixture agora do que valia como produto antes, porque agora é a única coisa
+que pode falhar alto.
+
+Alternativa rejeitada: relaxar o job `conciliador` do CI já que o produto não é
+mais o alvo. Rejeitada por remover a única rede no exato PR em que o kernel é
+reescrito.
+
+Custo se errado: carregamos uma suíte de um domínio que ninguém vai vender. É
+exatamente o que uma suíte de regressão é.
+
+## P6.4. Catraca com baseline, não `xfail`, no teste de camadas
+
+O plano do spec (§27, PR #1) pedia um teste `xfail` listando as violações
+conhecidas. Entreguei como baseline com catraca, **verde desde o primeiro dia**:
+violação nova falha um teste, violação corrigida sem apagar a linha falha outro.
+
+Duas razões. (a) `xfail` é um check vermelho permanente, e este repositório já
+recusou isso uma vez pelo motivo certo — o comentário sobre `ruff format` no
+`.github/workflows/ci.yml`: "um check de formato vermelho desde o primeiro dia é
+um check que as pessoas aprendem a ignorar". (b) `xfail` não detecta violação
+NOVA; a catraca detecta nos dois sentidos, que é o que protege a arquitetura
+durante a janela em que ela é reescrita.
+
+Alternativa rejeitada: `xfail` como o plano pedia. Custo se errado: a baseline é
+uma lista que pode virar desculpa permanente — mitigado por
+`test_baseline_honesta`, que falha quando ela deixa de ser honesta.
+
+Provado por experimento, não por leitura: violação introduzida em
+`workflow/cost_class.py` fez 2 testes falharem; entrada obsoleta na baseline fez
+`test_baseline_honesta` falhar. Os dois lados restaurados depois.
+
+## P6.5. `DESTINO` vence o diretório, e isso foi medido
+
+`camada_de()` resolve a camada de um módulo por tabela explícita primeiro,
+diretório depois. A ordem inversa parecia mais natural (o diretório é o estado
+final) e estava **errada**: três diretórios de hoje têm o nome de uma camada
+alvo sem serem ela — `agent/` guarda `proposal.py` (kernel) e `tools.py`
+(domains) junto do laço; `api/` e `cli` coincidem.
+
+Medido: com a ordem errada, o relatório saiu com 36 violações e **sem a mais
+importante** — `kernel -> agent`, a inversão nº 1 do §2.1, sumia porque
+`agent.proposal` resolvia como camada `agent`. O teste atestaria uma arquitetura
+que não existe.
+
+Custo se errado: nenhum hoje; a redundância que a ordem explícita cria é
+detectada por `test_destino_sem_entrada_redundante`, que obriga a tabela a
+encolher até sumir.
+
+## P6.6. `eval/replay.py` e `eval/assinatura.py` são camada `agent`, não `evaluation`
+
+Os dois moram em `eval/` por PROPÓSITO DE USO, mas `ReplayClient`/
+`RecordingClient` são implementações de `LLMClient` e `InvestigadorAssinatura` é
+um `Resolver`. A camada é dada pelo que a coisa É, não por quem a usa.
+
+Alternativa rejeitada: mapear para `evaluation`, seguindo o diretório. Produzia
+violações `evaluation -> agent` que nenhum PR deveria fechar, porque não há nada
+errado ali — e violação falsa na baseline é ruído que faz a lista inteira perder
+credibilidade.
+
+Custo se errado: quando `evaluation/` existir de verdade, os dois arquivos vão
+para `agent/providers/` em vez de acompanhar o resto de `eval/`; uma linha na
+tabela.
+
+## P6.7. O extrator lê a árvore inteira, não o topo do arquivo
+
+`ast.walk` sobre toda a AST, incluindo imports dentro de função e sob
+`TYPE_CHECKING`.
+
+Necessário, não zeloso: a circularidade `engine ↔ definition` existe SÓ em
+imports locais — colocados lá justamente para o interpretador não vê-la — e
+`agent.investigator -> review.fila` existe só sob `TYPE_CHECKING`. Um extrator
+que lesse só o cabeçalho não veria os dois acoplamentos mais antigos do
+repositório e diria que a arquitetura está melhor do que está.
+
+`TYPE_CHECKING` conta porque acoplamento de conhecimento também é acoplamento:
+`workflow/` conhecer `Fila` é o fato que a fronteira mede, mesmo sem import em
+tempo de execução.
+
+Custo se errado: a fronteira fica mais severa que o runtime exige. É o lado certo
+para errar, e `test_extrator_enxerga_import_local_e_type_checking` pina a
+capacidade usando os dois casos reais como fixture.
+
+## P6.8. Import relativo no teste — o absoluto quebra a COLETA no CI
+
+`from .camadas import ...`, não `from tests.arquitetura.camadas import ...`.
+
+Não é estilo. `tests/` não tem `__init__.py`, então o pytest importa o arquivo
+como `arquitetura.test_camadas` e põe `tests/` no `sys.path` — não a raiz do
+repositório. Com `python -m pytest` o absoluto funciona **por acidente** (o `-m`
+põe o CWD no path); com `pytest tests/ -q`, que é como o CI invoca, ele levanta
+na coleta e derruba a suíte INTEIRA.
+
+Medido, não suposto: `pytest tests/ -q` saiu com "Interrupted: 1 error during
+collection" e zero testes rodados, enquanto `python -m pytest tests/ -q` dava 468
+verdes na mesma árvore. Achado rodando as duas invocações de propósito, antes de
+commitar — é a segunda vez que esta classe de defeito aparece no repositório, e a
+primeira foi o que motivou o CI existir (ver o cabeçalho de
+`.github/workflows/ci.yml`).
+
+Custo se errado: nenhum; o import relativo é correto dentro de um pacote de teste
+que tem `__init__.py`.
+
+## P6.9. As "três inversões" do §2.1 são 23 arestas e 5 causas — e uma delas não era dependência
+
+A auditoria por leitura identificou três inversões. O teste, medindo, encontrou
+**23 arestas ilegais** em 5 causas, sendo 14 delas uma só: tipos de domínio
+dentro de kernel, runtime, agent, human e evaluation.
+
+Correção ao que a auditoria afirmava: a **inversão 1 não é problema de
+dependência, é de localização**. `workflow/resolver.py` importar `Cost` de
+`agent/proposal.py` só é ilegal porque `Cost` está no diretório errado — não há
+acoplamento a desfazer, o PR #2 é literalmente mover o arquivo. Por isso o teste
+separa `violacoes()` de `deslocados()`: sem a separação, um PR que só move
+arquivo pareceria ter consertado acoplamento.
+
+Consequência para o roadmap: confirma a ordem escolhida por aritmética, não por
+cautela — 14 das 23 arestas fecham nos PRs #3 e #4, que são a de-domainização do
+kernel.
