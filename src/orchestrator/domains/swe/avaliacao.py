@@ -43,6 +43,7 @@ from orchestrator.evaluation.case import (
     ExpectedOutcome,
     Provenance,
 )
+from orchestrator.evaluation.confusao import confundir
 from orchestrator.evaluation.waste import EconomiaDeFerramentas
 from orchestrator.kernel.definition import Task, WorkflowDefinition
 from orchestrator.kernel.work import WorkItem
@@ -195,6 +196,17 @@ def render(
     partes = [resultado.render(), ""]
     if runs:
         partes += ["--- por dificuldade ---", por_dificuldade(runs, model), ""]
+        for label, run in runs.items():
+            # No estrato ADVERSARIAL, que é onde os erros vivem. A matriz do
+            # conjunto inteiro seria dominada pelos 30 fáceis, todos na
+            # diagonal, e o padrão que interessa ficaria diluído.
+            partes += [
+                f"--- confusão no adversarial: {label} ---",
+                confundir(
+                    run, conjunto("adversarial"), abstem_com=ABSTEM_COM
+                ).render(),
+                "",
+            ]
     for label, economia in economias.items():
         partes += [f"--- economia de ferramenta: {label} ---", economia.render(), ""]
     if len(resultado.arms) == 2:
