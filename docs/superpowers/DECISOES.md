@@ -561,3 +561,65 @@ lacuna 3.6%; depois de aceitar `d-b-b00003` em `/fila.html?...&n=30`, o
 MESMO canvas (`/?...&n=30`, recarregado) mostrou `revisor` HUMANO 3.6% e
 lacuna 0.0%. O passo 3 do roteiro da Task 10, que na primeira rodada só
 tinha sido confirmado mecanicamente (via API), passou a se ver na tela.
+
+---
+
+# Plano 5 — grill de conciliação
+
+A Task 10 (a última da fatia) é a única do plano com incerteza técnica real —
+se ligar a entrevista a um modelo de verdade pelo SDK do Claude Code ou pela
+chave de API. **1 decisão**, registrada com o mesmo critério das seções
+anteriores.
+
+---
+
+## P5.1. Task 10 — a única desta fatia, e a que o plano previu como incerta
+
+Sondado (Step 1 do brief) contra `claude-agent-sdk` instalado e importável:
+`dir(claude_agent_sdk)` só expõe `ClaudeSDKClient` e `query`; a assinatura de
+`ClaudeSDKClient.query` é `(self, prompt: str | AsyncIterable[dict], session_id:
+str = "default") -> None`, e o `query()` de nível de módulo tem a mesma forma
+de `prompt` sem parâmetro de histórico nem de ferramentas por chamada. Nenhum
+dos dois aceita `messages`/`tools` explícitos por chamada nem devolve um
+turno cru do assistente com `tool_calls` NÃO executadas — o contrato exato
+que `LLMClient.complete(system, messages, tools) -> LLMResponse` exige (é o
+que permite ao entrevistador interceptar a pergunta "Pergunta" ANTES de
+qualquer execução, pausar para o humano, e só então fechar o turno).
+`ClaudeSDKClient` até preserva histórico entre chamadas (`connect()` +
+`query()`/`receive_response()` repetidos), mas esse histórico mora dentro do
+processo do Claude Code que o SDK sobe, amarrado a um `session_id` — nunca
+numa lista que o chamador replica, inspeciona e devolve. Ferramentas no SDK
+são um servidor MCP com handlers que o PRÓPRIO SDK executa; não há ponto em
+que o chamador receba uma `tool_call` pendente para decidir o que fazer com
+ela.
+
+**Decisão:** `ClienteAssinatura` (`src/orchestrator/grill/assinatura.py`) é
+um alias documentado do cliente de chave de API (`AnthropicClient`,
+`src/orchestrator/agent/anthropic_client.py`) — mesma classe, sem lógica
+nova. O comentário no topo do módulo carrega a sonda completa (comandos e
+saída) para quem precisar reabrir esta decisão numa versão futura do SDK.
+
+Alternativa tentada e descartada: reproduzir o laço da entrevista sobre
+`ClaudeSDKClient`, registrando a ferramenta "Pergunta" como handler MCP
+assíncrono que chama `responder()` (o humano) por dentro do próprio handler.
+Tecnicamente chega ao mesmo lugar em alguns casos, mas inverte quem manda no
+laço — o controle passaria a viver dentro do handler da ferramenta, dentro
+do SDK, em vez de em `entrevistador.py` — e exigiria abandonar o contrato
+`messages`/`tools` por chamada que TODO `LLMClient` promete, inclusive o
+`FakeLLMClient` que prova o laço inteiro sem rede hoje. O brief desta tarefa
+proíbe exatamente isso: a escolha do Step 1 muda uma classe, nenhum outro
+arquivo. Mesmo desfecho, por razão análoga, ao que P2.27 já registrou para o
+Investigador (o `InvestigadorAssinatura` de `eval/assinatura.py` também usa o
+SDK, mas ali o histórico entre turnos de FERRAMENTA fica por conta do laço
+INTERNO do SDK — o investigador não tem um humano no meio para interceptar,
+só a divergência e a resposta final; a entrevista tem, e é essa diferença
+que fecha a porta aqui).
+
+Custo se errado: se uma versão futura do `claude-agent-sdk` expuser um
+cliente com a forma que falta, a troca é conter em
+`grill/assinatura.py` — nenhum outro arquivo do grill conhece o SDK
+(`entrevistador.py` fala só com `LLMClient`, provado por
+`test_o_entrevistador_nao_importa_o_sdk`). Consequência prática enquanto
+isso não muda: `orchestrator-grill` gasta crédito de API por chave
+(`ANTHROPIC_API_KEY`), não a assinatura pessoal do Claude Code — apesar do
+nome do módulo, herdado do vocabulário do plano.
