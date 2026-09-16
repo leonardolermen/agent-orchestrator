@@ -15,8 +15,9 @@ e a execução — e um desenho que não corresponde ao motor é a decoração q
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
+from orchestrator.kernel.policy import ExecutionPolicy
 from orchestrator.kernel.resolver import Resolver
 
 
@@ -24,6 +25,11 @@ from orchestrator.kernel.resolver import Resolver
 class Stage:
     name: str
     cascade: tuple[Resolver, ...]
+    # A política deste stage. O default reproduz EXATAMENTE o comportamento
+    # anterior ao M3: teto na classe mais cara, autonomia PROPOR, sem predicado
+    # e sem razão de custo. É por isso que o motor de política entra sem mudar
+    # um único número.
+    policy: "ExecutionPolicy" = field(default_factory=lambda: ExecutionPolicy())
 
     def ordered(self) -> list[Resolver]:
         """A cascata na ordem em que roda.
@@ -39,6 +45,7 @@ def Task(  # noqa: N802 — é um construtor, e o nome é o do conceito
     *,
     resolver: Resolver | None = None,
     cascade: tuple[Resolver, ...] | list[Resolver] | None = None,
+    policy: ExecutionPolicy | None = None,
 ) -> Stage:
     """Açúcar: `Task(resolver=x)` é `Stage(cascade=(x,))`.
 
@@ -53,7 +60,11 @@ def Task(  # noqa: N802 — é um construtor, e o nome é o do conceito
     """
     if (resolver is None) == (cascade is None):
         raise ValueError("Task exige `resolver` OU `cascade`, exatamente um")
-    return Stage(name=name, cascade=(resolver,) if resolver else tuple(cascade))
+    return Stage(
+        name=name,
+        cascade=(resolver,) if resolver else tuple(cascade),
+        policy=policy or ExecutionPolicy(),
+    )
 
 
 @dataclass(frozen=True)
@@ -86,5 +97,10 @@ class WorkflowDefinition:
                 for s in self.stages
             ],
         ]
+        # A POLÍTICA não entra na versão, e é deliberado: ela é variável de
+        # EXPERIMENTO (§14.4). Rodar o mesmo workflow com duas políticas tem de
+        # produzir a mesma `workflow_version`, ou o benchmark compararia dois
+        # workflows em vez de duas políticas. A política vai no `Run`, por
+        # `PolicyDecision`, que é onde ela é observável.
         bruto = json.dumps(forma, ensure_ascii=False, sort_keys=True)
         return hashlib.sha256(bruto.encode("utf-8")).hexdigest()[:12]

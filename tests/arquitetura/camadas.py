@@ -109,6 +109,7 @@ DESTINO: dict[str, str] = {
     "conciliacao": "domains",
     "conciliacao.workflow": "domains",
     "conciliacao.ferramentas": "domains",
+    "conciliacao.politica": "domains",
     "matching.exact": "domains",
     "matching.tolerance": "domains",
     "matching.grouping": "domains",
