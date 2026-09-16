@@ -1270,3 +1270,50 @@ Camada `authoring`: o registro precisa conhecer as duas fontes — o embutido
 
 Custo se errado: um módulo a mais na raiz do pacote até a migração para
 `authoring/`. A catraca já registra isso como "deslocado".
+
+## P6.36. PR #9 — `build_benchmark` nunca foi código de CLI
+
+A inversão nº 3 (`api.app -> cli`) fecha movendo uma função, não criando uma
+abstração. `build_benchmark` é o gerador do dataset com gabarito; ele morava em
+`cli.py` só porque a CLI foi o primeiro chamador. A camada HTTP importar do
+ponto de entrada de linha de comando era consequência disso, não causa.
+
+Foi para `synth/benchmark.py`, junto do resto do gerador sintético.
+
+Custo se errado: nenhum. É rename com atualização de import, e `cli.py` ficou
+com 30 linhas — só o `main()`, que é o que um ponto de entrada deve ter.
+
+## P6.37. `Source` entra, parser de OFX não
+
+O `Source` é a costura; formato bancário real está fora do escopo desde §1.3.
+Duas coisas diferentes, e vale separá-las:
+
+**O que o `Source` resolve, e não é ler arquivo:** a identidade de uma execução.
+Antes, ela era a tupla `(seed, n, taxa)` — e era ela que escopava a fila de
+decisões humanas via `dataset_id`. Um framework cujo id de execução é uma tupla
+de parâmetros de benchmark não consegue representar execução nenhuma que não
+seja um benchmark, e um domínio novo não tem de onde receber trabalho sem
+inventar um segundo `build_benchmark`.
+
+**O que fica de fora:** OFX, CNAB, CSV de razão. Quem tiver o dado escreve um
+`Source` de 40 linhas — e é essa a promessa do framework, não uma tarefa dele.
+
+`SyntheticSource` tem `dataset()` além de `load()`, e a separação é deliberada:
+`load()` devolve só o trabalho, `dataset()` devolve o gabarito. O motor recebe o
+primeiro; a avaliação, o segundo. Um `Source` de dado real não tem o segundo
+método — e é por isso que `metrics.evaluate` continua exigindo um `Dataset` em
+vez de um `Source`.
+
+Custo se errado: um protocolo de dois membros sem segunda implementação. É a
+mesma aposta de `LLMClient` no plano 2, que se pagou.
+
+## P6.38. O `ref` vem da fonte, não montado no chamador
+
+`api/app.py` construía `input_ref=f"synth:{dataset_id(seed, n, taxa)}"`. Agora
+lê `fonte.ref`.
+
+São duas expressões que precisariam concordar sobre o formato de um id —
+exatamente o join frágil que P3.2 já custou uma correção, e que o `enum` do
+grill derivado do `CATALOGO` evita pelo mesmo motivo.
+
+Custo se errado: nenhum; o formato passa a ter um dono.

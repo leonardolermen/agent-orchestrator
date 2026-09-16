@@ -1,6 +1,5 @@
 from random import Random
 
-from orchestrator.cli import build_benchmark
 from orchestrator.conciliacao import default_resolvers, reconcile
 from orchestrator.kernel.cost import Cost, CostClass
 from orchestrator.kernel.definition import Stage, WorkflowDefinition
@@ -10,6 +9,7 @@ from orchestrator.kernel.work import WorkSet
 from orchestrator.metrics import evaluate
 from orchestrator.models import abstencao, banco, contabil, divergencias
 from orchestrator.money import format_brl
+from orchestrator.synth.benchmark import build_benchmark
 from orchestrator.synth.generator import build_dataset, generate_clean_pairs
 from orchestrator.synth.injectors import DefasagemTemporal, PagamentoAgregado
 

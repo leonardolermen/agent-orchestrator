@@ -34,9 +34,9 @@ def test_definicao_padrao_inclui_o_revisor_por_ultimo():
 def test_definicao_padrao_sem_fila_nao_resolve_nada_pelo_revisor():
     # Sem fila, o revisor existe na cascata e é inerte. É isso que mantém a
     # CLI e o golden exatamente como estavam.
-    from orchestrator.cli import build_benchmark
     from orchestrator.conciliacao import reconcile
     from orchestrator.kernel.cost import CostClass as C
+    from orchestrator.synth.benchmark import build_benchmark
 
     ds = build_benchmark(seed=1, n=60, taxa_divergencia=0.15)
     r = reconcile(ds.bank, ds.ledger)

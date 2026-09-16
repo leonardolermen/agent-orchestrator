@@ -307,7 +307,7 @@ def test_resposta_da_decisao_aceita_reflete_veredito_e_lancamentos_por_lado():
     # Sem isto, trocar `descricao=e.account` por `descricao=e.supplier` em
     # `_do_contabil` (ou o equivalente do lado banco) passa a suíte inteira —
     # e é exatamente o que a Task 9 (tela da fila) vai renderizar.
-    from orchestrator.cli import build_benchmark
+    from orchestrator.synth.benchmark import build_benchmark
 
     ds = build_benchmark(seed=1, n=30, taxa_divergencia=0.15)
     banco = next(e for e in ds.bank if e.id == "b00003")

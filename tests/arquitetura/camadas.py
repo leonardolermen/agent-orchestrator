@@ -108,6 +108,11 @@ DESTINO: dict[str, str] = {
     # `ToolContext` busca lançamento contábil e calcula retenção de imposto.
     # É ferramenta DE CONCILIAÇÃO, não do runtime de agente.
     "agent.tools": "domains",
+    # `build_benchmark` saiu de `cli.py` no PR #9. Nunca foi codigo de CLI: e o
+    # gerador do dataset com gabarito, e morava la so porque a CLI foi o
+    # primeiro chamador. Era a inversao nº 3 do §2.1 — a camada HTTP importando
+    # do ponto de entrada de linha de comando.
+    "synth.benchmark": "domains",
     "synth.dataset": "domains",
     "synth.generator": "domains",
     "synth.injectors": "domains",

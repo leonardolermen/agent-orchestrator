@@ -26,7 +26,6 @@ from orchestrator.api.schemas import (
     WorkflowResumoJSON,
     workflow_json,
 )
-from orchestrator.cli import build_benchmark
 from orchestrator.conciliacao import reconcile
 from orchestrator.grill.registro import listar_receitas
 from orchestrator.kernel.cost import Cost, CostClass
@@ -35,6 +34,7 @@ from orchestrator.metrics import evaluate
 from orchestrator.review.decision import Decision, Veredito, ids_de_conciliar_com
 from orchestrator.review.fila import Fila, caminho_da_fila, dataset_id
 from orchestrator.storage.jsonl.run_store import JsonlRunStore
+from orchestrator.synth.benchmark import SyntheticSource, build_benchmark
 from orchestrator.taxonomy import DivergenceType
 from orchestrator.workflows import (
     WorkflowContext,
@@ -118,7 +118,8 @@ def _executar(workflow_id: str, seed: int, n: int, taxa: float) -> RunJSON:
     gasta em tokens. É isso que torna seguro um endpoint que qualquer F5
     dispara.
     """
-    dataset = build_benchmark(seed=seed, n=n, taxa_divergencia=taxa)
+    fonte = SyntheticSource(seed=seed, n=n, taxa_divergencia=taxa)
+    dataset = fonte.dataset()
     fila, _ = _abrir_fila(workflow_id, seed, n, taxa)
     definicao = construir_definicao(
         registry(_RAIZ_RECEITAS)[workflow_id], WorkflowContext(fila=fila)
@@ -144,7 +145,9 @@ def _executar(workflow_id: str, seed: int, n: int, taxa: float) -> RunJSON:
         dataset.bank,
         dataset.ledger,
         definition=definicao,
-        input_ref=f"synth:{dataset_id(seed, n, taxa)}",
+        # O `ref` vem da FONTE, não montado aqui: duas expressões que precisam
+        # concordar sobre o formato de um id são o join frágil de sempre.
+        input_ref=fonte.ref,
     )
     # O run vai para o store ANTES de qualquer projeção para JSON: o que a tela
     # mostra é derivado, o que o store guarda é o fato.
