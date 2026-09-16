@@ -4,63 +4,74 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Compor cascata — Agent Orchestrator</title>
-  <meta name="description" content="Compor uma cascata de resolvers. A ordem é derivada da classe de custo, não escolhida.">
+  <meta name="description" content="Canvas de composição: os nós são seus, as setas são derivadas da classe de custo.">
   <link rel="stylesheet" href="/style.css">
   <link rel="stylesheet" href="/compor.css">
 </head>
-<body>
-  <header>
-    <h1>Compor uma cascata</h1>
-    <p class="proveniencia">
-      Escolha <strong>quais</strong> resolvers entram. A ordem <strong>entre
-      classes de custo</strong> não é sua: do mais barato ao mais caro, e não existe
-      entrada que a inverta. <strong>Dentro</strong> de uma classe, vale a ordem em
-      que você acrescentou — <code>sorted</code> é estável, e o motor respeita a
-      mesma coisa.
-    </p>
-    <a class="link-outro" href="/">← Ver a cascata em execução</a>
+<body class="app">
+
+  <header class="barra">
+    <div class="titulo">
+      <h1>Compor cascata</h1>
+      <p class="proveniencia">
+        Arraste os nós onde quiser. As <strong>setas</strong> não são suas: elas
+        seguem a classe de custo, do mais barato ao mais caro.
+      </p>
+    </div>
+    <div class="identidade">
+      <input id="campo-id" placeholder="id: conciliacao-cliente-x" autocomplete="off" spellcheck="false">
+      <input id="campo-nome" placeholder="nome" autocomplete="off">
+      <button id="salvar" type="button" disabled>Compor e validar</button>
+    </div>
+    <a class="link-outro" href="/">← cascata em execução</a>
   </header>
 
-  <main id="compositor">
-    <section id="paleta" aria-labelledby="h-paleta">
-      <h2 id="h-paleta">Disponíveis</h2>
-      <p class="ajuda">Clique para acrescentar. Cada um entra uma vez só.</p>
-      <ul id="catalogo" class="cartoes"></ul>
-    </section>
+  <main class="palco">
 
-    <section id="cascata" aria-labelledby="h-cascata">
-      <h2 id="h-cascata">A cascata</h2>
-      <p class="ajuda" id="ajuda-cascata">
-        Vazia. Uma cascata sem resolver não resolve nada.
+    <section class="canvas" id="canvas" aria-label="Canvas da cascata">
+      <svg id="arestas" aria-hidden="true">
+        <defs>
+          <marker id="seta" viewBox="0 0 10 10" refX="9" refY="5"
+                  markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" />
+          </marker>
+        </defs>
+      </svg>
+      <div id="nos"></div>
+      <p class="vazio" id="vazio">
+        Canvas vazio. Acrescente um resolver pela paleta →<br>
+        <small>Uma cascata sem resolver não resolve nada.</small>
       </p>
-      <ol id="escolhidos" class="cartoes"></ol>
-      <p class="custo" id="resumo-custo"></p>
+      <p class="rodape-canvas" id="processo"></p>
     </section>
 
-    <section id="identidade" aria-labelledby="h-identidade">
-      <h2 id="h-identidade">Identidade</h2>
-      <label>id
-        <input id="campo-id" placeholder="conciliacao-cliente-x" autocomplete="off">
-      </label>
-      <label>nome
-        <input id="campo-nome" placeholder="Conciliação do cliente X" autocomplete="off">
-      </label>
-      <label>por que esta cascata
-        <textarea id="campo-justificativa" rows="3"
-          placeholder="O que esta composição tenta resolver que a padrão não resolve."></textarea>
-      </label>
-      <button id="salvar" type="button" disabled>Compor e validar</button>
+    <aside class="painel">
+      <section class="bloco">
+        <h2>Cascata</h2>
+        <p class="ajuda">Clique para acrescentar. Cada um entra uma vez só.</p>
+        <ul id="catalogo" class="paleta"></ul>
+      </section>
+
+      <section class="bloco" id="inspetor" hidden>
+        <h2 id="inspetor-nome">—</h2>
+        <p class="ajuda" id="inspetor-resumo"></p>
+        <div id="inspetor-parametros"></div>
+        <button id="remover" type="button" class="perigo">remover da cascata</button>
+      </section>
+
+      <section class="bloco custo" id="resumo-custo"></section>
       <p id="erro" class="erro" role="alert"></p>
-    </section>
 
-    <section id="resultado" aria-labelledby="h-resultado" hidden>
-      <h2 id="h-resultado">Como ela vai rodar</h2>
-      <p class="ajuda">
-        Isto não é o que você desenhou: é a definição <strong>construída</strong>,
-        na ordem em que o motor vai executar.
-      </p>
-      <div id="construida"></div>
-    </section>
+      <section class="bloco" id="resultado" hidden>
+        <h2>Como ela vai rodar</h2>
+        <p class="ajuda">
+          A definição <strong>construída</strong> pelo servidor — não o que você
+          desenhou.
+        </p>
+        <ol id="construida" class="paleta"></ol>
+      </section>
+    </aside>
+
   </main>
 
   <noscript>Esta página precisa de JavaScript para compor a cascata.</noscript>

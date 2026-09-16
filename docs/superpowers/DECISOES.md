@@ -2300,6 +2300,11 @@ continua pagando.**
 
 ### P6.96. A ordem NÃO é um campo, e é isso que impede a tela de virar decoração
 
+> **Atualizado.** A primeira versão desta tela era uma LISTA. O dono pediu um
+> canvas de nós, como o do CrewAI — e isso não enfraquece nada do que está
+> abaixo, porque a garantia mora no servidor. O que mudou foi o desenho; o que
+> permaneceu foi que a ordem não é um campo. Ver P6.99.
+
 O §3.5 nomeia o modo de falha de um canvas de autoria: **decoração** — desenhar
 uma coisa e executar outra. A defesa aqui não é visual, é estrutural:
 
@@ -2346,3 +2351,58 @@ domínio é código tipado").
 
 Quando um domínio novo precisar de um resolver novo, ele entra no `CATALOGO`
 por código, com teste — e aparece na paleta sozinho.
+
+### P6.99. O canvas de nós: as arestas são SAÍDA, não entrada
+
+Pedido do dono, com referência visual: um canvas como o do CrewAI — nós, setas,
+arraste, paleta lateral. A primeira versão era uma lista, e lista não é o que
+ele pediu.
+
+**A diferença que faz este canvas ser honesto, e que é argumento de produto e
+não concessão:** num editor de fluxo de agentes convencional, *você desenha as
+setas* e a execução tenta seguir o desenho. Aqui a seta é **derivada**. Você
+posiciona os nós onde quiser; a flecha aponta sempre na ordem em que a cascata
+roda — `Stage.ordered()`, por classe de custo.
+
+Não há como desenhar uma aresta. Arrastar um nó para "antes" de outro reposiciona
+o nó e **não muda a seta**: ela volta a apontar no mesmo sentido, agora para
+cima. Isso parece estranho na primeira vez e é o ponto — a regra fica visível
+exatamente quando alguém tenta furá-la.
+
+Verificado dirigindo a página: arrastei o `revisor` de y=552 para y=12, acima do
+`L1`, e a última aresta continuou terminando nele. A seta aponta para cima e
+continua dizendo "é ele que roda por último".
+
+**O que a tela ganha de um canvas de nós que a lista não dava:** a transição
+entre classes de custo tem nome na aresta ("o que sobrou"), e é ali que a
+cascata age. Numa lista, isso era ordem vertical e nada mais.
+
+### P6.100. TRÊS defeitos que só a tela mostrou
+
+Rodar a página achou o que 753 testes não achariam, e os três são da mesma
+família: **o DOM estava certo e a tela estava errada.**
+
+1. **Nó invisível.** O auto-layout posicionava por índice só quem ainda não
+   tinha posição. Acrescentar `revisor` (índice 0) e depois `L1` (que VIRA
+   índice 0) dava a mesma coordenada aos dois. O `L1` existia no DOM, com os
+   atributos certos — e estava atrás do `revisor`. Nenhuma asserção sobre
+   "existe no DOM" falharia.
+
+   Corrigido com `fixado`: o nó reflui sozinho na ordem de execução até alguém
+   arrastá-lo; a partir daí é da pessoa.
+
+2. **`hidden` perdendo para `display: grid`.** O texto "Canvas vazio" tinha o
+   atributo `hidden` corretamente aplicado — e continuava visível atrás dos
+   nós, porque `.vazio { display: grid }` vence o `display: none` que o
+   atributo aplica. Um teste que checasse `elemento.hidden === true` passaria.
+
+3. **Parâmetro estourando o cartão.** `budget_total_microcents=400000000`
+   vazava para fora do nó. Truncado com reticências; o valor exato vive no
+   inspetor, onde dá para editá-lo.
+
+Sexto, sétimo e oitavo defeitos deste projeto achados por EXECUÇÃO. Os cinco
+primeiros foram sobre custo ou sobre o que produziu o custo; estes três são
+sobre renderização, e apontam a mesma lacuna por outro lado: **não há teste de
+tela neste projeto, e não vai haver por enquanto.** O substituto declarado é
+dirigir a página no navegador antes de dizer que ela está pronta — foi o que
+achou os três.

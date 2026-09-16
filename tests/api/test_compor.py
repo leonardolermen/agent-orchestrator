@@ -196,15 +196,30 @@ def test_a_pagina_do_compositor_e_servida():
     r = cliente.get("/compor.html")
 
     assert r.status_code == 200
-    assert 'id="catalogo"' in r.text
+    # Os três pontos de montagem em que `compor.js` escreve. Sem qualquer um
+    # deles a página carrega e não desenha nada.
+    for ancora in ('id="catalogo"', 'id="nos"', 'id="arestas"'):
+        assert ancora in r.text
     assert "compor.js" in r.text
 
 
-def test_a_pagina_DIZ_que_a_ordem_nao_e_do_autor():
-    """A restrição mais importante da tela precisa estar escrita nela, não só
-    no código. Quem abre o compositor tem de entender em dez segundos por que
-    não há como arrastar para reordenar."""
-    texto = cliente.get("/compor.html").text
+def test_a_pagina_DIZ_que_as_SETAS_nao_sao_do_autor():
+    """A restrição mais importante da tela precisa estar escrita NELA.
 
-    assert "ordem" in texto.lower()
-    assert "classe de custo" in texto.lower()
+    Num canvas de nós, a expectativa que o usuário traz de outras ferramentas é
+    que ele desenha as arestas. Aqui elas são derivadas, e quem abre precisa
+    entender isso em dez segundos — ou vai passar a sessão tentando arrastar
+    uma seta que não existe.
+    """
+    texto = cliente.get("/compor.html").text.lower()
+
+    assert "setas" in texto
+    assert "classe de custo" in texto
+
+
+def test_a_pagina_tem_o_marcador_de_SETA_do_svg():
+    """As arestas são `<path marker-end="url(#seta)">`. Sem o `<marker>` no
+    `<defs>`, elas desenham como linha sem ponta — e uma linha sem ponta não
+    diz em que sentido a cascata corre, que é a única coisa que ela precisa
+    dizer."""
+    assert 'id="seta"' in cliente.get("/compor.html").text
