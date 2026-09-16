@@ -1950,3 +1950,83 @@ apenas o tornou visível, que é para isso que ela existe. Fica anotado e não
 corrigido neste PR: mudar o vocabulário do `swe` junto com a entrega do M6
 misturaria duas coisas, e o número de hoje é o que serve de linha de base para a
 mudança.
+
+## M8 — Tripulação
+
+### P6.78. Concordância une evidência e NÃO eleva confiança
+
+É o ponto mais contraintuitivo do módulo. No modo sequencial o agente 2 LEU a
+resposta do agente 1 antes de responder — eles não são independentes, então
+concordar é em parte ancoragem, não corroboração. Elevar a confiança venderia
+como evidência aquilo que o próprio desenho do modo produz.
+
+A confiança final é a MENOR entre os que concordaram.
+
+Alternativa rejeitada: somar ou promover confiança com acordo, que é o que a
+intuição pede. Custo de estar errado: o produto passaria a emitir ALTA confiança
+com frequência crescente conforme se acrescentam agentes, e confiança alta é
+exatamente o que faz um revisor parar de olhar.
+
+### P6.79. Voto ponderado por confiança está FORA, e continua fora
+
+Confiança de LLM não é calibrada. Ponderar por ela daria autoridade a um número
+que o M6 ainda não mediu se significa alguma coisa. Quando medir, a decisão se
+revisita com dado.
+
+### P6.80. Desacordo é informação, e é o default
+
+Duas leituras plausíveis viram abstenção COM as duas hipóteses na evidência. O
+humano que receber o item precisa saber que houve divergência e qual foi — senão
+a tripulação custou dinheiro para produzir um "não sei" idêntico ao de um agente
+sozinho.
+
+Maioria é a alternativa barata e ela APAGA essa informação; por isso não é o
+default. Empate por maioria cai em abstenção, porque empate por maioria é
+abstenção com passos extras.
+
+### P6.81. MEDIDO — a tripulação NÃO se paga neste domínio
+
+O §10.5 dizia que "Crew vale o custo?" viraria uma linha na tabela de benchmark
+em vez de opinião. Virou:
+
+    braço                 precisão   abst.   US$/acerto
+    agente-sozinho          100,0%   20,0%     0,003488
+    tripulacao-2            100,0%   40,0%     0,011611
+
+**2,1x por acerto para a mesma precisão.** E a tripulação abstém o DOBRO — em
+duas das três execuções ela converteu uma resposta em "não sei" por desacordo
+interno, o que é a política funcionando e ainda assim é uma resposta a menos.
+
+Ressalva que o próprio veredito imprime: com cinco casos, um acerto vale vinte
+pontos, e entre execuções o agente sozinho variou de 75% a 100%. Isto indica
+direção; não decide. A próxima pergunta é o mesmo par sobre um conjunto maior —
+não remover o Crew.
+
+**O valor de ter construído não é a tripulação; é a resposta.** Nenhum framework
+de agentes responde essa pergunta sobre si mesmo, porque responder exige conjunto
+de avaliação, custo por proposta correta e braço de contrafactual — as três
+coisas do M6.
+
+### P6.82. ACHADO — o Crew descartava o trace dos agentes
+
+A primeira execução ao vivo da tripulação reportou "nenhuma ferramenta foi
+chamada" num braço cujos agentes têm `contar_palavras` e a chamaram seis vezes.
+Causa: as propostas finais do Crew copiavam o trace DELE e não o dos agentes.
+Custo saía certo; observabilidade saía vazia.
+
+Não foi um teste que achou — foi o relatório de economia da avaliação. É a
+terceira vez neste projeto que rodar acha o que a suíte não achou, e as três
+vezes foram sobre custo ou sobre o que produziu o custo.
+
+Corrigido com `trace.extend(p.trace)` nos dois modos, mais um teste que compara
+`p.cost.calls` com a contagem de eventos de LLM — se os dois divergirem de novo,
+falha.
+
+### P6.83. ACHADO — o veredito casava por rótulo e sumiu quando os rótulos mudaram
+
+`_veredito` procurava `"com-ferramenta"`/`"sem-ferramenta"`. Com os braços de
+tripulação, ele simplesmente não saiu — e a frase que ele imprime é justamente a
+ressalva sobre tamanho de amostra. Ausência de ressalva lê-se como ausência de
+ressalva, no experimento mais fácil de sobreinterpretar.
+
+Agora é genérico em qualquer par de braços, e tem teste.

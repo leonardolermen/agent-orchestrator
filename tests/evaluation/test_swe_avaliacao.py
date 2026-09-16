@@ -141,7 +141,8 @@ def test_o_veredito_NAO_conclui_mais_do_que_cinco_casos_permitem():
 
     saida = avaliacao.render(resultado, economias)
 
-    assert "indício, não prova" in saida or "amostra pequena" in saida
+    assert "Com 5 casos, um acerto vale 20 pontos" in saida
+    assert "indica direção, não decide" in saida
 
 
 def test_a_ferramenta_aparece_como_CANDIDATO_quando_chamada_em_todo_item():
@@ -159,3 +160,56 @@ def test_modelo_que_erra_derruba_a_precisao_do_braco_certo():
     resultado, _ = _rodar(_ModeloFalso(errado))
 
     assert resultado.por_label()["com-ferramenta"].proposal_precision < 1.0
+
+
+def test_o_veredito_sai_para_QUALQUER_par_de_bracos():
+    """A primeira versão casava pelos rótulos `com-ferramenta`/`sem-ferramenta`,
+    e quando os braços de tripulação entraram o veredito simplesmente não saiu
+    — a ressalva sobre tamanho de amostra ficou ausente justamente no
+    experimento mais fácil de sobreinterpretar.
+
+    Ausência de ressalva lê-se como ausência de ressalva.
+    """
+    cliente = _ModeloFalso(GABARITO)
+    resultado, economias = executar(
+        avaliacao.conjunto(),
+        avaliacao.bracos_tripulacao(cliente),
+        cliente,
+        abstem_com=avaliacao.ABSTEM_COM,
+        agora=AGORA,
+    )
+
+    saida = avaliacao.render(resultado, economias)
+
+    assert "Com 5 casos" in saida
+    assert "agente-sozinho" in saida or "tripulacao-2" in saida
+
+
+def test_o_veredito_avisa_que_abstencao_a_mais_NAO_e_precisao_conquistada():
+    """Medido ao vivo: a tripulação chegou a 100% de precisão abstendo em 40%
+    dos casos, contra 20% do agente sozinho. Ler só a coluna de precisão faria
+    parecer que ela ganhou."""
+    from orchestrator.domains.swe.avaliacao import _veredito
+    from orchestrator.evaluation.benchmark import BenchmarkArm, BenchmarkResult
+
+    def m(precisao, abst, por_acerto):
+        from orchestrator.evaluation.metrics import EvalMetrics
+
+        return EvalMetrics(
+            dataset_version="v", items_total=5, deterministic_rate=0.0,
+            resolution_rate=0.0, false_positives=0, false_negatives=0,
+            proposal_precision=precisao, abstention_rate=abst,
+            microcents_total=1, microcents_per_item=1,
+            microcents_per_correct_proposal=por_acerto, escalation_rate=0.0,
+            api_failures=0, proposals_total=5, proposals_correct=3,
+            proposals_abstained=2,
+        )
+
+    arm = BenchmarkArm(label="x", workflow=avaliacao.bracos(_ModeloFalso(GABARITO))[0].workflow)
+    arm2 = BenchmarkArm(label="y", workflow=arm.workflow)
+    r = BenchmarkResult(
+        dataset_id="d", dataset_version="v", at=AGORA,
+        arms=((arm, m(1.0, 0.4, 1000)), (arm2, m(1.0, 0.2, 400))),
+    )
+
+    assert "não foi arriscada, não precisão conquistada" in _veredito(r, {})

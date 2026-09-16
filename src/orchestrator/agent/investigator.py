@@ -193,7 +193,7 @@ class Investigator:
                     )
                 )
                 continue
-            p = self._agent._uma(
+            p = self._agent.investigar(
                 AgentTask(id=d.id, prompt=descrever_divergencia(self.context, d))
             )
             propostas.append(p)

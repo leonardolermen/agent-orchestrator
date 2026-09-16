@@ -195,12 +195,24 @@ class Agent:
                     )
                 )
                 continue
-            p = self._uma(tarefa)
+            p = self.investigar(tarefa)
             propostas.append(p)
             total = total + p.cost
         return ResolverOutput(proposals=propostas, cost=total)
 
-    def _uma(self, tarefa: AgentTask) -> Proposal:
+    def investigar(self, tarefa: AgentTask) -> Proposal:
+        """Um item, do prompt à proposta. O laço inteiro, para UMA tarefa.
+
+        Público desde o M8. Era `_uma`, e `resolve` era o único chamador — até
+        o `Crew` precisar rodar o mesmo laço com o prompt enriquecido pelo
+        `SharedContext`. A alternativa era o Crew chamar `resolve` por agente,
+        mas aí `AgentSpec.units` remontaria o prompt do payload e não haveria
+        onde injetar o que os agentes anteriores escreveram.
+
+        Tornar a costura pública é mais honesto que um Crew chamando `_uma` de
+        outro módulo: um sublinhado que dois módulos ignoram não protege nada,
+        só esconde quem depende de quê.
+        """
         mensagens: list[dict[str, Any]] = [{"role": "user", "content": tarefa.prompt}]
         custo, tentativas_formato = Cost.zero(), 0
         esquemas = self.tools.schemas()

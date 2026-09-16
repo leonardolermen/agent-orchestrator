@@ -33,6 +33,7 @@ from datetime import UTC, datetime
 from orchestrator.agent.agent import Agent
 from orchestrator.agent.llm import LLMClient
 from orchestrator.agent.tools.registry import ToolRegistry
+from orchestrator.crew import Crew
 from orchestrator.evaluation.case import (
     EvalDataset,
     EvaluationCase,
@@ -146,7 +147,41 @@ def bracos(client: LLMClient) -> tuple[BenchmarkArm, ...]:
     )
 
 
-def _definicao(wid: str, agente: Agent) -> WorkflowDefinition:
+def bracos_tripulacao(client: LLMClient) -> tuple[BenchmarkArm, ...]:
+    """Um agente contra uma tripulação de dois. A pergunta do M8.
+
+    O §10.5 diz que construir Crew antes do M6 seria construir uma capacidade
+    cara sem instrumento para saber se ela melhora alguma coisa. Este é o
+    instrumento: mesmo conjunto, mesmo prompt, mesmo modelo — só muda quantos
+    agentes olham o item.
+
+    Os dois agentes da tripulação são IDÊNTICOS de propósito. Um time de
+    especialistas diferentes mediria "prompt A vs prompt B vs tripulação" de
+    uma vez, e não responderia nenhuma. Idênticos, o experimento pergunta uma
+    coisa só: uma segunda passada, vendo a conclusão da primeira, muda alguma
+    resposta? Se não mudar, `CostClass.CREW` não se paga neste domínio — e
+    isso é resultado, não fracasso.
+    """
+    tripulacao = Crew(
+        name="dupla-triagem",
+        agents=(triador(client), triador(client)),
+        abstem_com=ABSTEM_COM,
+    )
+    return (
+        BenchmarkArm(
+            label="agente-sozinho",
+            workflow=_definicao("swe-agente", triador(client)),
+            model=client.model,
+        ),
+        BenchmarkArm(
+            label="tripulacao-2",
+            workflow=_definicao("swe-crew", tripulacao),
+            model=client.model,
+        ),
+    )
+
+
+def _definicao(wid: str, agente) -> WorkflowDefinition:
     return WorkflowDefinition(
         id=wid,
         name="Triagem de issue",
@@ -170,39 +205,60 @@ def render(resultado: BenchmarkResult, economias: dict[str, EconomiaDeFerramenta
     partes = [resultado.render(), ""]
     for label, economia in economias.items():
         partes += [f"--- economia de ferramenta: {label} ---", economia.render(), ""]
-
-    com = resultado.por_label().get("com-ferramenta")
-    sem = resultado.por_label().get("sem-ferramenta")
-    if com and sem:
-        partes.append(_veredito(com, sem, economias.get("com-ferramenta")))
+    if len(resultado.arms) == 2:
+        partes.append(_veredito(resultado, economias))
     return "\n".join(partes)
 
 
-def _veredito(com, sem, economia) -> str:
-    """A conclusão que o contrafactual autoriza, e só ela.
+def _veredito(resultado: BenchmarkResult, economias) -> str:
+    """A conclusão que o contrafactual autoriza, e SÓ ela.
 
-    Com cinco casos, uma diferença de um acerto é 20 pontos de precisão — e não
-    distingue sinal de ruído. Dizer "a ferramenta não serve" a partir disso
-    seria trocar um palpite por outro com aparência de medida.
+    Genérico nos rótulos de propósito. A primeira versão casava por
+    `"com-ferramenta"`/`"sem-ferramenta"`, e quando os braços de tripulação
+    entraram o veredito simplesmente não saiu — a frase sobre tamanho de
+    amostra ficou ausente exatamente no experimento mais fácil de
+    sobreinterpretar. Ausência de ressalva lê-se como ausência de ressalva.
     """
-    delta = com.proposal_precision - sem.proposal_precision
-    if economia and economia.usos:
-        fatia = 100 * economia.usos[0].fracao_de(economia.total_microcents)
-        custo = f"a ferramenta provocou {fatia:.0f}% do custo do braço com ela. "
-    else:
-        custo = ""
+    (a_arm, a), (b_arm, b) = resultado.arms
+    n = a.items_total
+    ponto = 100 / n if n else 0
+
+    def custo(m):
+        return m.microcents_per_correct_proposal
+
+    linhas = []
+    delta = a.proposal_precision - b.proposal_precision
     if abs(delta) < 1e-9:
-        return (
-            f"MESMA precisão nos dois braços. {custo}"
-            f"Com {com.items_total} casos isto é indício, não prova: a próxima "
-            f"pergunta é rodar o mesmo par sobre um conjunto maior, não remover "
-            f"a ferramenta."
+        linhas.append(f"MESMA precisão nos dois braços ({100 * a.proposal_precision:.0f}%).")
+    else:
+        melhor = a_arm.label if delta > 0 else b_arm.label
+        linhas.append(
+            f"{melhor} acertou {abs(delta) * n:.0f} caso(s) a mais "
+            f"({100 * a.proposal_precision:.0f}% x {100 * b.proposal_precision:.0f}%)."
         )
-    melhor = "com" if delta > 0 else "sem"
-    return (
-        f"O braço {melhor}-ferramenta acertou {abs(delta) * com.items_total:.0f} "
-        f"caso(s) a mais. {custo}"
-        f"Com {com.items_total} casos, um acerto vale "
-        f"{100 / com.items_total:.0f} pontos — amostra pequena demais para "
-        f"decidir; serve para dizer onde olhar."
+    if a.abstention_rate != b.abstention_rate:
+        mais, menos = (
+            (a_arm.label, b_arm.label)
+            if a.abstention_rate > b.abstention_rate
+            else (b_arm.label, a_arm.label)
+        )
+        linhas.append(
+            f"{mais} se absteve mais que {menos} "
+            f"({100 * max(a.abstention_rate, b.abstention_rate):.0f}% x "
+            f"{100 * min(a.abstention_rate, b.abstention_rate):.0f}%) — abstenção "
+            f"a mais é precisão que não foi arriscada, não precisão conquistada."
+        )
+    if custo(a) and custo(b):
+        caro, barato = sorted(
+            ((a_arm.label, custo(a)), (b_arm.label, custo(b))), key=lambda x: -x[1]
+        )
+        linhas.append(
+            f"{caro[0]} custa {caro[1] / barato[1]:.1f}x por acerto "
+            f"em relação a {barato[0]}."
+        )
+    linhas.append(
+        f"Com {n} casos, um acerto vale {ponto:.0f} pontos. Isto indica "
+        f"direção, não decide — a próxima pergunta é o mesmo par sobre um "
+        f"conjunto maior."
     )
+    return " ".join(linhas)

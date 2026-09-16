@@ -48,6 +48,12 @@ def _parser() -> argparse.ArgumentParser:
     e = sub.add_parser("eval", help="avaliação ao vivo de um domínio (GASTA DINHEIRO)")
     e.add_argument("dominio", help="o domínio a avaliar (hoje: swe)")
     e.add_argument("--model", default="claude-haiku-4-5")
+    e.add_argument(
+        "--bracos",
+        choices=("ferramenta", "tripulacao"),
+        default="ferramenta",
+        help="que eixo comparar: com/sem ferramenta, ou agente/tripulação",
+    )
 
     i = sub.add_parser("init", help="cria um projeto novo")
     i.add_argument("nome")

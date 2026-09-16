@@ -164,12 +164,18 @@ def avaliar(args: Namespace) -> int:
     dataset = avaliacao.conjunto()
     print(
         f"Avaliação ao vivo de {args.dominio!r} com {args.model} — GASTA "
-        f"DINHEIRO. Dois braços sobre {len(dataset)} casos curados."
+        f"DINHEIRO. Dois braços ({args.bracos}) sobre {len(dataset)} casos "
+        f"curados."
     )
     print()
+    montar = (
+        avaliacao.bracos_tripulacao
+        if args.bracos == "tripulacao"
+        else avaliacao.bracos
+    )
     resultado, economias = executar(
         dataset,
-        avaliacao.bracos(cliente),
+        montar(cliente),
         cliente,
         abstem_com=avaliacao.ABSTEM_COM,
     )

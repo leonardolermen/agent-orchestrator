@@ -31,7 +31,7 @@ def test_execucao_nao_chama_o_modelo_de_jeito_nenhum(monkeypatch):
 
     A primeira versão deste teste levantava `AssertionError` de dentro de
     `AnthropicClient.complete` e checava só `status_code == 200`. Isso é
-    vazio: `Investigator._uma()` (ver `investigator.py`) envolve exatamente
+    vazio: `Investigator.investigar()` (ver `investigator.py`) envolve exatamente
     essa chamada num `try/except Exception` largo e PROPOSITAL — qualquer
     exceção vinda do modelo, canário incluído, vira uma abstenção silenciosa
     e a rota devolve 200 do mesmo jeito. Medido: liguei um `Investigator` de
