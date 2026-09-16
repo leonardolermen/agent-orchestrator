@@ -10,6 +10,7 @@ transforma no que quer que ele chame de pendência. Ver spec 4.3.
 Quem transforma o resto em `Divergence` é `conciliacao.reconcile()`.
 """
 
+import time
 from datetime import UTC, datetime
 
 from orchestrator.kernel.cost import Cost, CostClass
@@ -122,7 +123,9 @@ def execute(
                     rota=d.route.value,
                     motivo=d.reason,
                 )
+            comeco = time.perf_counter()
             saida = resolver.resolve(elegiveis)
+            duracao_ms = int((time.perf_counter() - comeco) * 1000)
             todos.extend(saida.resolutions)
             propostas.extend(saida.proposals)
             # Uma entrada por resolver que RODOU, mesmo que o custo seja
@@ -157,6 +160,13 @@ def execute(
                 resolver=resolver.name,
                 resolveu=len(saida.resolutions),
                 propos=len(saida.proposals),
+                # Latência por resolver. `Cost` só mede token, e "o L3 levou
+                # 900ms" é a informação que separa uma cascata cara de uma
+                # cascata LENTA — duas coisas diferentes que até aqui eram
+                # indistinguíveis.
+                duracao_ms=duracao_ms,
+                cost=saida.cost,
+                cost_class=resolver.cost_class.name,
             )
 
     # Sobrou item E a cascata tem um degrau humano -> o run espera alguém.
