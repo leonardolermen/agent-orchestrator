@@ -28,6 +28,16 @@ class WorkflowJSON(BaseModel):
     stages: list[StageJSON]
 
 
+class WorkflowResumoJSON(BaseModel):
+    id: str
+    nome: str
+    classes: list[str]
+    gerado_em: str | None = None
+    # Falso quando a cascata tem classe AGENTE: a tela desabilita o botão em
+    # vez de deixar o usuário colher um 409.
+    executavel: bool
+
+
 class RunRequest(BaseModel):
     """O pedido de execução do benchmark sintético.
 

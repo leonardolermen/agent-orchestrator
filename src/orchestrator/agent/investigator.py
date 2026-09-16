@@ -10,7 +10,7 @@ import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from orchestrator.agent.llm import LLMClient, LLMResponse
+from orchestrator.agent.llm import LLMClient, blocos_assistente
 from orchestrator.agent.proposal import (
     Confidence,
     Cost,
@@ -131,6 +131,23 @@ class Investigator:
     cost_class: CostClass = field(default=CostClass.AGENTE, init=False)
 
     def __post_init__(self) -> None:
+        # `range(max_turns)` com max_turns <= 0 é vazio: o laço de `_uma`
+        # nunca chama o modelo e a investigação inteira vira abstenção muda,
+        # sem custo e sem trace de erro — um agente que não pode dar nem um
+        # turno não é agente, é abstenção disfarçada de configuração válida.
+        if self.max_turns < 1:
+            raise ValueError(f"max_turns precisa ser pelo menos 1: {self.max_turns}")
+        # Orçamento negativo faria a primeira comparação de custo
+        # (`custo.microcents(...) > self.budget_microcents`) já nascer
+        # estourada: toda divergência abstém no primeiro turno, sem nunca
+        # chamar o modelo, e pareceria um agente funcionando com orçamento
+        # zerado em vez de uma configuração inválida.
+        if self.budget_microcents < 0:
+            raise ValueError(f"budget_microcents não pode ser negativo: {self.budget_microcents}")
+        if self.budget_total_microcents < 0:
+            raise ValueError(
+                f"budget_total_microcents não pode ser negativo: {self.budget_total_microcents}"
+            )
         # Modelo sem preço conhecido não é abstenção, é erro de configuração.
         # Abster em toda divergência gastaria a execução inteira sem produzir
         # nada, e o custo — que é a métrica central do produto — ficaria
@@ -265,7 +282,7 @@ class Investigator:
                         )
                     )
                 mensagens.append(
-                    {"role": "assistant", "content": self._blocos_assistente(resposta)}
+                    {"role": "assistant", "content": blocos_assistente(resposta)}
                 )
                 mensagens.append(
                     {
@@ -306,28 +323,6 @@ class Investigator:
             custo,
             trace,
         )
-
-    @staticmethod
-    def _blocos_assistente(resposta: LLMResponse) -> list[Any]:
-        """Blocos de conteúdo do turno do assistente, para ecoar de volta.
-
-        CRITICAL 2 (defeito 3): quando o cliente real preenche `raw_content`,
-        devolve os blocos VERBATIM — inclui blocos de thinking, que a API
-        exige de volta inalterados. `FakeLLMClient` e `ReplayClient` nunca
-        preenchem `raw_content`; para esses, reconstrói um turno mínimo a
-        partir de `text`/`tool_calls`, só para que os testes movidos a dublê
-        continuem exercitando o laço.
-        """
-        if resposta.raw_content:
-            return resposta.raw_content
-        blocos: list[Any] = []
-        if resposta.text:
-            blocos.append({"type": "text", "text": resposta.text})
-        blocos.extend(
-            {"type": "tool_use", "id": c.id, "name": c.name, "input": c.arguments}
-            for c in resposta.tool_calls
-        )
-        return blocos
 
     def _executar(self, chamadas: list[Any]) -> list[Any]:
         """Executa as ferramentas pedidas e devolve um resultado por chamada,

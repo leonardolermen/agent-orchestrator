@@ -4,7 +4,7 @@ pytest.importorskip("fastapi")
 
 from fastapi.testclient import TestClient
 
-from orchestrator.api.app import _WORKFLOWS, _executar_memoizado, app
+from orchestrator.api.app import _executar_memoizado, _fabricas, app
 
 cliente = TestClient(app)
 
@@ -168,7 +168,18 @@ def test_resolver_com_layer_diferente_do_name_e_reportado_pelo_proprio_nome(monk
             stages=(Stage(name="s", cascade=(_NomeDiferenteDaProveniencia(),)),),
         )
 
-    monkeypatch.setitem(_WORKFLOWS, "layer_diferente", _fabrica)
+    # `_fabricas()` monta um dict NOVO a cada chamada (embutida + disco); não
+    # há mais um `_WORKFLOWS` mutável para `setitem`. Envolve a fábrica
+    # original e acrescenta a entrada de teste por cima, preservando as
+    # entradas reais (`conciliacao`).
+    _fabricas_original = _fabricas
+
+    def _fabricas_com_extra():
+        fabricas = _fabricas_original()
+        fabricas["layer_diferente"] = _fabrica
+        return fabricas
+
+    monkeypatch.setattr("orchestrator.api.app._fabricas", _fabricas_com_extra)
 
     corpo = cliente.post(
         "/api/workflows/layer_diferente/runs",

@@ -21,6 +21,25 @@ header { max-width: 46rem; margin: 0 auto 1.5rem; }
 h1 { font-size: 1.4rem; margin: 0 0 .25rem; }
 .proveniencia { margin: 0; color: #6b6660; font-size: .85rem; }
 
+/* O seletor de workflow: uma opção desabilitada (`executavel` falso) é o que
+   impede o revisor de escolher, pelo dropdown, uma cascata com etapa paga e
+   colher um 409 — ver `popularSeletor` em canvas.js. */
+.seletor {
+  display: block;
+  margin-top: .75rem;
+  color: #6b6660;
+  font-size: .85rem;
+}
+.seletor select {
+  margin-left: .4rem;
+  font: inherit;
+  padding: .2rem .4rem;
+  border: 1px solid var(--borda);
+  border-radius: 4px;
+  background: #fff;
+  color: var(--tinta);
+}
+
 /* Leva o mesmo dataset (seed/n/taxa) de uma página para a outra — o `href`
    real é montado em JS, com a query string atual, antes de qualquer fetch. */
 .link-outro {

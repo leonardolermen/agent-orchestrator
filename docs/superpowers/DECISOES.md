@@ -561,3 +561,111 @@ lacuna 3.6%; depois de aceitar `d-b-b00003` em `/fila.html?...&n=30`, o
 MESMO canvas (`/?...&n=30`, recarregado) mostrou `revisor` HUMANO 3.6% e
 lacuna 0.0%. O passo 3 do roteiro da Task 10, que na primeira rodada só
 tinha sido confirmado mecanicamente (via API), passou a se ver na tela.
+
+---
+
+# Plano 5 — grill de conciliação
+
+A Task 10 (a última da fatia) é a única do plano com incerteza técnica real —
+se ligar a entrevista a um modelo de verdade pelo SDK do Claude Code ou pela
+chave de API. **1 decisão**, registrada com o mesmo critério das seções
+anteriores.
+
+---
+
+## P5.1. Task 10 — a única desta fatia, e a que o plano previu como incerta
+
+**Correção (rodada de revisão 1):** a primeira versão desta entrada dizia
+que a interceptação da ferramenta e a injeção de histórico eram
+IMPOSSÍVEIS no `claude-agent-sdk` instalado, avaliado só por leitura de
+assinatura (`inspect.signature`) e de docstrings publicados — nunca por
+código rodado. Uma re-sonda **por execução** (Transport falso, zero rede,
+zero subprocesso) contradisse as duas afirmações: o SDK EXPÕE os dois
+mecanismos. O que segue substitui o texto original.
+
+Sondado por execução contra `claude-agent-sdk` 0.2.152 instalado:
+
+- `ClaudeAgentOptions.can_use_tool` (tipo `CanUseTool`) é chamado com
+  `(tool_name, tool_input, ToolPermissionContext)` — `tool_use_id` garantido
+  não-nulo — ANTES de qualquer execução da ferramenta. Confirmado
+  despachando o frame `control_request`/`can_use_tool` direto em
+  `Query._handle_control_request`: o callback recebeu nome, input e
+  `tool_use_id` intactos, sem nada executado.
+- Hook `PreToolUse` devolvendo `permissionDecision: "defer"` PARA o turno
+  sem executar a ferramenta, e a chamada não-executada volta em
+  `ResultMessage.deferred_tool_use` (`DeferredToolUse(id, name, input)`,
+  `types.py`). Confirmado: um `ResultMessage` sintético com
+  `deferred_tool_use` populado foi parseado de volta por
+  `message_parser.parse_message` num `DeferredToolUse` real, com o mesmo
+  input da chamada.
+- **Achado extra, dentro do próprio isolamento que o brief desta tarefa
+  manda usar:** `permission_mode="bypassPermissions"` desativa
+  `can_use_tool` EM SILÊNCIO (o SDK emite
+  `CanUseToolShadowedWarning`, texto: "permission_mode 'bypassPermissions'
+  auto-approves every tool call ... before the callback is consulted. To
+  gate every tool call, use a PreToolUse hook instead."). Com o isolamento
+  que esta tarefa exige, só o caminho do hook funciona.
+- `SessionStore`/`InMemorySessionStore` + `ClaudeAgentOptions.session_store`
+  + `resume` + `materialize_resume_session` — os três primeiros exportados
+  pelo pacote de topo, como `import_session_to_store`; o último **interno**
+  (`claude_agent_sdk._internal.session_resume`, ausente do `__init__`). Esta
+  entrada é sobre quais APIs são públicas, então a distinção fica registrada:
+  o mecanismo existe, mas metade dele não é contrato versionado. Um
+  transcript FABRICADO na hora
+  (três linhas JSONL inventadas, nunca produzidas por uma sessão real —
+  user, assistant com `tool_use`, user com `tool_result`) foi aceito e
+  materializado com sucesso como histórico de uma sessão retomada.
+
+O que continua faltando, e é o que sustenta a decisão: não existe um
+`complete(system, messages, tools) -> LLMResponse` pronto. Construí-lo por
+cima do que existe expõe um custo real, não uma parede: (a) o histórico
+teria que ser serializado no formato de transcript INTERNO do CLI a cada
+chamada — `SessionStoreEntry` (`types.py`) documenta o próprio formato como
+"the CLI's on-disk transcript format (a large discriminated union) ... That
+union is internal", não a Messages API pública que `AnthropicClient` fala;
+(b) a interceptação da "Pergunta" teria que viver dentro de um hook
+`PreToolUse` assíncrono, movendo o ponto de controle da entrevista para
+dentro do ciclo de vida do SDK em vez do laço síncrono e trivial de
+inspecionar que `LLMClient.complete()` dá hoje a qualquer implementação,
+inclusive ao `FakeLLMClient`; (c) um subprocesso do Claude Code por
+entrevista (ou por turno). Nenhuma das três é impossível — as três são
+reescrever a costura do protocolo em torno do ciclo de vida do SDK, o que o
+brief desta tarefa proíbe (a escolha do Step 1 muda uma classe, nenhum
+outro arquivo) e que acopla `ClienteAssinatura` a um formato que o próprio
+pacote declara não-público.
+
+**Decisão:** `ClienteAssinatura` (`src/orchestrator/grill/assinatura.py`) é
+um alias documentado do cliente de chave de API (`AnthropicClient`,
+`src/orchestrator/agent/anthropic_client.py`) — mesma classe, sem lógica
+nova. O comentário no topo do módulo carrega a sonda completa (símbolos,
+comandos e saída) para quem precisar reabrir esta decisão numa versão
+futura do SDK.
+
+**Alternativa rejeitada:** construir `ClienteAssinatura` sobre
+`ClaudeSDKClient`, usando o hook `PreToolUse` + `"defer"` para interceptar
+"Pergunta" e `session_store`/`resume` para replicar o histórico a cada
+chamada. Avaliada por LEITURA de código-fonte do SDK na primeira rodada
+desta tarefa (não por experimento — esse foi o defeito que a rodada de
+revisão corrigiu) e, mesmo confirmada como tecnicamente viável na re-sonda,
+segue rejeitada: o formato de histórico é uma API interna não versionada
+(risco de quebra silenciosa numa atualização do `claude-agent-sdk`), a
+interceptação por hook move o controle da entrevista para dentro do ciclo
+de vida assíncrono do SDK em vez do laço síncrono que `entrevistador.py`
+já tem e que todo `LLMClient` (inclusive `FakeLLMClient`) respeita, e o
+brief desta tarefa proíbe tocar em mais de uma classe para chegar lá. Mesmo
+desfecho, por razão análoga, ao que P2.27 já registrou para o Investigador
+(o `InvestigadorAssinatura` de `eval/assinatura.py` também usa o SDK, mas
+ali o histórico entre turnos de FERRAMENTA fica por conta do laço INTERNO
+do SDK — o investigador não tem um humano no meio para interceptar, só a
+divergência e a resposta final; a entrevista tem, e é essa diferença que
+motiva rejeitar aqui um caminho que ali nem chegou a ser cogitado).
+
+Custo se errado: se o dono decidir que o acoplamento ao formato interno e a
+reestruturação do laço valem a pena — troca de decisão dele, não técnica —,
+a implementação fica contida em `grill/assinatura.py`: nenhum outro arquivo
+do grill conhece o SDK (`entrevistador.py` fala só com `LLMClient`, provado
+por `test_o_entrevistador_nao_importa_o_sdk`, que agora varre todo o pacote
+`grill/` e não só esse arquivo). Consequência prática enquanto a decisão
+não muda: `orchestrator-grill` gasta crédito de API por chave
+(`ANTHROPIC_API_KEY`), não a assinatura pessoal do Claude Code — apesar do
+nome do módulo, herdado do vocabulário do plano.

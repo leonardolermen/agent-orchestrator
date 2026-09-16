@@ -1,15 +1,17 @@
 // A tela não decide nada: ela mostra o que a API mediu e manda de volta o que
 // o humano escolheu. Nenhum número é escrito aqui.
 //
-// `seed`/`n`/`taxa_divergencia` vêm da URL, não de uma constante local. Esta
-// página e o canvas (`/`, `canvas.js`) precisam concordar sobre QUAL dataset
-// estão olhando — a fila é escopada por `dataset_id(seed, n, taxa)` (ver
-// `orchestrator/review/fila.py`), então uma decisão tomada aqui só aparece
-// no canvas se as duas páginas apontarem para o MESMO dataset. Uma constante
-// duplicada nos dois arquivos é uma promessa que já quebrou uma vez — ver
-// DECISOES.md, P4.14 — porque nada além de lembrança humana as mantinha
-// iguais. A URL é a única fonte que as duas podem compartilhar sem depender
-// disso.
+// `seed`/`n`/`taxa_divergencia`/`workflow` vêm da URL, não de uma constante
+// local. Esta página e o canvas (`/`, `canvas.js`) precisam concordar sobre
+// QUAL fila estão olhando — e a fila é escopada em DUAS dimensões
+// independentes: `caminho_da_fila(workflow_id, dataset)` (ver
+// `orchestrator/review/fila.py`) toma o `workflow_id` como primeiro
+// argumento, separado do `dataset_id(seed, n, taxa)`. Uma decisão tomada
+// aqui só aparece no canvas certo se as duas páginas apontarem para o MESMO
+// workflow E o MESMO dataset. Uma constante duplicada nos dois arquivos é
+// uma promessa que já quebrou uma vez — ver DECISOES.md, P4.14 — porque nada
+// além de lembrança humana as mantinha iguais. A URL é a única fonte que as
+// duas podem compartilhar sem depender disso.
 const QUERY = new URLSearchParams(location.search);
 
 function parametro(nome, padrao) {
@@ -26,8 +28,20 @@ const PARAMS = new URLSearchParams({
   taxa_divergencia: parametro("taxa_divergencia", 0.15),
 });
 
-// O link de volta ao canvas carrega o MESMO dataset.
-document.getElementById("link-canvas").href = `/?${PARAMS}`;
+// O id do workflow ativo vem do MESMO `location.search`, com o MESMO tipo
+// de leitura e o MESMO default que `canvas.js` — não uma constante local
+// com default próprio, que foi exatamente o que causou a deriva que este
+// comentário descreve acima.
+const WORKFLOW = QUERY.get("workflow") || "conciliacao";
+
+// O link de volta ao canvas carrega o MESMO dataset E o MESMO workflow.
+// `PARAMS` continua só com os três campos de `RunRequest` — são os únicos
+// que as rotas de fila leem da query string, já que `workflow_id` é
+// segmento de PATH (`/api/fila/{workflow_id}`), não query — então o
+// `workflow` é acrescentado aqui, só para o link, não em `PARAMS`.
+const PARAMS_CANVAS = new URLSearchParams(PARAMS);
+PARAMS_CANVAS.set("workflow", WORKFLOW);
+document.getElementById("link-canvas").href = `/?${PARAMS_CANVAS}`;
 
 // A taxonomia do <select> de "corrigir" vem de `corpo.tipos`, servido pela
 // API — nunca de uma lista escrita aqui. Duplicar os valores no front seria
@@ -43,7 +57,7 @@ function autor() {
 }
 
 async function carregar() {
-  const r = await fetch(`/api/fila/conciliacao?${PARAMS}`);
+  const r = await fetch(`/api/fila/${WORKFLOW}?${PARAMS}`);
   if (!r.ok) throw new Error(`${r.status} ao ler a fila`);
   const corpo = await r.json();
 
@@ -135,7 +149,7 @@ async function decidir(item, veredito, correcao, el) {
   let r;
   try {
     r = await fetch(
-      `/api/fila/conciliacao/${item.divergence_id}/decisao?${PARAMS}`,
+      `/api/fila/${WORKFLOW}/${item.divergence_id}/decisao?${PARAMS}`,
       { method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify(corpo) });
   } catch (erroDeRede) {

@@ -20,15 +20,15 @@ build/
 *.key
 
 # Dados
-# Dado sintético com gabarito É versionado (é o benchmark).
-# Qualquer dado real, nunca.
-data/real/
-data/scratch/
+# Allowlist: NADA sob data/ é versionado por padrão. Receitas do grill
+# carregam a descrição do problema do parceiro na `justificativa` — dado de
+# terceiro, que o spec pai proíbe versionar. Remendo por diretório resolveria
+# hoje e falharia na próxima fatia que escrevesse um formato novo, que foi
+# exatamente como chegamos aqui (`*.jsonl` cobria a fila por acidente).
+# Para versionar algo novo, adicione uma exceção explícita AQUI e diga por quê.
+data/*
 *.ofx
 *.ret
-# Gravações de sessão do modelo (eval/replay.py): dado de terceiro, o spec
-# proíbe versionar.
-*.jsonl
 
 # Editor / SO
 .vscode/
