@@ -238,7 +238,16 @@ def test_o_agente_do_swe_rebaixa_confianca_ALTA_sem_evidencia():
 
 def test_tipo_fora_do_vocabulario_dispara_retry_e_acaba_em_abstencao():
     """Vocabulário fechado, como na conciliação — e o "não sei" é do DOMÍNIO
-    (`DUVIDA` aqui, `NAO_IDENTIFICADO` lá). O kernel não decide qual."""
+    (`NAO_SEI` aqui, `NAO_IDENTIFICADO` lá). O kernel não decide qual.
+
+    Era `DUVIDA` até 2026-09-16 e estava errado: `DUVIDA` também é um TIPO
+    legítimo ("esta issue é uma pergunta"), então uma classificação correta
+    como DUVIDA era contada como abstenção. Num conjunto de 50 casos com 16
+    dúvidas, um terço não era pontuado.
+
+    A invariante agora é verificada em `evaluation.metrics.medir`, que levanta
+    quando um rótulo de abstenção é também tipo esperado no conjunto.
+    """
     from orchestrator.agent.llm import FakeLLMClient, LLMResponse
     from orchestrator.domains.swe.workflow import definition_com_agente
     from orchestrator.kernel.cost import Cost
@@ -254,4 +263,8 @@ def test_tipo_fora_do_vocabulario_dispara_retry_e_acaba_em_abstencao():
         pool_swe([Issue("i1", "x", "y")]),
     )
 
-    assert run.proposals[0].tipo == "DUVIDA"
+    assert run.proposals[0].tipo == "NAO_SEI"
+    # E `DUVIDA` continua sendo um tipo que o agente PODE responder.
+    from orchestrator.domains.swe.workflow import TIPOS
+
+    assert "DUVIDA" in TIPOS and "NAO_SEI" in TIPOS

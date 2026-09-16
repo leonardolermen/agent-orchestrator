@@ -101,13 +101,19 @@ def definition() -> WorkflowDefinition:
 PROMPT = """Você classifica issues de um repositório de software.
 
 Responda APENAS com um objeto JSON:
-{"tipo": "BUG"|"FEATURE"|"DUVIDA", "explicacao": <texto curto>,
+{"tipo": "BUG"|"FEATURE"|"DUVIDA"|"NAO_SEI", "explicacao": <texto curto>,
  "evidencia": [<strings>], "confianca": "ALTA"|"MEDIA"|"BAIXA"}
 
-Use `contar_palavras` se precisar medir o tamanho do corpo. Não saber é
-resposta válida: responda DUVIDA com confiança BAIXA."""
+DUVIDA é um TIPO: a issue é uma pergunta, não um defeito nem um pedido.
+NAO_SEI é outra coisa: você não conseguiu classificar. Não saber é resposta
+válida — responda NAO_SEI com confiança BAIXA, e não DUVIDA.
 
-TIPOS = ("BUG", "FEATURE", "DUVIDA")
+Use `contar_palavras` se precisar medir o tamanho do corpo."""
+
+TIPOS = ("BUG", "FEATURE", "DUVIDA", "NAO_SEI")
+# O rótulo de "não consegui classificar". Separado de `DUVIDA`, que é um
+# tipo legítimo — ver a invariante em `evaluation/metrics.medir`.
+NAO_SEI = "NAO_SEI"
 
 
 def _parse(item_id, texto, cost, trace):
@@ -148,9 +154,15 @@ def _parse(item_id, texto, cost, trace):
 
 
 def _abstain(item_id, motivo, cost=None, trace=None):
-    """O "não sei" do domínio. Aqui é `DUVIDA`; na conciliação é
-    `NAO_IDENTIFICADO`. O kernel não decide qual."""
-    return Proposal.abstencao(item_id, "DUVIDA", motivo, cost, trace)
+    """O "não sei" do domínio. Aqui é `NAO_SEI`; na conciliação é
+    `NAO_IDENTIFICADO`. O kernel não decide qual.
+
+    Era `DUVIDA` até 2026-09-16, e era defeito: `DUVIDA` também é um tipo
+    legítimo ("esta issue é uma pergunta"), então uma classificação CORRETA
+    como DUVIDA era contada como abstenção. Com 16 de 50 casos assim, um terço
+    do conjunto não era pontuado.
+    """
+    return Proposal.abstencao(item_id, NAO_SEI, motivo, cost, trace)
 
 
 def ferramentas() -> ToolRegistry:

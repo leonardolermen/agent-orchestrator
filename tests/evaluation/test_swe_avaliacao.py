@@ -143,7 +143,6 @@ def test_o_veredito_NAO_conclui_mais_do_que_cinco_casos_permitem():
     saida = avaliacao.render(resultado, economias)
 
     assert "Com 50 casos, um acerto vale 2 pontos" in saida
-    assert "indica direção, não decide" in saida
 
 
 def test_a_ferramenta_aparece_como_CANDIDATO_quando_chamada_em_todo_item():
@@ -212,3 +211,21 @@ def test_o_veredito_avisa_que_abstencao_a_mais_NAO_e_precisao_conquistada():
     )
 
     assert "não foi arriscada, não precisão conquistada" in _veredito(r, {})
+
+
+def test_a_ressalva_ESCALA_com_a_amostra_e_com_o_efeito():
+    """O ajuste que corrige um erro meu, não do código.
+
+    A primeira versão dizia "indica direção, não decide" sempre. Com n=5 a
+    frase estava certa — e eu mesmo a li como mais fraca do que era, gravando
+    no P6.81 uma conclusão que os 50 casos depois REVOGARAM.
+
+    Empate agora se chama pelo nome: não é evidência de equivalência, é
+    ausência de diferença DETECTÁVEL naquele tamanho.
+    """
+    from orchestrator.domains.swe.avaliacao import _ressalva
+
+    assert "ruído, não resultado" in _ressalva(5, 20, 0.2)
+    assert "não é evidência de equivalência" in _ressalva(5, 20, 0.0)
+    assert "indica direção e não decide" in _ressalva(50, 2, 0.09)
+    assert "Isto é resultado" in _ressalva(50, 2, 0.30)

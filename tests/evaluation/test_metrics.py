@@ -192,3 +192,40 @@ def test_itens_fora_do_dataset_nao_contaminam_a_conta():
 
     assert metricas.proposals_total == 1
     assert metricas.proposal_precision == 1.0
+
+
+def test_rotulo_de_abstencao_que_e_TAMBEM_tipo_esperado_LEVANTA():
+    """A invariante que custou um terço de um conjunto de avaliação.
+
+    No `swe`, `DUVIDA` significava ao mesmo tempo "esta issue é uma pergunta" e
+    "não consegui classificar". Resultado: os 16 casos de 50 com `DUVIDA`
+    esperado saíam do denominador da precisão e entravam na taxa de abstenção.
+    A taxa reportada (32%) era exatamente a fatia de DUVIDA do conjunto — e
+    nada denunciava.
+
+    Levanta em vez de avisar: um relatório que roda e sai errado é pior que um
+    que não roda, porque alguém o lê.
+    """
+    ds = EvalDataset(id="d", cases=(_caso("i-1", "BUG"), _caso("i-2", "DUVIDA")))
+
+    with pytest.raises(ValueError, match="rótulo de abstenção E tipo esperado"):
+        medir(_run(), ds, model=MODELO, abstem_com=DUVIDA)
+
+
+def test_a_mensagem_diz_QUANTOS_casos_se_perderiam():
+    """"Colisão de vocabulário" é abstrato; "16 de 50 casos" faz alguém agir."""
+    ds = EvalDataset(
+        id="d",
+        cases=(_caso("i-1", "BUG"), _caso("i-2", "DUVIDA"), _caso("i-3", "DUVIDA")),
+    )
+
+    with pytest.raises(ValueError, match="2 de 3 casos"):
+        medir(_run(), ds, model=MODELO, abstem_com=DUVIDA)
+
+
+def test_um_conjunto_SEM_colisao_passa():
+    """A conciliação nunca teve o problema: `NAO_IDENTIFICADO` é rótulo de
+    abstenção e nunca é tipo esperado no gabarito sintético."""
+    ds = EvalDataset(id="d", cases=(_caso("i-1", "BUG"),))
+
+    assert medir(_run(), ds, model=MODELO, abstem_com=DUVIDA).items_total == 1

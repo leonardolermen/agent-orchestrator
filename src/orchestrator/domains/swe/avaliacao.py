@@ -54,7 +54,7 @@ from orchestrator.domains.swe.workflow import ISSUE, Issue, ferramentas, triador
 # quantos microssegundos o import levou. Já vi bug assim; não é hipotético.
 _CURADO_EM = datetime(2026, 9, 16, 0, 0, tzinfo=UTC)
 
-ABSTEM_COM = frozenset({"DUVIDA"})
+ABSTEM_COM = frozenset({"NAO_SEI"})
 
 def conjunto(dificuldade: str | None = None) -> EvalDataset:
     """Os casos curados, como `EvalDataset`.
@@ -249,9 +249,42 @@ def _veredito(resultado: BenchmarkResult, economias) -> str:
             f"{caro[0]} custa {caro[1] / barato[1]:.1f}x por acerto "
             f"em relação a {barato[0]}."
         )
-    linhas.append(
-        f"Com {n} casos, um acerto vale {ponto:.0f} pontos. Isto indica "
-        f"direção, não decide — a próxima pergunta é o mesmo par sobre um "
-        f"conjunto maior."
-    )
+    linhas.append(_ressalva(n, ponto, abs(delta)))
     return " ".join(linhas)
+
+
+def _ressalva(n: int, ponto: float, delta: float) -> str:
+    """A ressalva ESCALA com a amostra e com o tamanho do efeito.
+
+    A primeira versão dizia "indica direção, não decide" sempre, e isso custou
+    caro de um jeito específico: com n=5 a frase estava certa e eu mesmo a li
+    como mais fraca do que era, registrando no P6.81 uma conclusão que os 50
+    casos depois REVOGARAM. Com n=50 e nove pontos de diferença, repetir a
+    mesma frase seria o erro oposto — hedge onde o dado já fala.
+
+    O corte é o efeito contra o valor de UM acerto. Uma diferença que cabe em
+    um ou dois acertos é ruído em qualquer n; uma que passa disso com folga é
+    sinal.
+    """
+    base = f"Com {n} casos, um acerto vale {ponto:.0f} pontos."
+    if delta <= 0:
+        return (
+            f"{base} Empate não é evidência de equivalência: é ausência de "
+            f"diferença DETECTÁVEL neste tamanho."
+        )
+    acertos = delta * n
+    if acertos <= 2:
+        return (
+            f"{base} A diferença cabe em {acertos:.0f} acerto(s) — isto é "
+            f"ruído, não resultado."
+        )
+    if acertos < 5:
+        return (
+            f"{base} A diferença são {acertos:.0f} acertos: indica direção e "
+            f"não decide. Repita sobre um conjunto maior antes de agir."
+        )
+    return (
+        f"{base} A diferença são {acertos:.0f} acertos, bem acima do que um "
+        f"caso isolado explica. Isto é resultado — confirme com uma segunda "
+        f"execução (o modelo não é determinístico) e aja."
+    )

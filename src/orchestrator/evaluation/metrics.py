@@ -150,6 +150,31 @@ def medir(
     fronteira do domínio.
     """
     por_item = dataset.by_item_id()
+
+    # A INVARIANTE que custou um terço de um conjunto de avaliação.
+    #
+    # Se um valor significa ao mesmo tempo "não consegui classificar" e "este é
+    # o tipo certo", os casos com esse tipo esperado saem do denominador da
+    # precisão e entram na taxa de abstenção. Medido no `swe` em 2026-09-16:
+    # `DUVIDA` era as duas coisas, 16 dos 50 casos tinham `DUVIDA` como tipo
+    # esperado, e a taxa de abstenção reportada (32%) era exatamente a fatia de
+    # DUVIDA do conjunto. Nenhum número absoluto valia.
+    #
+    # Levanta em vez de avisar: um relatório que roda e sai errado é pior que
+    # um que não roda, porque alguém o lê.
+    colisao = sorted(
+        abstem_com & {c.expected.kind for c in dataset.cases if c.expected.kind}
+    )
+    if colisao:
+        raise ValueError(
+            f"{colisao} é rótulo de abstenção E tipo esperado no dataset "
+            f"{dataset.id!r}. Os casos com esse tipo sairiam do denominador da "
+            f"precisão e entrariam na taxa de abstenção — o conjunto perderia "
+            f"{len([c for c in dataset.cases if c.expected.kind in colisao])} "
+            f"de {len(dataset.cases)} casos sem nada denunciar. Separe o "
+            f"rótulo de 'não sei' do vocabulário de tipos do domínio"
+        )
+
     total = len(por_item)
     if total == 0:
         raise ValueError(

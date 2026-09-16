@@ -2123,3 +2123,84 @@ Uma correção que criou um defeito. O que o pegou foi a decisão de imprimir
 errada, não.**
 
 Quarto defeito deste projeto achado por execução, e não pela suíte.
+
+## Corrigido o P6.86: os números com o vocabulário separado
+
+### P6.88. REVOGA P6.84 — a vantagem da tripulação era ARTEFATO DE MEDIÇÃO
+
+Terceira resposta para a mesma pergunta, e a terceira derruba a segunda:
+
+    n=5,  vocabulário com colisão   tripulação 2,1x mais cara, MESMA precisão
+                                    → "não se paga"                    (P6.81)
+    n=50, vocabulário com colisão   tripulação 1,5x mais cara, +9 PONTOS
+                                    → "se paga"                        (P6.84)
+    n=50, vocabulário separado      tripulação 2,7x mais cara, +1 caso
+                                    → dentro do ruído                  (AQUI)
+
+    braço             precisão   abst.   US$/acerto   adversarial
+    agente-sozinho      92,0%     0,0%    0,002726        80,0%
+    tripulacao-2        93,3%    40,0%    0,007320        80,0%
+
+Os nove pontos do P6.84 vinham da colisão: as respostas `DUVIDA` da tripulação
+eram contadas como abstenção e saíam do denominador. Com o rótulo separado, a
+diferença é **um caso** — e o estrato adversarial é **idêntico**, 80,0% nos dois.
+
+A conclusão prática volta a ser a do P6.81 ("não se paga"), mas por um motivo
+diferente e melhor sustentado: não é que a tripulação não ajude, é que **a ajuda
+não é distinguível de ruído neste conjunto**, e o custo é 2,7x.
+
+**A lição, e ela é sobre mim.** Três medições, duas conclusões erradas. Cada
+erro veio de tratar o número como resposta em vez de perguntar o que ele
+media. A ressalva impressa avisou nas três vezes; nas duas primeiras eu a li
+como formalidade.
+
+### P6.89. CONFIRMA P6.85 — a ferramenta continua piorando, com efeito menor
+
+    braço              precisão   US$/acerto   adversarial
+    com-ferramenta       92,0%     0,002720       80,0%
+    sem-ferramenta       98,0%     0,000934       95,0%
+
+Com a colisão, eram 9 pontos. Sem ela, são **3 casos** — e a direção sobreviveu
+à correção, o que a distingue do achado da tripulação. Toda a perda continua no
+estrato adversarial (80,0% x 95,0%), e o custo é 2,9x.
+
+Veredito impresso: *"indica direção e não decide"*. Este merece um conjunto
+maior; o da tripulação, não — lá o dado já diz que não há o que ver.
+
+### P6.90. Teste de estabilidade que saiu de graça
+
+`agente-sozinho` e `com-ferramenta` são a MESMA configuração, medidas em duas
+execuções independentes com minutos de diferença:
+
+    agente-sozinho    92,0%   adversarial 80,0%
+    com-ferramenta    92,0%   adversarial 80,0%
+
+Idênticas. Com n=5, o mesmo braço oscilava de 75% a 100% entre execuções.
+
+Não foi planejado — os dois eixos por acaso compartilham um braço. Mas é a
+melhor evidência disponível de que o conjunto de 50 saiu da faixa de ruído, e
+vale mais que qualquer argumento sobre tamanho de amostra.
+
+### P6.91. A invariante, no lugar onde os dois vocabulários se encontram
+
+`medir` agora LEVANTA quando um rótulo de abstenção é também tipo esperado no
+conjunto, e a mensagem diz quantos casos se perderiam ("16 de 50"). Genérico:
+vale para qualquer domínio futuro.
+
+Alternativa rejeitada: avisar em vez de levantar. Custo de estar errado — um
+relatório que roda e sai errado é pior que um que não roda, porque alguém o lê.
+Foi exatamente o que aconteceu: o relatório rodou por três execuções pagas.
+
+A conciliação nunca teve o problema (`NAO_IDENTIFICADO` nunca é tipo esperado
+no gabarito), e a invariante confirma isso em vez de supor.
+
+### P6.92. A ressalva agora ESCALA com a amostra e com o efeito
+
+Antes: "indica direção, não decide", sempre. Agora, quatro faixas — empate,
+diferença que cabe em ≤2 acertos (ruído), <5 acertos (direção), acima disso
+(resultado).
+
+O caso que motivou: empate com n=5 dizia "indica direção", que se lê como
+"provavelmente não há diferença". Agora diz **"não é evidência de equivalência:
+é ausência de diferença DETECTÁVEL neste tamanho"** — que é o que estava
+acontecendo e o que eu não li.
