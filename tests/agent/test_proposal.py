@@ -2,11 +2,11 @@ import pytest
 
 from orchestrator.agent.proposal import (
     Confidence,
-    Cost,
     InvestigationOutput,
     Proposal,
     TraceEvent,
 )
+from orchestrator.kernel.cost import Cost
 from orchestrator.taxonomy import DivergenceType
 
 

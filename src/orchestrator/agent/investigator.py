@@ -13,16 +13,15 @@ from typing import TYPE_CHECKING, Any
 from orchestrator.agent.llm import LLMClient, blocos_assistente
 from orchestrator.agent.proposal import (
     Confidence,
-    Cost,
     InvestigationOutput,
     Proposal,
     TraceEvent,
     TraceKind,
 )
 from orchestrator.agent.tools import TOOL_SCHEMAS, ToolContext
+from orchestrator.kernel.cost import Cost, CostClass
 from orchestrator.models import Divergence
 from orchestrator.taxonomy import DivergenceType
-from orchestrator.workflow.cost_class import CostClass
 from orchestrator.workflow.resolver import ResolverDescription, ResolverOutput
 from orchestrator.workflow.workset import WorkSet
 

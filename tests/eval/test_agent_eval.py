@@ -1,9 +1,8 @@
 import pytest
 
 from orchestrator.agent.llm import FakeLLMClient, LLMResponse
-from orchestrator.agent.proposal import Cost
 from orchestrator.eval.agent_eval import EvalResult, _tabela, avaliar
-from orchestrator.workflow.cost_class import CostClass
+from orchestrator.kernel.cost import Cost, CostClass
 from orchestrator.workflow.resolver import ResolverDescription, ResolverOutput
 
 # Valores MEDIDOS com n=100 na semente 1. A amostra de n=40 foi descartada de

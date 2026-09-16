@@ -1,10 +1,10 @@
 import pytest
 
 from orchestrator.agent.llm import FakeLLMClient, LLMResponse, ToolCall
-from orchestrator.agent.proposal import Cost
 from orchestrator.grill import cli as grill_cli
 from orchestrator.grill.catalogo import ClienteAusente
 from orchestrator.grill.entrevistador import Entrevistador
+from orchestrator.kernel.cost import Cost
 
 
 def _chamada(ferramenta: str, **args) -> LLMResponse:

@@ -846,3 +846,70 @@ arquivo pareceria ter consertado acoplamento.
 Consequência para o roadmap: confirma a ordem escolhida por aritmética, não por
 cautela — 14 das 23 arestas fecham nos PRs #3 e #4, que são a de-domainização do
 kernel.
+
+## P6.10. PR #2 — `CREW` entra na enum, `Budget` não
+
+O plano (§27, PR #2) pedia os dois. Entreguei só `CostClass.CREW`.
+
+`Budget` é um tipo NOVO sem nenhum chamador até o motor de política (M3), e
+tipo sem chamador é capacidade especulativa — a mesma disciplina que a decisão 9
+aplicou a `add_business_days` ("YAGNI sem chamador"). `CREW` é diferente:
+acrescentar um membro no MEIO de uma enum cujo valor numérico É a semântica
+renumera `HUMANO` de 2 para 3, e renumerar depois custa mexer na ordenação com
+mais código dependendo dela. Estender uma ordem que já existe e inventar um tipo
+que ninguém usa são coisas diferentes.
+
+Verificado antes de decidir: nenhum lugar do repositório compara `CostClass` a
+literal numérico — as 57 referências são todas por nome. A renumeração é
+invisível.
+
+Custo se errado: `CREW` fica órfã na enum até M8. Custo real: zero, porque nada
+constrói um `Crew` e a chave nunca aparece em `matches_by_class`.
+
+## P6.11. PR #2 — migração completa dos imports, sem alias de compatibilidade
+
+O plano pedia `agent/proposal.py` re-exportando `Cost` com `DeprecationWarning`.
+Migrei os 39 arquivos e não deixei alias.
+
+Razão: alias existe para consumidor externo, e não há nenhum — o pacote não está
+publicado. O próprio plano (§19.4) diz que "aliases permanentes viram API pública
+por acidente" e que um alias vive até o último chamador migrar. Se dá para migrar
+todos no mesmo PR, o alias nasce morto. Além disso `DeprecationWarning` em nível
+de módulo dispararia em 469 testes.
+
+Custo se errado: um PR maior (39 arquivos em vez de 3). Mitigado por serem
+mudanças mecânicas de import, com a suíte inteira como verificação.
+
+## P6.12. PR #2 — dois defeitos meus, achados por rodar em vez de ler
+
+Registrados porque os dois são da mesma família e a segunda ocorrência do mesmo
+erro num dia é sinal, não azar.
+
+**(a) O script de migração reescreveu imports DENTRO de função na coluna zero.**
+`ast.walk` encontra imports aninhados; meu gerador emitia a linha nova sem
+indentação. Quebrou `tests/api/test_execucao.py` e `tests/grill/test_registro.py`
+com `IndentationError` — e, como os dois erros são de COLETA, derrubavam a suíte
+inteira, não só os dois arquivos. Corrigido restaurando os dois do git e fazendo
+a substituição in-place na própria linha, onde a indentação vem de graça.
+
+**(b) `workflow.cost_class` ficou órfão em `DESTINO` e nenhum dos 19 testes
+reclamou.** O teste de higiene que eu tinha escrito (`test_destino_sem_entrada
+_redundante`) só checava redundância por diretório, não existência do módulo.
+Entrada órfã infla `DESLOCADOS_CONHECIDOS`, e um módulo novo criado no lugar
+errado com um nome que já esteve na tabela entraria sem ninguém ver. Corrigido
+com `test_destino_sem_entrada_orfa`, provado por experimento (reintroduzi a
+entrada, o teste falhou, restaurei).
+
+A lição comum: a catraca do PR #1 protege a arquitetura do CÓDIGO, e não se
+protegia a si mesma. O (b) é a primeira das duas lacunas de auto-proteção dela.
+
+## P6.13. PR #2 não fechou nenhuma violação de dependência, e isso está certo
+
+As 23 arestas continuam 23 depois de mover `Cost` para o kernel. Não é falha do
+PR: é a confirmação empírica do que P6.9 já tinha registrado — a inversão nº 1 é
+problema de LOCALIZAÇÃO, não de dependência. O que o PR #2 encolheu foi a lista
+de `deslocados()`, que é a outra metade da catraca.
+
+Se as duas checagens não estivessem separadas, este PR pareceria não ter feito
+nada — ou, pior, teria sido escrito para "fechar uma violação" mexendo em
+acoplamento que não precisava mudar.

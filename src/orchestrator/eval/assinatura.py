@@ -26,9 +26,9 @@ from orchestrator.agent.investigator import (
     descrever_divergencia,
     interpretar_proposta,
 )
-from orchestrator.agent.proposal import Cost, Proposal, TraceEvent, TraceKind
+from orchestrator.agent.proposal import Proposal, TraceEvent, TraceKind
 from orchestrator.agent.tools import TOOL_SCHEMAS, ToolContext
-from orchestrator.workflow.cost_class import CostClass
+from orchestrator.kernel.cost import Cost, CostClass
 from orchestrator.workflow.resolver import ResolverDescription, ResolverOutput
 from orchestrator.workflow.workset import WorkSet
 

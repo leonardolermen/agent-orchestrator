@@ -8,9 +8,9 @@ não havia cascata nenhuma no código. Ver o §1 do spec desta fatia.
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from orchestrator.agent.proposal import Cost, Proposal
+from orchestrator.agent.proposal import Proposal
+from orchestrator.kernel.cost import Cost, CostClass
 from orchestrator.models import MatchResult
-from orchestrator.workflow.cost_class import CostClass
 from orchestrator.workflow.workset import WorkSet
 
 

@@ -4,12 +4,12 @@ import pytest
 
 from orchestrator.agent.investigator import SYSTEM, Investigator
 from orchestrator.agent.llm import FakeLLMClient, LLMResponse, ToolCall
-from orchestrator.agent.proposal import _PRECOS, Confidence, Cost, Proposal, TraceKind
+from orchestrator.agent.proposal import Confidence, Proposal, TraceKind
 from orchestrator.agent.tools import TOOL_SCHEMAS, ToolContext
+from orchestrator.kernel.cost import _PRECOS, Cost, CostClass
 from orchestrator.models import Divergence
 from orchestrator.synth.generator import build_dataset, generate_clean_pairs
 from orchestrator.taxonomy import DivergenceType
-from orchestrator.workflow.cost_class import CostClass
 from orchestrator.workflow.workset import WorkSet
 
 

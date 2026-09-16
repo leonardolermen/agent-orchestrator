@@ -1,11 +1,11 @@
 from random import Random
 
-from orchestrator.agent.proposal import Cost, InvestigationOutput, Proposal
+from orchestrator.agent.proposal import InvestigationOutput, Proposal
 from orchestrator.cli import build_benchmark
+from orchestrator.kernel.cost import Cost, CostClass
 from orchestrator.matching.engine import default_resolvers, reconcile
 from orchestrator.synth.generator import build_dataset, generate_clean_pairs
 from orchestrator.synth.injectors import DefasagemTemporal, DevolucaoFundos
-from orchestrator.workflow.cost_class import CostClass
 from orchestrator.workflow.definition import Stage, WorkflowDefinition
 from orchestrator.workflow.resolver import Resolver, ResolverDescription, ResolverOutput
 from orchestrator.workflow.workset import WorkSet

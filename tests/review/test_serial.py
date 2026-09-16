@@ -1,12 +1,7 @@
 from datetime import UTC, datetime
 
-from orchestrator.agent.proposal import (
-    Confidence,
-    Cost,
-    Proposal,
-    TraceEvent,
-    TraceKind,
-)
+from orchestrator.agent.proposal import Confidence, Proposal, TraceEvent, TraceKind
+from orchestrator.kernel.cost import Cost
 from orchestrator.review.decision import Decision, Veredito
 from orchestrator.review.serial import (
     decisao_de_dict,

@@ -11,8 +11,8 @@ import sys
 import textwrap
 
 from orchestrator.agent.tools import ToolContext
+from orchestrator.kernel.cost import CostClass
 from orchestrator.synth.generator import generate_clean_pairs
-from orchestrator.workflow.cost_class import CostClass
 
 
 def _contexto() -> ToolContext:

@@ -10,7 +10,7 @@ from orchestrator.grill.receita import (
     para_json,
     validar_id,
 )
-from orchestrator.workflow.cost_class import CostClass
+from orchestrator.kernel.cost import CostClass
 
 
 def _receita(*resolvers: ResolverReceita, id: str = "acme") -> Receita:

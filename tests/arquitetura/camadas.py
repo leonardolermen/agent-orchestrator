@@ -57,7 +57,6 @@ PERMITIDO: dict[str, frozenset[str]] = {
 # deveria estar", não "onde está".
 DESTINO: dict[str, str] = {
     # --- núcleo: o contrato de resolução, hoje em `workflow/` ---
-    "workflow.cost_class": "kernel",
     "workflow.resolver": "kernel",
     "workflow.workset": "kernel",
     "workflow.definition": "kernel",

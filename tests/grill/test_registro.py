@@ -91,8 +91,8 @@ def test_listar_ignora_arquivo_corrompido(tmp_path, capsys):
 
 
 def test_gravar_recusa_escreve_motivo_e_lacuna(tmp_path):
-    from orchestrator.agent.proposal import Cost
     from orchestrator.grill.entrevistador import RecusaFinal
+    from orchestrator.kernel.cost import Cost
 
     caminho = gravar_recusa(
         "acme",

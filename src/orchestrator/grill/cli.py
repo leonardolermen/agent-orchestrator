@@ -29,9 +29,9 @@ from orchestrator.grill.registro import (
     gravar_receita,
     gravar_recusa,
 )
+from orchestrator.kernel.cost import CostClass
 from orchestrator.matching.engine import reconcile
 from orchestrator.metrics import evaluate
-from orchestrator.workflow.cost_class import CostClass
 from orchestrator.workflow.definition import Stage, WorkflowDefinition
 
 RESSALVA = "Este número é do NOSSO benchmark sintético, não dos seus dados."

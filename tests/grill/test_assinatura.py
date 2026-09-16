@@ -1,7 +1,7 @@
 import inspect
 import pathlib
 
-from orchestrator.agent.proposal import Cost
+from orchestrator.kernel.cost import Cost
 
 
 def test_o_cliente_de_assinatura_satisfaz_o_protocolo():

@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from orchestrator.agent.llm import LLMClient, LLMResponse, ToolCall
-from orchestrator.agent.proposal import Cost
+from orchestrator.kernel.cost import Cost
 
 
 def _serializar(r: LLMResponse, model: str) -> str:

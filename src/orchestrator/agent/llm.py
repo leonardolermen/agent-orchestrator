@@ -8,7 +8,7 @@ permite trocar de modelo sem tocar em lógica de domínio.
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from orchestrator.agent.proposal import Cost
+from orchestrator.kernel.cost import Cost
 
 
 @dataclass(frozen=True)

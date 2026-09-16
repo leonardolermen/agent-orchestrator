@@ -1,6 +1,6 @@
+from orchestrator.kernel.cost import CostClass
 from orchestrator.models import MatchResult
 from orchestrator.synth.generator import generate_clean_pairs
-from orchestrator.workflow.cost_class import CostClass
 from orchestrator.workflow.workset import WorkSet
 
 

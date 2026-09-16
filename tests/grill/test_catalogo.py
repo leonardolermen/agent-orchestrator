@@ -2,11 +2,10 @@ import dataclasses
 
 import pytest
 
-from orchestrator.agent.proposal import Cost
 from orchestrator.agent.tools import ToolContext
 from orchestrator.grill.catalogo import CATALOGO, ClienteAusente, ParametroSpec
+from orchestrator.kernel.cost import Cost, CostClass
 from orchestrator.review.fila import Fila
-from orchestrator.workflow.cost_class import CostClass
 
 
 def _inerte():

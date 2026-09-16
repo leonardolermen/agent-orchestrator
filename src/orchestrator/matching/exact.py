@@ -2,8 +2,8 @@
 
 from datetime import date
 
+from orchestrator.kernel.cost import CostClass
 from orchestrator.models import BankEntry, LedgerEntry, MatchResult
-from orchestrator.workflow.cost_class import CostClass
 from orchestrator.workflow.resolver import ResolverDescription, ResolverOutput
 from orchestrator.workflow.workset import WorkSet
 

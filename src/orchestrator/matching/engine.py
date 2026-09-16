@@ -8,12 +8,12 @@ recebe. Ver spec 4.3.
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from orchestrator.agent.proposal import Cost, Proposal
+from orchestrator.agent.proposal import Proposal
+from orchestrator.kernel.cost import Cost, CostClass
 from orchestrator.matching.exact import ExactMatcher
 from orchestrator.matching.grouping import GroupingMatcher
 from orchestrator.matching.tolerance import ToleranceMatcher
 from orchestrator.models import BankEntry, Divergence, LedgerEntry, MatchResult
-from orchestrator.workflow.cost_class import CostClass
 from orchestrator.workflow.resolver import Resolver
 from orchestrator.workflow.workset import WorkSet
 

@@ -1,6 +1,5 @@
-from orchestrator.agent.proposal import Cost
+from orchestrator.kernel.cost import Cost, CostClass
 from orchestrator.models import MatchResult
-from orchestrator.workflow.cost_class import CostClass
 from orchestrator.workflow.resolver import ResolverDescription, ResolverOutput
 
 

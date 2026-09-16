@@ -49,7 +49,7 @@ def test_execucao_nao_chama_o_modelo_de_jeito_nenhum(monkeypatch):
     def _espiao(self, system, messages, tools):
         chamadas.append({"system": system, "messages": messages, "tools": tools})
         from orchestrator.agent.llm import LLMResponse
-        from orchestrator.agent.proposal import Cost
+        from orchestrator.kernel.cost import Cost
 
         return LLMResponse(text="{}", tool_calls=[], cost=Cost.zero())
 
@@ -134,8 +134,8 @@ def test_resolver_com_layer_diferente_do_name_e_reportado_pelo_proprio_nome(monk
     0% mesmo tendo casado lançamentos de verdade — o defeito de zero silencioso
     que este teste existe para travar.
     """
+    from orchestrator.kernel.cost import CostClass
     from orchestrator.models import MatchResult
-    from orchestrator.workflow.cost_class import CostClass
     from orchestrator.workflow.definition import Stage, WorkflowDefinition
     from orchestrator.workflow.resolver import ResolverDescription, ResolverOutput
 

@@ -7,7 +7,7 @@ Este é o único arquivo do projeto que conhece o SDK. Todo o resto fala com
 from typing import Any
 
 from orchestrator.agent.llm import LLMResponse, ToolCall
-from orchestrator.agent.proposal import Cost, modelo_precificado
+from orchestrator.kernel.cost import Cost, modelo_precificado
 
 _MAX_TOKENS = 2048
 

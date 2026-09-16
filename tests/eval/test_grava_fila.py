@@ -1,6 +1,6 @@
 from orchestrator.eval.agent_eval import avaliar
+from orchestrator.kernel.cost import CostClass
 from orchestrator.review.fila import Fila, caminho_da_fila, dataset_id
-from orchestrator.workflow.cost_class import CostClass
 from orchestrator.workflow.resolver import ResolverDescription, ResolverOutput
 
 

@@ -9,8 +9,8 @@ from dataclasses import dataclass, field
 from itertools import combinations
 
 from orchestrator.dates import business_days_between
+from orchestrator.kernel.cost import CostClass
 from orchestrator.models import BankEntry, LedgerEntry, MatchResult
-from orchestrator.workflow.cost_class import CostClass
 from orchestrator.workflow.resolver import ResolverDescription, ResolverOutput
 from orchestrator.workflow.workset import WorkSet
 

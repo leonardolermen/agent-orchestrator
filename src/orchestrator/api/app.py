@@ -31,12 +31,12 @@ from orchestrator.api.schemas import (
 from orchestrator.cli import build_benchmark
 from orchestrator.grill.receita import Receita, construir
 from orchestrator.grill.registro import listar_receitas
+from orchestrator.kernel.cost import CostClass
 from orchestrator.matching.engine import reconcile
 from orchestrator.metrics import evaluate
 from orchestrator.review.decision import Decision, Veredito, ids_de_conciliar_com
 from orchestrator.review.fila import Fila, caminho_da_fila, dataset_id
 from orchestrator.taxonomy import DivergenceType
-from orchestrator.workflow.cost_class import CostClass
 from orchestrator.workflow.definition import WorkflowDefinition, default_definition
 
 app = FastAPI(title="Agent Orchestrator — canvas")

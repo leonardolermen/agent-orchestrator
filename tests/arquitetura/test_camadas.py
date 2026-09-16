@@ -255,6 +255,23 @@ def test_destino_sem_entrada_redundante():
     )
 
 
+def test_destino_sem_entrada_orfa():
+    """Higiene: `DESTINO` não guarda módulo que não existe mais.
+
+    Escrito DEPOIS de o PR #2 deixar `workflow.cost_class` órfão na tabela sem
+    que nenhum dos 19 testes reclamasse. Entrada órfã é pior que ruído: ela
+    infla `DESLOCADOS_CONHECIDOS`, e um módulo novo criado no lugar errado com
+    um nome que por acaso já esteve ali entraria sem ninguém ver.
+    """
+    existentes = set(modulos())
+    orfas = sorted(set(DESTINO) - existentes)
+    assert not orfas, (
+        "entradas em `DESTINO` para módulos que não existem:\n  "
+        + "\n  ".join(orfas)
+        + "\n\nApague-a(s) no mesmo commit que removeu o módulo."
+    )
+
+
 @pytest.mark.parametrize("camada", sorted(PERMITIDO))
 def test_permitido_nao_referencia_camada_inexistente(camada: str):
     """A tabela não pode citar uma camada que não existe.

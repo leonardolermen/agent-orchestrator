@@ -1,11 +1,11 @@
 from datetime import UTC, datetime
 
+from orchestrator.kernel.cost import CostClass
 from orchestrator.review.decision import Decision, Veredito
 from orchestrator.review.fila import Fila
 from orchestrator.review.revisor import RevisorHumano
 from orchestrator.synth.generator import generate_clean_pairs
 from orchestrator.taxonomy import DivergenceType
-from orchestrator.workflow.cost_class import CostClass
 from orchestrator.workflow.workset import WorkSet
 
 
