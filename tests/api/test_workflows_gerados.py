@@ -78,6 +78,44 @@ def test_workflow_com_agente_e_listado_como_nao_executavel(tmp_path):
     assert "AGENTE" in pago["classes"]
 
 
+def test_receita_inconstruivel_nao_derruba_a_listagem(tmp_path, capsys):
+    # Gatilho realista: o catálogo é feito para CRESCER, e renomear um
+    # parâmetro (ou aposentar um resolver) invalida receitas já gravadas. Uma
+    # receita que PARSEIA mas não CONSTRÓI derrubava `GET /api/workflows` com
+    # 500 — e com ele o seletor do canvas para TODOS os workflows, enquanto
+    # cada um deles, individualmente, continuava respondendo 200.
+    # `listar_receitas` já isola o parse; esta é a outra metade.
+    _gravar(tmp_path, "acme", "L1", "revisor")
+    _gravar(tmp_path, "quebrada", "L9")
+    cliente = TestClient(app_mod.app)
+
+    resposta = cliente.get("/api/workflows")
+
+    assert resposta.status_code == 200
+    assert {x["id"] for x in resposta.json()} == {"conciliacao", "acme"}
+    # Pular não pode ser sumir em silêncio — a mesma frase que
+    # `listar_receitas` já escreve para o arquivo ilegível.
+    assert "quebrada" in capsys.readouterr().err
+
+
+def test_conciliacao_no_disco_nao_substitui_a_embutida(tmp_path):
+    # A segunda tranca de `_fabricas`: `conciliacao` é id reservado no
+    # registro, mas nada impede um arquivo posto à mão no disco. Se a ordem do
+    # dict deixasse o disco vencer, o golden e o demo inteiro passariam a
+    # descrever outra coisa sem que nenhum teste percebesse.
+    _gravar(tmp_path, "conciliacao", "L1")
+    cliente = TestClient(app_mod.app)
+
+    dados = cliente.get("/api/workflows/conciliacao").json()
+
+    assert dados["name"] == "Conciliação bancária"
+    assert [r["name"] for r in dados["stages"][0]["cascade"]] == ["L1", "L2", "L3", "revisor"]
+    # E a listagem descreve a MESMA definição embutida, não a do arquivo
+    # (cujo `nome` seria "W conciliacao"), nem uma entrada duplicada.
+    resumos = [x for x in cliente.get("/api/workflows").json() if x["id"] == "conciliacao"]
+    assert [x["nome"] for x in resumos] == ["Conciliação bancária"]
+
+
 def test_id_desconhecido_continua_404(tmp_path):
     cliente = TestClient(app_mod.app)
     assert cliente.get("/api/workflows/nao-existe").status_code == 404

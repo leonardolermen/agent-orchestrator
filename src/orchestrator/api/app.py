@@ -6,6 +6,7 @@ modelo. Ver o §5 do spec desta fatia e o teste em `tests/api/test_execucao.py`.
 """
 
 import inspect
+import sys
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
@@ -83,7 +84,23 @@ def listar_workflows() -> list[WorkflowResumoJSON]:
     resumos = []
     por_id = {r.id: r for r in listar_receitas(_RAIZ_RECEITAS)}
     for workflow_id, fabrica in _fabricas().items():
-        definicao = _construir_definicao(fabrica, Fila.vazia())
+        try:
+            definicao = _construir_definicao(fabrica, Fila.vazia())
+        except (ValueError, TypeError) as erro:
+            # Mesmo isolamento que `listar_receitas` já aplica ao PARSE, agora
+            # também na CONSTRUÇÃO — as duas metades da mesma frase: um
+            # arquivo ruim não pode derrubar a listagem inteira, mas também
+            # não pode sumir em silêncio. Sem isto, UMA receita que parseia e
+            # não constrói (um resolver que saiu do catálogo, um parâmetro
+            # renomeado — o catálogo é feito para crescer) devolve 500 em
+            # `GET /api/workflows` e mata o seletor do canvas para TODOS os
+            # workflows, enquanto cada um deles, individualmente, continua
+            # respondendo 200.
+            print(
+                f"workflow ignorado, receita não construível: {workflow_id} ({erro})",
+                file=sys.stderr,
+            )
+            continue
         classes = sorted(
             {r.cost_class.name for s in definicao.stages for r in s.cascade}
         )
