@@ -1,7 +1,7 @@
 from orchestrator.eval.agent_eval import avaliar
 from orchestrator.kernel.cost import CostClass
 from orchestrator.kernel.resolver import ResolverDescription, ResolverOutput
-from orchestrator.models import divergencias
+from orchestrator.models import abstencao, divergencias
 from orchestrator.review.fila import Fila, caminho_da_fila, dataset_id
 
 
@@ -10,10 +10,9 @@ class _AgenteFalso:
     cost_class = CostClass.AGENTE
 
     def resolve(self, work):
-        from orchestrator.agent.proposal import Proposal
         return ResolverOutput(
             proposals=[
-                Proposal.abstencao(d.id, "não sei") for d in divergencias(work)
+                abstencao(d.id, "não sei") for d in divergencias(work)
             ]
         )
 

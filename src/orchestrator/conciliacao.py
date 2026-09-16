@@ -18,10 +18,9 @@ forma, com ~80 linhas cada.
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from orchestrator.agent.proposal import Proposal
 from orchestrator.kernel.cost import Cost, CostClass
 from orchestrator.kernel.definition import Stage, WorkflowDefinition
-from orchestrator.kernel.resolution import Resolution
+from orchestrator.kernel.resolution import Proposal, Resolution
 from orchestrator.kernel.resolver import Resolver
 from orchestrator.matching.exact import ExactMatcher
 from orchestrator.matching.grouping import GroupingMatcher

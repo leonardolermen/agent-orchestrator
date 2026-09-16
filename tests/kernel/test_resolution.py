@@ -1,12 +1,12 @@
 import pytest
 
-from orchestrator.agent.proposal import (
+from orchestrator.kernel.cost import Cost
+from orchestrator.kernel.resolution import (
     Confidence,
     InvestigationOutput,
     Proposal,
     TraceEvent,
 )
-from orchestrator.kernel.cost import Cost
 from orchestrator.taxonomy import DivergenceType
 
 
@@ -74,10 +74,46 @@ def test_proposta_carrega_evidencia_e_confianca():
 
 
 def test_abstencao_e_proposta_valida():
-    p = Proposal.abstencao(divergence_id="d-b-b00002", motivo="sem contexto suficiente")
-    assert p.tipo is DivergenceType.NAO_IDENTIFICADO
+    """Não saber é resposta válida, e o kernel não decide qual é o rótulo dela.
+
+    `tipo` é parâmetro desde o PR #6: a conciliação passa
+    `DivergenceType.NAO_IDENTIFICADO` (via `models.abstencao`), e um domínio
+    novo passa o não-sei dele. Este teste usa um rótulo inventado justamente
+    para provar que o kernel aceita qualquer um.
+    """
+    p = Proposal.abstencao(
+        divergence_id="d-b-b00002",
+        tipo="NAO_SEI",
+        motivo="sem contexto suficiente",
+    )
+    assert p.tipo == "NAO_SEI"
     assert p.confianca is Confidence.BAIXA
-    assert p.acao_sugerida == "investigar_manual"
+    assert p.evidencia == []
+
+
+def test_tipo_NAO_e_coagido_pelo_kernel():
+    """A coerção de `tipo` desceu para o domínio no PR #6, e é deliberado.
+
+    `Proposal` é do kernel e não pode conhecer `DivergenceType`. Quem coage é
+    quem constrói a partir de dado externo, e as duas fronteiras que fazem isso
+    têm teste próprio: `interpretar_proposta` (JSON do modelo) em
+    `tests/agent/test_investigator.py`, e `serial.proposta_de_dict` (JSONL da
+    fila) em `tests/review/test_serial.py`.
+
+    A perda em relação a P2.6 é real e está contida: quem construir um
+    `Proposal` de conciliação à mão com string crua perde a comparação por
+    identidade. Nenhum caminho de produção faz isso.
+    """
+    p = Proposal(
+        divergence_id="d1",
+        tipo="RETENCAO_IMPOSTO",
+        explicacao="x",
+        evidencia=["l1"],
+        confianca="ALTA",
+        acao_sugerida="conciliar",
+    )
+    assert p.tipo == "RETENCAO_IMPOSTO"
+    assert p.tipo is not DivergenceType.RETENCAO_IMPOSTO
 
 
 def test_confianca_vinda_como_string_e_coagida_ao_enum():
@@ -93,7 +129,6 @@ def test_confianca_vinda_como_string_e_coagida_ao_enum():
         cost=Cost.zero(),
     )
     assert p.confianca is Confidence.ALTA
-    assert p.tipo is DivergenceType.RETENCAO_IMPOSTO
 
 
 def test_confianca_alta_como_string_tambem_exige_evidencia():
@@ -126,19 +161,22 @@ def test_proposta_com_confianca_alta_exige_evidencia():
 
 def test_proposta_carrega_trace_auditavel():
     p = Proposal.abstencao(
-        "d1", "x", trace=[TraceEvent(kind="llm", detail={"turno": 1, "tokens": 50})]
+        "d1",
+        "NAO_SEI",
+        "x",
+        trace=[TraceEvent(kind="llm", detail={"turno": 1, "tokens": 50})],
     )
     assert p.trace[0].kind == "llm"
     assert p.trace[0].detail["turno"] == 1
 
 
 def test_proposta_sem_trace_nasce_com_lista_vazia():
-    assert Proposal.abstencao("d1", "x").trace == []
+    assert Proposal.abstencao("d1", "NAO_SEI", "x").trace == []
 
 
 def test_saida_de_investigacao_agrega_custo():
-    p1 = Proposal.abstencao("d1", "x")
-    p2 = Proposal.abstencao("d2", "y")
+    p1 = Proposal.abstencao("d1", "NAO_SEI", "x")
+    p2 = Proposal.abstencao("d2", "NAO_SEI", "y")
     out = InvestigationOutput(proposals=[p1, p2], cost=_custo() + _custo())
     assert out.cost.calls == 4
     assert len(out.proposals) == 2

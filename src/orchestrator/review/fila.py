@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from orchestrator.agent.proposal import Proposal
+from orchestrator.kernel.resolution import Proposal
 from orchestrator.review.decision import Decision
 from orchestrator.review.serial import (
     decisao_de_dict,

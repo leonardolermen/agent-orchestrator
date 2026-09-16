@@ -26,12 +26,12 @@ from orchestrator.agent.investigator import (
     descrever_divergencia,
     interpretar_proposta,
 )
-from orchestrator.agent.proposal import Proposal, TraceEvent, TraceKind
 from orchestrator.agent.tools import TOOL_SCHEMAS, ToolContext
 from orchestrator.kernel.cost import Cost, CostClass
+from orchestrator.kernel.resolution import Proposal, TraceEvent, TraceKind
 from orchestrator.kernel.resolver import ResolverDescription, ResolverOutput
 from orchestrator.kernel.work import WorkSet
-from orchestrator.models import divergencias
+from orchestrator.models import abstencao, divergencias
 
 _SERVIDOR = "conciliacao"
 
@@ -116,8 +116,7 @@ class InvestigadorAssinatura:
             # Mesma política do caminho pago: falha de infraestrutura vira
             # abstenção registrada, nunca derruba o lote.
             trace.append(TraceEvent(kind=TraceKind.ERRO, detail={"erro": str(erro)}))
-            return Proposal.abstencao(
-                divergencia.id, f"falha ao investigar via assinatura: {erro}",
+            return abstencao(divergencia.id, f"falha ao investigar via assinatura: {erro}",
                 Cost.zero(), trace,
             )
 
@@ -128,8 +127,7 @@ class InvestigadorAssinatura:
         trace.append(
             TraceEvent(kind=TraceKind.OUTCOME, detail={"motivo": "sem conclusão"})
         )
-        return Proposal.abstencao(
-            divergencia.id, "investigação encerrada sem conclusão utilizável",
+        return abstencao(divergencia.id, "investigação encerrada sem conclusão utilizável",
             Cost.zero(), trace,
         )
 

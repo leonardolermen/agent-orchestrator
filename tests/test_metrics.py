@@ -1,15 +1,14 @@
 from random import Random
 
-from orchestrator.agent.proposal import Confidence, InvestigationOutput, Proposal
 from orchestrator.cli import build_benchmark
 from orchestrator.conciliacao import default_resolvers, reconcile
 from orchestrator.kernel.cost import Cost, CostClass
 from orchestrator.kernel.definition import Stage, WorkflowDefinition
-from orchestrator.kernel.resolution import Resolution
+from orchestrator.kernel.resolution import Confidence, InvestigationOutput, Proposal, Resolution
 from orchestrator.kernel.resolver import Resolver, ResolverDescription, ResolverOutput
 from orchestrator.kernel.work import WorkSet
 from orchestrator.metrics import evaluate
-from orchestrator.models import banco, contabil, divergencias
+from orchestrator.models import abstencao, banco, contabil, divergencias
 from orchestrator.money import format_brl
 from orchestrator.synth.generator import build_dataset, generate_clean_pairs
 from orchestrator.synth.injectors import DefasagemTemporal, PagamentoAgregado
@@ -33,7 +32,7 @@ class _ResolverInvestigadorFalso:
     def resolve(self, work: WorkSet) -> ResolverOutput:
         divs = divergencias(work)
         return ResolverOutput(
-            proposals=[Proposal.abstencao(d.id, "teste") for d in divs],
+            proposals=[abstencao(d.id, "teste") for d in divs],
             cost=Cost(input_tokens=100 * len(divs), calls=len(divs)),
         )
 
@@ -251,7 +250,7 @@ class _InvestigadorQueAcerta:
             ids = d.bank_ids | d.ledger_ids
             tipo = next((self._por_id[i] for i in ids if i in self._por_id), None)
             if tipo is None:
-                propostas.append(Proposal.abstencao(d.id, "fora do gabarito"))
+                propostas.append(abstencao(d.id, "fora do gabarito"))
             else:
                 propostas.append(
                     Proposal(
@@ -322,7 +321,7 @@ def test_abstencao_nao_conta_como_acerto_nem_como_erro():
         cost_class = CostClass.AGENTE
 
         def investigate(self, divergences):
-            ps = [Proposal.abstencao(d.id, "não sei") for d in divergences]
+            ps = [abstencao(d.id, "não sei") for d in divergences]
             return InvestigationOutput(ps, Cost.zero())
 
         def resolve(self, work: WorkSet) -> ResolverOutput:

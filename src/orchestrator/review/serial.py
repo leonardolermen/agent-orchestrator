@@ -8,8 +8,8 @@ lista ORDENADA — o arquivo é append-only e precisa ser diffável.
 from datetime import datetime
 from typing import Any
 
-from orchestrator.agent.proposal import Confidence, Proposal, TraceEvent, TraceKind
 from orchestrator.kernel.cost import Cost
+from orchestrator.kernel.resolution import Confidence, Proposal, TraceEvent, TraceKind
 from orchestrator.review.decision import Decision, Veredito
 from orchestrator.taxonomy import DivergenceType
 

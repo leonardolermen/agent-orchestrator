@@ -47,21 +47,22 @@ from .camadas import (
     violacoes,
 )
 
-# As 15 arestas ilegais que existem hoje, agrupadas pela CAUSA, não pelo arquivo.
+# As 14 arestas ilegais que existem hoje, agrupadas pela CAUSA, não pelo arquivo.
 #
 # Uma entrada sai daqui no mesmo PR que a elimina — nunca antes, nunca depois.
 # O PR anotado ao lado de cada grupo é o de `§27` do spec desta migração.
 VIOLACOES_CONHECIDAS: frozenset[tuple[str, str]] = frozenset(
     {
         # ---------------------------------------------------------------
-        # CAUSA 1 — tipos de domínio dentro do núcleo. 11 das 15 arestas.
+        # CAUSA 1 — tipos de domínio dentro do núcleo. 10 das 14 arestas.
+        # O kernel já saiu dela: `Proposal.tipo` virou `str` no PR #6. O que
+        # resta é `agent` e `human` conhecendo conciliação — fecha no PR #12.
         # É a lacuna nº 1 do §1.2: `WorkSet` conhece `BankEntry`, `Proposal`
         # conhece `DivergenceType`. Fecha nos PRs #3 (WorkItem) e #4 (Resolution).
         # ---------------------------------------------------------------
         # PR #3 fechou `workflow.workset -> models` e `workflow.resolver ->
         # models`: `WorkSet` e `Resolution` são genéricos, e o domínio virou
         # payload opaco.
-        ("agent.proposal", "taxonomy"),
         ("agent.investigator", "models"),
         ("agent.investigator", "taxonomy"),
         ("agent.investigator", "agent.tools"),
@@ -81,7 +82,7 @@ VIOLACOES_CONHECIDAS: frozenset[tuple[str, str]] = frozenset(
         ("review.serial", "taxonomy"),
         ("metrics", "taxonomy"),
         ("metrics", "money"),
-        # Esta é a mais consequente das onze: a avaliação importa o GERADOR
+        # Esta é a mais consequente das dez: a avaliação importa o GERADOR
         # sintético, e por isso só sabe medir contra gabarito fabricado. É a
         # lacuna nº 4 do §1.2 na forma de uma seta. Fecha no PR que introduz
         # `ExpectedOutcome` com duas procedências (M6).

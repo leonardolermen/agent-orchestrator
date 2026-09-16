@@ -61,12 +61,10 @@ DESTINO: dict[str, str] = {
     # `kernel/cost.py` (PR #2), `workset` virou `kernel/work.py` (PR #3), e
     # `resolver`/`definition` foram para `kernel/`. O diretório responde por
     # todos — não há mais entrada aqui.
-    # `proposal.py` carrega DUAS coisas: Cost/Confidence/TraceEvent (kernel) e
-    # a Proposal amarrada a DivergenceType (hoje, domínio). Vai para kernel
-    # porque é para lá que o tipo vai depois de generalizado — e a violação que
-    # isso produz (kernel -> domains, via `taxonomy`) é justamente a lacuna nº 1
-    # do §1.2, que o PR #4 fecha.
-    "agent.proposal": "kernel",
+    # `agent.proposal` sumiu no PR #6: `Proposal`, `Confidence`, `TraceEvent` e
+    # `TraceKind` foram para `kernel/resolution.py`, e `Proposal.tipo` deixou de
+    # ser `DivergenceType` para ser `str`. Foi a generalização que os domínios
+    # esqueleto exigiram — e que nenhuma análise prévia tinha previsto.
     # --- runtime ---
     # `matching.engine` virou `runtime/engine.py` no PR #5. Diretório responde.
     # --- agente: o laço genérico e a costura do modelo ---

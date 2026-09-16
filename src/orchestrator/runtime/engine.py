@@ -12,10 +12,9 @@ Quem transforma o resto em `Divergence` é `conciliacao.reconcile()`.
 
 from dataclasses import dataclass, field
 
-from orchestrator.agent.proposal import Proposal
 from orchestrator.kernel.cost import Cost, CostClass
 from orchestrator.kernel.definition import WorkflowDefinition
-from orchestrator.kernel.resolution import Resolution
+from orchestrator.kernel.resolution import Proposal, Resolution
 from orchestrator.kernel.work import WorkSet
 
 

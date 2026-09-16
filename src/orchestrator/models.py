@@ -19,8 +19,10 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
-from orchestrator.kernel.resolution import Resolution
+from orchestrator.kernel.cost import Cost
+from orchestrator.kernel.resolution import Proposal, Resolution, TraceEvent
 from orchestrator.kernel.work import WorkItem, WorkSet
+from orchestrator.taxonomy import DivergenceType
 
 
 @dataclass(frozen=True)
@@ -192,4 +194,26 @@ def lados(work: WorkSet, ids: frozenset[str]) -> tuple[frozenset[str], frozenset
     return (
         frozenset(i for i in ids if por_id.get(i) == BANCO),
         frozenset(i for i in ids if por_id.get(i) == CONTABIL),
+    )
+
+
+def abstencao(
+    divergence_id: str,
+    motivo: str,
+    cost: "Cost | None" = None,
+    trace: "list[TraceEvent] | None" = None,
+) -> Proposal:
+    """O "não sei" da conciliação.
+
+    `Proposal.abstencao` passou a exigir o `tipo` quando a proposta virou
+    genérica (PR #6): qual é o rótulo de não-saber é decisão do domínio, e o
+    kernel não pode ter `NAO_IDENTIFICADO` embutido.
+
+    Esta função existe para que essa generalização não custe um
+    `DivergenceType.NAO_IDENTIFICADO` repetido em cada uma das oito chamadas.
+    A repetição seria a mesma classe de join frágil que o `CATALOGO` do grill
+    já evita: oito lugares que precisam concordar sobre qual é o não-sei.
+    """
+    return Proposal.abstencao(
+        divergence_id, DivergenceType.NAO_IDENTIFICADO, motivo, cost, trace
     )

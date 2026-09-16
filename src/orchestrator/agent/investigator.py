@@ -11,18 +11,18 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from orchestrator.agent.llm import LLMClient, blocos_assistente
-from orchestrator.agent.proposal import (
+from orchestrator.agent.tools import TOOL_SCHEMAS, ToolContext
+from orchestrator.kernel.cost import Cost, CostClass
+from orchestrator.kernel.resolution import (
     Confidence,
     InvestigationOutput,
     Proposal,
     TraceEvent,
     TraceKind,
 )
-from orchestrator.agent.tools import TOOL_SCHEMAS, ToolContext
-from orchestrator.kernel.cost import Cost, CostClass
 from orchestrator.kernel.resolver import ResolverDescription, ResolverOutput
 from orchestrator.kernel.work import WorkSet
-from orchestrator.models import Divergence, divergencias
+from orchestrator.models import Divergence, abstencao, divergencias
 from orchestrator.taxonomy import DivergenceType
 
 if TYPE_CHECKING:
@@ -195,8 +195,11 @@ class Investigator:
                     )
                 ]
                 propostas.append(
-                    Proposal.abstencao(
-                        d.id, "orçamento total da execução esgotado", Cost.zero(), trace
+                    abstencao(d.id, "orçamento total da execução esgotado",
+
+                        Cost.zero(),
+
+                        trace,
                     )
                 )
                 continue
@@ -235,8 +238,11 @@ class Investigator:
                 trace.append(
                     TraceEvent(kind=TraceKind.OUTCOME, detail={"motivo": "falha de api"})
                 )
-                return Proposal.abstencao(
-                    divergencia.id, f"falha de API ao investigar: {erro}", custo, trace
+                return abstencao(divergencia.id, f"falha de API ao investigar: {erro}",
+
+                    custo,
+
+                    trace,
                 )
 
             custo = custo + resposta.cost
@@ -260,8 +266,11 @@ class Investigator:
                 trace.append(
                     TraceEvent(kind=TraceKind.OUTCOME, detail={"motivo": "orçamento"})
                 )
-                return Proposal.abstencao(
-                    divergencia.id, "orçamento da divergência esgotado", custo, trace
+                return abstencao(divergencia.id, "orçamento da divergência esgotado",
+
+                    custo,
+
+                    trace,
                 )
 
             if resposta.tool_calls:
@@ -316,9 +325,7 @@ class Investigator:
             )
 
         trace.append(TraceEvent(kind=TraceKind.OUTCOME, detail={"motivo": "sem conclusão"}))
-        return Proposal.abstencao(
-            divergencia.id,
-            "investigação encerrada sem conclusão utilizável",
+        return abstencao(divergencia.id, "investigação encerrada sem conclusão utilizável",
             custo,
             trace,
         )

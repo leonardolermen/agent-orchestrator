@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from orchestrator.agent.proposal import Confidence, Proposal
+from orchestrator.kernel.resolution import Confidence, Proposal
 from orchestrator.review.decision import Decision, Veredito
 from orchestrator.review.fila import Fila, caminho_da_fila, dataset_id
 from orchestrator.review.serial import decisao_para_dict, proposta_para_dict

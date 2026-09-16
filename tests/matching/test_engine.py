@@ -1,13 +1,13 @@
 from random import Random
 
-from orchestrator.agent.proposal import InvestigationOutput, Proposal
 from orchestrator.cli import build_benchmark
 from orchestrator.conciliacao import default_resolvers, reconcile
 from orchestrator.kernel.cost import Cost, CostClass
 from orchestrator.kernel.definition import Stage, WorkflowDefinition
+from orchestrator.kernel.resolution import InvestigationOutput, Proposal
 from orchestrator.kernel.resolver import Resolver, ResolverDescription, ResolverOutput
 from orchestrator.kernel.work import WorkSet
-from orchestrator.models import divergencias
+from orchestrator.models import abstencao, divergencias
 from orchestrator.synth.generator import build_dataset, generate_clean_pairs
 from orchestrator.synth.injectors import DefasagemTemporal, DevolucaoFundos
 
@@ -118,7 +118,7 @@ class _InvestigadorFalso:
     def investigate(self, divergences):
         self.recebeu = divergences
         return InvestigationOutput(
-            proposals=[Proposal.abstencao(d.id, "teste") for d in divergences],
+            proposals=[abstencao(d.id, "teste") for d in divergences],
             cost=Cost(calls=len(divergences)),
         )
 
@@ -338,7 +338,7 @@ def test_ordenacao_e_por_stage_nao_global():
 def test_proposta_nao_remove_nada_do_pool():
     # Um resolver que só propõe não pode encolher o pool. Se encolher, o item
     # sai de divergente sem ninguém ter aprovado nada.
-    from orchestrator.agent.proposal import Confidence, Proposal
+    from orchestrator.kernel.resolution import Confidence
     from orchestrator.taxonomy import DivergenceType
 
     class _SoPropoe:

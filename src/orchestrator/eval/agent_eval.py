@@ -14,11 +14,11 @@ from pathlib import Path
 
 from orchestrator.agent.investigator import Investigator
 from orchestrator.agent.llm import LLMClient
-from orchestrator.agent.proposal import TraceKind
 from orchestrator.agent.tools import ToolContext
 from orchestrator.cli import build_benchmark
 from orchestrator.conciliacao import default_resolvers, reconcile
 from orchestrator.kernel.definition import Stage, WorkflowDefinition
+from orchestrator.kernel.resolution import TraceKind
 from orchestrator.metrics import evaluate
 from orchestrator.review.fila import Fila, caminho_da_fila, dataset_id
 
