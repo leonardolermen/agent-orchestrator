@@ -1,0 +1,184 @@
+/* O compositor. Herda as variáveis de `style.css` — as cores de classe de
+   custo são as MESMAS do canvas de execução, de propósito: se REGRA fosse
+   verde numa tela e azul na outra, a pessoa aprenderia duas linguagens para
+   ler a mesma coisa. */
+
+#compositor {
+  max-width: 46rem;
+  margin: 0 auto;
+  display: grid;
+  gap: 1.5rem;
+}
+
+#compositor h2 {
+  font-size: 1rem;
+  margin: 0 0 .25rem;
+}
+
+.ajuda {
+  margin: 0 0 .75rem;
+  color: #6b6660;
+  font-size: .85rem;
+}
+
+.cartoes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: .5rem;
+}
+
+.cartao {
+  border: 1px solid var(--borda);
+  border-left: 3px solid var(--borda);
+  border-radius: 5px;
+  background: #fff;
+  padding: .6rem .75rem;
+}
+
+/* A borda esquerda carrega a classe de custo. É a mesma convenção do canvas de
+   execução, então quem já viu uma cascata rodar reconhece a paleta sem
+   legenda. */
+.cartao.classe-regra  { border-left-color: var(--regra); }
+.cartao.classe-agente { border-left-color: var(--agente); }
+.cartao.classe-humano { border-left-color: var(--humano); }
+.cartao.classe-crew   { border-left-color: var(--lacuna); }
+
+.cartao.usado { opacity: .45; }
+
+#paleta .cartao { padding: 0; }
+#paleta .cartao button {
+  display: grid;
+  gap: .15rem;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: .6rem .75rem;
+  cursor: pointer;
+  border-radius: 5px;
+}
+#paleta .cartao button:disabled { cursor: not-allowed; }
+#paleta .cartao button:hover:not(:disabled) { background: #f3f1ed; }
+
+.nome { font-weight: 600; }
+.classe {
+  font-size: .72rem;
+  letter-spacing: .04em;
+  color: #6b6660;
+}
+.classe-regra  .classe { color: var(--regra); }
+.classe-agente .classe { color: var(--agente); }
+.classe-humano .classe { color: var(--humano); }
+.resumo { font-size: .85rem; color: #4a4640; }
+
+.cabecalho {
+  display: flex;
+  align-items: baseline;
+  gap: .5rem;
+}
+.cabecalho .remover {
+  margin-left: auto;
+  font: inherit;
+  font-size: .78rem;
+  background: none;
+  border: 0;
+  color: #8a6d1f;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+}
+
+.parametro {
+  display: grid;
+  grid-template-columns: 11rem 6rem;
+  align-items: center;
+  gap: .4rem .6rem;
+  margin-top: .5rem;
+  font-size: .85rem;
+}
+.parametro input {
+  font: inherit;
+  padding: .2rem .35rem;
+  border: 1px solid var(--borda);
+  border-radius: 4px;
+  background: #fff;
+  color: var(--tinta);
+}
+.parametro small {
+  grid-column: 1 / -1;
+  color: #6b6660;
+  font-size: .78rem;
+}
+
+/* O aviso de custo. Amarelo e não vermelho: uma cascata com classe AGENTE não
+   está errada — ela custa, e a diferença entre "errado" e "caro" é a tese do
+   produto inteiro. */
+.custo {
+  margin: .75rem 0 0;
+  padding: .5rem .7rem;
+  border-radius: 4px;
+  font-size: .85rem;
+  color: var(--lacuna);
+  background: var(--lacuna-fundo);
+}
+.custo:empty { display: none; }
+
+#identidade label {
+  display: block;
+  margin-bottom: .6rem;
+  font-size: .85rem;
+  color: #4a4640;
+}
+#identidade input,
+#identidade textarea {
+  display: block;
+  width: 100%;
+  margin-top: .2rem;
+  font: inherit;
+  padding: .35rem .5rem;
+  border: 1px solid var(--borda);
+  border-radius: 4px;
+  background: #fff;
+  color: var(--tinta);
+  box-sizing: border-box;
+}
+
+#salvar {
+  font: inherit;
+  padding: .45rem 1rem;
+  border: 1px solid var(--borda);
+  border-radius: 4px;
+  background: var(--tinta);
+  color: var(--fundo);
+  cursor: pointer;
+}
+#salvar:disabled {
+  background: #cfcac2;
+  border-color: #cfcac2;
+  cursor: not-allowed;
+}
+
+.erro {
+  margin: .6rem 0 0;
+  color: #9c2a2a;
+  font-size: .85rem;
+}
+.erro:empty { display: none; }
+
+#resultado h3 {
+  font-size: .9rem;
+  margin: .75rem 0 .4rem;
+  color: #4a4640;
+}
+#resultado .cartao { display: grid; gap: .15rem; }
+
+@media (min-width: 52rem) {
+  #compositor {
+    grid-template-columns: 1fr 1fr;
+  }
+  #identidade, #resultado { grid-column: 1 / -1; }
+}

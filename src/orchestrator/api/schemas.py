@@ -183,3 +183,60 @@ def workflow_json(definicao: WorkflowDefinition) -> WorkflowJSON:
         name=definicao.name,
         stages=[stage_json(s) for s in definicao.stages],
     )
+
+
+# ---------------------------------------------------------------------------
+# Composição: o que o canvas de autoria precisa ver e enviar.
+#
+# A propriedade que faz este canvas ser seguro está do lado do servidor, não do
+# desenho: a ORDEM da cascata não é um campo. Quem ordena é `Stage.ordered()`,
+# por `CostClass`, e não existe entrada que a inverta. O canvas escolhe QUAIS
+# resolvers entram; a ordem em que rodam é derivada.
+#
+# É a diferença entre uma tela que desenha um fluxo e uma tela que desenha o
+# fluxo QUE VAI RODAR — o §3.5 chama a primeira de decoração e a nomeia como
+# modo de falha.
+# ---------------------------------------------------------------------------
+
+
+class ParametroJSON(BaseModel):
+    nome: str
+    default: int
+    descricao: str
+
+
+class EntradaCatalogoJSON(BaseModel):
+    nome: str
+    cost_class: str
+    resumo: str
+    parametros: list[ParametroJSON]
+
+
+class ResolverReceitaJSON(BaseModel):
+    nome: str
+    parametros: dict[str, int] = Field(default_factory=dict)
+
+
+class ReceitaRequest(BaseModel):
+    """Uma cascata composta na tela.
+
+    Sem campo de ordem, de propósito — ver o comentário acima. E sem
+    `gerado_em`: o relógio é do servidor, porque um timestamp vindo do cliente
+    permitiria gravar uma receita "criada" antes de outra que a antecedeu.
+    """
+
+    id: str
+    nome: str
+    justificativa: str = ""
+    resolvers: list[ResolverReceitaJSON] = Field(min_length=1)
+
+    @field_validator("id")
+    @classmethod
+    def _id_valido(cls, v: str) -> str:
+        from orchestrator.grill.receita import validar_id
+
+        # A MESMA validação que o grill usa. Uma cópia aqui divergiria na
+        # primeira mudança, e o sintoma seria uma receita aceita pela tela e
+        # recusada pelo disco.
+        validar_id(v)
+        return v

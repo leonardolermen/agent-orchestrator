@@ -14,10 +14,13 @@ from fastapi.staticfiles import StaticFiles
 
 from orchestrator.api.schemas import (
     DecisaoRequest,
+    EntradaCatalogoJSON,
     FilaJSON,
     GapJSON,
     ItemFilaJSON,
     LancamentoJSON,
+    ParametroJSON,
+    ReceitaRequest,
     ResolverRunJSON,
     RunJSON,
     RunRequest,
@@ -27,7 +30,9 @@ from orchestrator.api.schemas import (
     workflow_json,
 )
 from orchestrator.conciliacao import reconcile
-from orchestrator.grill.registro import listar_receitas
+from orchestrator.grill.catalogo import CATALOGO
+from orchestrator.grill.receita import Receita, ResolverReceita, construir
+from orchestrator.grill.registro import gravar_receita, listar_receitas
 from orchestrator.kernel.cost import Cost, CostClass
 from orchestrator.kernel.event import EventBus
 from orchestrator.kernel.run import RunState
@@ -76,6 +81,69 @@ def listar_workflows() -> list[WorkflowResumoJSON]:
             )
         )
     return resumos
+
+
+@app.get("/api/catalogo", response_model=list[EntradaCatalogoJSON])
+def catalogo() -> list[EntradaCatalogoJSON]:
+    """O que dá para compor. Derivado do `CATALOGO`, nunca escrito à mão.
+
+    Ordenado por classe de custo e depois por nome: é a ordem em que a cascata
+    VAI RODAR, então é a ordem em que a tela deve oferecer. Uma paleta em ordem
+    alfabética sugeriria que o autor escolhe a sequência — e ele não escolhe.
+    """
+    return [
+        EntradaCatalogoJSON(
+            nome=e.nome,
+            cost_class=e.cost_class.name,
+            resumo=e.resumo,
+            parametros=[
+                ParametroJSON(nome=p.nome, default=p.default, descricao=p.descricao)
+                for p in e.parametros
+            ],
+        )
+        for e in sorted(CATALOGO.values(), key=lambda e: (e.cost_class, e.nome))
+    ]
+
+
+@app.post("/api/receitas", response_model=WorkflowJSON, status_code=201)
+def criar_receita(pedido: ReceitaRequest) -> WorkflowJSON:
+    """Compõe uma cascata. VALIDA CONSTRUINDO.
+
+    `construir` é a mesma função que o entrevistador do grill usa, e ela
+    levanta `ValueError` com mensagem escrita para ser lida. Aqui essa
+    mensagem vira o corpo do 422 — a tela mostra o texto do domínio em vez de
+    um erro genérico, e não existe uma segunda lista de regras na camada HTTP
+    para divergir da primeira.
+
+    Devolve a definição CONSTRUÍDA, não a receita enviada. É o que faz a tela
+    mostrar a cascata na ordem em que ela roda (`Stage.ordered()`) em vez de na
+    ordem em que o autor clicou.
+    """
+    receita = Receita(
+        id=pedido.id,
+        nome=pedido.nome,
+        justificativa=pedido.justificativa,
+        # Relógio do SERVIDOR. Ver `ReceitaRequest`.
+        gerado_em=datetime.now(UTC),
+        resolvers=tuple(
+            ResolverReceita(nome=r.nome, parametros=dict(r.parametros))
+            for r in pedido.resolvers
+        ),
+    )
+    try:
+        definicao = construir(receita)
+    except ValueError as erro:
+        raise HTTPException(status_code=422, detail=str(erro)) from erro
+
+    if pedido.id in registry(_RAIZ_RECEITAS):
+        raise HTTPException(
+            status_code=409,
+            detail=f"já existe um workflow com id {pedido.id!r}; escolha outro",
+        )
+    # Grava só DEPOIS de construir: uma receita que não roda não vai para o
+    # disco. Mesma ordem de `gravar_receita` no grill, e pelo mesmo motivo.
+    gravar_receita(receita, _RAIZ_RECEITAS)
+    return workflow_json(definicao)
 
 
 @app.get("/api/workflows/{workflow_id}", response_model=WorkflowJSON)

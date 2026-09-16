@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Compor cascata — Agent Orchestrator</title>
+  <meta name="description" content="Compor uma cascata de resolvers. A ordem é derivada da classe de custo, não escolhida.">
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/compor.css">
+</head>
+<body>
+  <header>
+    <h1>Compor uma cascata</h1>
+    <p class="proveniencia">
+      Escolha <strong>quais</strong> resolvers entram. A ordem <strong>entre
+      classes de custo</strong> não é sua: do mais barato ao mais caro, e não existe
+      entrada que a inverta. <strong>Dentro</strong> de uma classe, vale a ordem em
+      que você acrescentou — <code>sorted</code> é estável, e o motor respeita a
+      mesma coisa.
+    </p>
+    <a class="link-outro" href="/">← Ver a cascata em execução</a>
+  </header>
+
+  <main id="compositor">
+    <section id="paleta" aria-labelledby="h-paleta">
+      <h2 id="h-paleta">Disponíveis</h2>
+      <p class="ajuda">Clique para acrescentar. Cada um entra uma vez só.</p>
+      <ul id="catalogo" class="cartoes"></ul>
+    </section>
+
+    <section id="cascata" aria-labelledby="h-cascata">
+      <h2 id="h-cascata">A cascata</h2>
+      <p class="ajuda" id="ajuda-cascata">
+        Vazia. Uma cascata sem resolver não resolve nada.
+      </p>
+      <ol id="escolhidos" class="cartoes"></ol>
+      <p class="custo" id="resumo-custo"></p>
+    </section>
+
+    <section id="identidade" aria-labelledby="h-identidade">
+      <h2 id="h-identidade">Identidade</h2>
+      <label>id
+        <input id="campo-id" placeholder="conciliacao-cliente-x" autocomplete="off">
+      </label>
+      <label>nome
+        <input id="campo-nome" placeholder="Conciliação do cliente X" autocomplete="off">
+      </label>
+      <label>por que esta cascata
+        <textarea id="campo-justificativa" rows="3"
+          placeholder="O que esta composição tenta resolver que a padrão não resolve."></textarea>
+      </label>
+      <button id="salvar" type="button" disabled>Compor e validar</button>
+      <p id="erro" class="erro" role="alert"></p>
+    </section>
+
+    <section id="resultado" aria-labelledby="h-resultado" hidden>
+      <h2 id="h-resultado">Como ela vai rodar</h2>
+      <p class="ajuda">
+        Isto não é o que você desenhou: é a definição <strong>construída</strong>,
+        na ordem em que o motor vai executar.
+      </p>
+      <div id="construida"></div>
+    </section>
+  </main>
+
+  <noscript>Esta página precisa de JavaScript para compor a cascata.</noscript>
+  <script src="/compor.js"></script>
+</body>
+</html>

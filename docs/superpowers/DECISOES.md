@@ -2275,3 +2275,74 @@ e qualidade se resolveria mexendo no prompt.
 **Terceira vez que uma segunda medição derruba uma leitura minha da primeira.**
 Está virando padrão, e o padrão tem nome: eu leio o número antes de perguntar
 quantas vezes ele se repetiu.
+
+## Canvas de autoria
+
+### P6.95. O backend de autoria já existia inteiro — e eu não sabia
+
+Antes de escrever tela, olhei o que havia. O `grill` **é** a camada de autoria e
+está completa:
+
+- `CATALOGO` — 5 resolvers componíveis, com `ParametroSpec` que lê o default do
+  PRÓPRIO dataclass do resolver (renomear o campo lá explode no import);
+- `Receita` — congelada, serializável, com `para_json`/`de_json`;
+- `construir(receita)` — *"valida construindo. Se retorna, a receita roda"*;
+- `registro.py` — grava, lê e lista receitas em disco;
+- e `registry()` já incluía as receitas de disco na listagem de workflows.
+
+Faltavam **duas rotas** e uma tela. Não faltava modelo, não faltava validação,
+não faltava persistência.
+
+Fica registrado porque foi a segunda vez nesta sessão: o `web/` também já tinha
+duas páginas e uma fila de revisão funcional. **A instrução do dono — "não
+assuma que uma feature não existe só porque não está evidente no README" —
+continua pagando.**
+
+### P6.96. A ordem NÃO é um campo, e é isso que impede a tela de virar decoração
+
+O §3.5 nomeia o modo de falha de um canvas de autoria: **decoração** — desenhar
+uma coisa e executar outra. A defesa aqui não é visual, é estrutural:
+
+1. `ReceitaRequest` não tem campo de ordem. Quem ordena é `Stage.ordered()`, por
+   `CostClass`, e não existe entrada que a inverta.
+2. O endpoint devolve a definição **construída**, não a receita recebida. A tela
+   desenha o que voltou do servidor.
+3. `test_a_ordem_enviada_e_IGNORADA` envia HUMANO antes de REGRA e exige que
+   volte REGRA antes de HUMANO. Se alguém transformar a ordem num campo, esse
+   teste fica vermelho — e é exatamente ali que a decoração começaria.
+
+Não há drag-and-drop de reordenação porque **não há ordem para arrastar**. A
+ausência é o recurso.
+
+### P6.97. ACHADO NA TELA — meu próprio texto estava errado pela metade
+
+Dirigindo a página no navegador, cliquei `revisor` → `L2` → `L1` e a cascata
+mostrou `L2, L1, revisor`. O HUMANO foi para o fim sozinho, certo. Mas **L2
+ficou antes de L1**, e os dois são `REGRA`.
+
+Está correto: `sorted` é estável, então dentro de uma classe vale a ordem do
+autor — é a mesma semântica que `test_procurement_regra_barata_roda_antes_da_
+generica` já pinava. O errado era o meu texto na tela, que dizia *"você não
+escolheu esta ordem"*. Falso para metade do caso.
+
+Corrigido para: entre classes manda o custo; dentro de uma classe, a ordem em
+que você acrescentou.
+
+Achado **rodando a tela**, não lendo o código — quinta vez neste projeto. E é a
+primeira em que o defeito era de PROSA: o comportamento estava certo e a
+explicação dele, não. Numa tela cuja única defesa contra decoração é ser
+honesta sobre o que faz, prosa errada é defeito de verdade.
+
+### P6.98. O que este canvas NÃO faz, e por quê
+
+Ele compõe cascatas a partir de um catálogo. Ele **não** cria agentes, não
+edita prompt e não desenha fluxograma livre.
+
+A diferença importa: compor é escolher entre resolvers que já existem, foram
+testados e têm classe de custo declarada. Criar agente pela tela seria autorar
+prompt por UI — a direção do CrewAI que o projeto rejeitou, e que o teste
+`test_existe_uma_pasta_de_dominio` registra com todas as letras ("aqui o
+domínio é código tipado").
+
+Quando um domínio novo precisar de um resolver novo, ele entra no `CATALOGO`
+por código, com teste — e aparece na paleta sozinho.
