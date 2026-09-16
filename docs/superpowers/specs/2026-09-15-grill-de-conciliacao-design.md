@@ -174,9 +174,33 @@ Ver §5.
 
 ### 3.3 A entrada `agente` e o cliente
 
-`construir` da entrada `agente` recebe o `LLMClient` como argumento. A CLI
-passa um cliente real; a API passa `ClienteAusente` (§7.3). Mesma tabela, dois
-chamadores, garantias diferentes.
+`construir` da entrada `agente` recebe o `LLMClient` como argumento. Mesma
+tabela, um único parâmetro, e — **como implementado** — nenhum chamador que
+passe um cliente de verdade: tanto a API quanto a CLI constroem com o
+`ClienteAusente` default (§7.3). `grep "cliente=" src/` dá um hit só, dentro
+do próprio `receita.py`, no default.
+
+**Correção de uma afirmação anterior deste spec.** Este parágrafo dizia "a CLI
+passa um cliente real". É falso. A CLI gasta dinheiro na *entrevista* — ali o
+`Entrevistador` fala com `ClienteAssinatura` —, mas o benchmark que ela roda no
+fim não executa o resolver pago: `_medir` remove os resolvers de classe
+`AGENTE` da cascata medida e imprime uma linha dizendo que eles não foram
+consultados. A versão anterior de `_medir` deixava o agente na cascata com o
+default inerte, e o resultado era uma linha `agente 0,0%` — que se lê como "o
+agente tentou e não achou nada" quando a verdade era "o agente nunca foi
+chamado". Número sem dizer sobre o que foi medido é precisamente o que o §8.2
+proíbe.
+
+**O que precisaria mudar para um dia passar um cliente de verdade.** Três
+coisas, nenhuma delas de uma linha: (a) a CLI teria que construir o
+`ToolContext(bank, ledger)` do dataset medido e passar `cliente=` e `context=`
+a `construir` — o contexto vazio default não acha nada, então o cliente
+sozinho não bastaria; (b) precisaria de uma flag explícita de consentimento
+(algo como `--rodar-agente`), porque o custo é POR DIVERGÊNCIA e não é decisão
+de quem imprime um percentual; e (c) o teto de gasto da execução inteira
+(`budget_total_microcents`) teria que ser mostrado ao parceiro ANTES de rodar,
+junto do número de divergências que sobraram para o agente. Enquanto nada
+disso existir, o honesto é não medir e dizer que não mediu.
 
 O cliente **não** é um `ParametroSpec`: `parametros` é o que o modelo pode
 propor e o que a receita grava; o cliente é injetado por quem constrói e nunca
@@ -206,7 +230,7 @@ construir(
 Os três defaults são **inertes**: fila vazia não resolve nada, `ClienteAusente`
 levanta ao ser chamado, contexto vazio não acha nada.
 
-### 3.5 A API nunca passa cliente nem contexto reais
+### 3.5 Ninguém passa cliente nem contexto reais — nem a API, nem a CLI
 
 Consequência que fortalece o §7: como `POST /runs` responde 409 antes de
 `reconcile` para qualquer cascata com classe `AGENTE`, **nenhum workflow com
@@ -214,7 +238,16 @@ agente chega a executar por um endpoint** — então a API pode sempre construir
 com os defaults inertes. Não há caminho em que um endpoint precise de um
 agente funcional, e portanto não existe código que o construa.
 
-Só a CLI passa cliente e contexto de verdade.
+E a CLI **também não passa**, embora pudesse. A frase original aqui era "só a
+CLI passa cliente e contexto de verdade"; ela descrevia uma intenção que
+nenhuma linha deste repositório exerce. `_medir` constrói com os defaults
+inertes e, desde a rodada de correção, **exclui** da medição os resolvers de
+classe `AGENTE` em vez de deixá-los rodar contra `ClienteAusente` e reportar
+0%. Ver o §3.3 para o que precisaria mudar para isso deixar de ser verdade.
+
+Consequência: os defaults inertes não são só a rede de segurança da API — são
+o caminho único de `construir` em todo o código de produção. Um cliente de
+verdade só entra por `Entrevistador.client`, na conversa, nunca na cascata.
 
 ---
 
