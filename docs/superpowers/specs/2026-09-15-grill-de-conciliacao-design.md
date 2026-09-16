@@ -177,8 +177,11 @@ Ver §5.
 `construir` da entrada `agente` recebe o `LLMClient` como argumento. Mesma
 tabela, um único parâmetro, e — **como implementado** — nenhum chamador que
 passe um cliente de verdade: tanto a API quanto a CLI constroem com o
-`ClienteAusente` default (§7.3). `grep "cliente=" src/` dá um hit só, dentro
-do próprio `receita.py`, no default.
+`ClienteAusente` default (§7.3). Para conferir: `grep -rn "cliente=" src/` dá
+dois hits, e **nenhum dos dois é um chamador passando cliente** — um é o
+repasse interno de `receita.py` para `entrada.construir(...)`, o outro é um
+comentário em `grill/cli.py`. O default em si é `if cliente is None:` em
+`receita.py`, que não casa com esse grep.
 
 **Correção de uma afirmação anterior deste spec.** Este parágrafo dizia "a CLI
 passa um cliente real". É falso. A CLI gasta dinheiro na *entrevista* — ali o
