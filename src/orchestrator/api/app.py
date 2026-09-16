@@ -5,8 +5,6 @@ Não é uma flag a desligar — não existe caminho de código deste arquivo at�
 modelo. Ver o §5 do spec desta fatia e o teste em `tests/api/test_execucao.py`.
 """
 
-import inspect
-import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
@@ -29,17 +27,21 @@ from orchestrator.api.schemas import (
     workflow_json,
 )
 from orchestrator.cli import build_benchmark
-from orchestrator.conciliacao import default_definition, reconcile
-from orchestrator.grill.receita import Receita, construir
+from orchestrator.conciliacao import reconcile
 from orchestrator.grill.registro import listar_receitas
 from orchestrator.kernel.cost import Cost, CostClass
-from orchestrator.kernel.definition import WorkflowDefinition
 from orchestrator.kernel.run import RunState
 from orchestrator.metrics import evaluate
 from orchestrator.review.decision import Decision, Veredito, ids_de_conciliar_com
 from orchestrator.review.fila import Fila, caminho_da_fila, dataset_id
 from orchestrator.storage.jsonl.run_store import JsonlRunStore
 from orchestrator.taxonomy import DivergenceType
+from orchestrator.workflows import (
+    WorkflowContext,
+    construir_definicao,
+    descrever,
+    registry,
+)
 
 app = FastAPI(title="Agent Orchestrator — canvas")
 
@@ -48,61 +50,15 @@ app = FastAPI(title="Agent Orchestrator — canvas")
 _RAIZ_RECEITAS: Path | None = None
 
 
-def fabrica_de(receita: Receita):
-    """Uma fábrica de workflow a partir de uma receita.
-
-    O parâmetro chama-se `fila` PELO NOME, de propósito: `_construir_definicao`
-    decide repassar a fila com `inspect.signature`, e não há import nem type
-    check amarrando os dois lados. Renomear isto para `q` deixaria a suíte
-    inteira verde e faria todo workflow gerado servir fila vazia em silêncio.
-    Ver `tests/grill/test_fabrica.py`.
-
-    Cliente e contexto ficam nos DEFAULTS INERTES de propósito: como `/runs`
-    responde 409 para qualquer cascata com classe AGENTE (ver `_executar`),
-    nenhum workflow com agente chega a executar por um endpoint — então não
-    existe caminho em que a API precise de um agente funcional, e portanto não
-    existe código aqui que o construa.
-    """
-
-    def fabrica(fila: Fila) -> WorkflowDefinition:
-        return construir(receita, fila=fila)
-
-    return fabrica
-
-
-def _fabricas() -> dict[str, object]:
-    fabricas: dict[str, object] = {"conciliacao": default_definition}
-    for receita in listar_receitas(_RAIZ_RECEITAS):
-        # A embutida nunca é sobrescrita por disco: `conciliacao` é id
-        # reservado no registro, e esta ordem é a segunda tranca.
-        if receita.id in fabricas:
-            continue
-        fabricas[receita.id] = fabrica_de(receita)
-    return fabricas
-
-
 @app.get("/api/workflows", response_model=list[WorkflowResumoJSON])
 def listar_workflows() -> list[WorkflowResumoJSON]:
     resumos = []
     por_id = {r.id: r for r in listar_receitas(_RAIZ_RECEITAS)}
-    for workflow_id, fabrica in _fabricas().items():
-        try:
-            definicao = _construir_definicao(fabrica, Fila.vazia())
-        except (ValueError, TypeError) as erro:
-            # Mesmo isolamento que `listar_receitas` já aplica ao PARSE, agora
-            # também na CONSTRUÇÃO — as duas metades da mesma frase: um
-            # arquivo ruim não pode derrubar a listagem inteira, mas também
-            # não pode sumir em silêncio. Sem isto, UMA receita que parseia e
-            # não constrói (um resolver que saiu do catálogo, um parâmetro
-            # renomeado — o catálogo é feito para crescer) devolve 500 em
-            # `GET /api/workflows` e mata o seletor do canvas para TODOS os
-            # workflows, enquanto cada um deles, individualmente, continua
-            # respondendo 200.
-            print(
-                f"workflow ignorado, receita não construível: {workflow_id} ({erro})",
-                file=sys.stderr,
-            )
-            continue
+    # `descrever` já isola a receita que parseia e não constrói: um arquivo
+    # ruim não derruba a listagem inteira, mas também não some em silêncio.
+    # A lógica saiu daqui para `workflows.py` porque a CLI precisa da mesma
+    # resposta, e duas cópias seriam o join frágil de sempre.
+    for workflow_id, definicao in descrever(_RAIZ_RECEITAS):
         classes = sorted(
             {r.cost_class.name for s in definicao.stages for r in s.cascade}
         )
@@ -121,53 +77,27 @@ def listar_workflows() -> list[WorkflowResumoJSON]:
 
 @app.get("/api/workflows/{workflow_id}", response_model=WorkflowJSON)
 def obter_workflow(workflow_id: str) -> WorkflowJSON:
-    fabrica = _fabricas().get(workflow_id)
+    fabrica = registry(_RAIZ_RECEITAS).get(workflow_id)
     if fabrica is None:
         raise HTTPException(status_code=404, detail=f"workflow desconhecido: {workflow_id}")
     # Mesma construção de `_executar`, nunca uma segunda via direto
-    # por `fabrica()`: `definition.py` declara que não existe "definição
+    # por `fabrica(...)`: `definition.py` declara que não existe "definição
     # servida" separada da "definição executada", e duas chamadas para o
     # mesmo objeto são exatamente o jeito de esse invariante parar de ser
     # estrutural. A fila vazia é inofensiva aqui — esta rota só descreve a
     # FORMA da cascata, que não muda com o conteúdo da fila.
-    return workflow_json(_construir_definicao(fabrica, Fila.vazia()))
+    return workflow_json(construir_definicao(fabrica, WorkflowContext.vazio()))
 
 
 @app.post("/api/workflows/{workflow_id}/runs", response_model=RunJSON)
 def executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
-    fabrica = _fabricas().get(workflow_id)
+    fabrica = registry(_RAIZ_RECEITAS).get(workflow_id)
     if fabrica is None:
         # 404 antes do cache, de propósito: um id desconhecido nunca deve
         # entrar em `_executar`, nem para virar um run persistido de um
         # workflow que não existe.
         raise HTTPException(status_code=404, detail=f"workflow desconhecido: {workflow_id}")
     return _executar(workflow_id, pedido.seed, pedido.n, pedido.taxa_divergencia)
-
-
-def _construir_definicao(fabrica, fila: Fila) -> WorkflowDefinition:
-    """Repassa a fila só para fábricas que a declaram no próprio parâmetro.
-
-    `_fabricas()["conciliacao"]` é `default_definition(fila=...)`, que lê a
-    fila para aplicar decisões humanas. Testes registram fábricas de zero
-    argumentos direto (ver `test_execucao.py`); chamar essas com `fila`
-    estouraria `TypeError` sem esta checagem de assinatura.
-
-    O nome `fila` é o único contrato entre este módulo e `default_definition`
-    (e `fabrica_de`) — não há import de tipo nem checagem estrutural que os
-    amarre. Uma fábrica cuja assinatura não seja "aceita `fila`" nem "não
-    aceita nada" é um caso não previsto: levanta em vez de cair
-    silenciosamente para `fabrica()`, que aplicaria o argumento errado a um
-    parâmetro qualquer ou simplesmente ignoraria a fila sem avisar ninguém.
-    """
-    parametros = inspect.signature(fabrica).parameters
-    if "fila" in parametros:
-        return fabrica(fila)
-    if not parametros:
-        return fabrica()
-    raise TypeError(
-        f"fábrica de workflow com assinatura não reconhecida: esperado um "
-        f"parâmetro `fila` ou nenhum parâmetro, recebido {list(parametros)}"
-    )
 
 
 def _executar(workflow_id: str, seed: int, n: int, taxa: float) -> RunJSON:
@@ -190,7 +120,9 @@ def _executar(workflow_id: str, seed: int, n: int, taxa: float) -> RunJSON:
     """
     dataset = build_benchmark(seed=seed, n=n, taxa_divergencia=taxa)
     fila, _ = _abrir_fila(workflow_id, seed, n, taxa)
-    definicao = _construir_definicao(_fabricas()[workflow_id], fila)
+    definicao = construir_definicao(
+        registry(_RAIZ_RECEITAS)[workflow_id], WorkflowContext(fila=fila)
+    )
 
     # A regra deste módulo — nenhum endpoint gasta dinheiro — aplicada a
     # cascatas que a API não escreveu. Levantar aqui é seguro e agora é
@@ -360,7 +292,7 @@ def ler_fila(
     # aviso nenhum.
     estado: Literal["pendente", "decidida"] = "pendente",
 ) -> FilaJSON:
-    if workflow_id not in _fabricas():
+    if workflow_id not in registry(_RAIZ_RECEITAS):
         raise HTTPException(status_code=404, detail=f"workflow desconhecido: {workflow_id}")
     fila, dataset = _abrir_fila(workflow_id, seed, n, taxa_divergencia)
     ds = build_benchmark(seed=seed, n=n, taxa_divergencia=taxa_divergencia)
@@ -389,7 +321,7 @@ def decidir(
     n: int = Query(300, ge=1, le=5000),
     taxa_divergencia: float = Query(0.15, ge=0.0, le=1.0),
 ) -> ItemFilaJSON:
-    if workflow_id not in _fabricas():
+    if workflow_id not in registry(_RAIZ_RECEITAS):
         raise HTTPException(status_code=404, detail=f"workflow desconhecido: {workflow_id}")
     fila, _ = _abrir_fila(workflow_id, seed, n, taxa_divergencia)
 

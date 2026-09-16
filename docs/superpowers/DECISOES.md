@@ -1204,3 +1204,69 @@ Sem essa condição, todo run de uma cascata sem humano ficaria eternamente
 Custo se errado: um run que deveria esperar conclui. Detectável na tela de
 runs, e o teste pina os três casos (sobrou com humano, sobrou sem humano, não
 sobrou com humano).
+
+## P6.32. PR #8 — a correção não é inspecionar melhor, é não precisar inspecionar
+
+`api/app.py::_construir_definicao` decidia repassar a fila olhando o **nome** do
+parâmetro da fábrica com `inspect.signature`, e o docstring de lá era honesto
+sobre o preço: "renomear isto para `q` deixaria a suíte inteira verde e faria
+todo workflow gerado servir fila vazia em silêncio".
+
+A tentação é tornar a inspeção mais robusta. A correção é tirar a inspeção:
+toda fábrica passa a ter a MESMA assinatura,
+`(WorkflowContext) -> WorkflowDefinition`, e quem não precisa do contexto o
+ignora.
+
+A uniformidade é a mesma disciplina que `EntradaCatalogo.construir` já aplica no
+grill — e o comentário de lá já apontava para cá: "assinaturas variáveis
+exigiriam introspecção para saber o que passar — e é exatamente esse padrão que
+já nos deu um defeito silencioso no `_construir_definicao` da API."
+
+Custo se errado: fábricas que não precisam do contexto recebem um argumento que
+ignoram. É o preço de ter um caminho em vez de três.
+
+## P6.33. `WorkflowContext` é dataclass tipado, não `dict[str, Any]`
+
+A alternativa óbvia — um saco de serviços com chave `"fila"` — trocaria um
+contrato fraco (nome de parâmetro) por outro igualmente fraco (chave de
+dicionário), e o defeito original voltaria com outra roupa. O docstring que eu
+estava corrigindo reclamava exatamente de "o nome é o único contrato"; um dict
+key chamado `"fila"` é o mesmo contrato.
+
+Ele tem um campo hoje porque há um domínio. Quando houver mais, ganha campos — e
+cada um some do `TypeError` para dentro do type checker.
+
+Custo se errado: acrescentar um serviço mexe numa classe em vez de numa chave.
+É o lado certo para errar.
+
+## P6.34. O teste do rename prova o OPOSTO do que o plano pedia, e está certo
+
+O §27 do plano pedia "um teste que renomeia o parâmetro e prova que **agora
+quebra alto**". Escrevi o contrário: um teste que renomeia o parâmetro e prova
+que **não tem consequência nenhuma**.
+
+Quebrar alto num rename seria continuar tratando o nome como contrato, só que
+com erro melhor. O objetivo nunca foi fazer o rename falhar; era torná-lo
+irrelevante. `test_renomear_o_parametro_da_fabrica_deixou_de_ter_consequencia`
+pina isso.
+
+`tests/grill/test_fabrica.py` foi REMOVIDO em vez de adaptado, e pelo mesmo
+motivo: ele travava o nome (`assert "fila" in inspect.signature(...).parameters`).
+Um teste que trava nome de parâmetro é a confissão de que o contrato é um nome
+de parâmetro. Não há mais nada ali para proteger.
+
+## P6.35. O registro de workflows saiu da API
+
+`_fabricas()` virou `workflows.registry()`, e `descrever()` levou junto o
+isolamento de receita não construível.
+
+Quais workflows existem não é assunto da camada HTTP: a CLI precisa da mesma
+resposta (PR #9 e o `orchestrator run <workflow>` de M5), e duas listas
+paralelas seriam o join frágil que P3.2 já custou uma correção.
+
+Camada `authoring`: o registro precisa conhecer as duas fontes — o embutido
+(`conciliacao`, domains) e os gerados pelo grill (authoring) — e `authoring` é a
+única camada que pode importar as duas.
+
+Custo se errado: um módulo a mais na raiz do pacote até a migração para
+`authoring/`. A catraca já registra isso como "deslocado".

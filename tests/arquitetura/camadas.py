@@ -112,6 +112,13 @@ DESTINO: dict[str, str] = {
     "synth.generator": "domains",
     "synth.injectors": "domains",
     # --- autoria de workflow (hoje `grill/`) ---
+    # `workflows.py` é o REGISTRO: de um id para uma definição executável.
+    # Fica em `authoring` porque precisa conhecer as duas fontes — o embutido
+    # (`conciliacao`, domains) e os gerados pelo grill (authoring) —, e
+    # `authoring` é a camada que pode importar as duas. Saiu de `api/app.py`
+    # no PR #8: quais workflows existem não é assunto da camada HTTP, e a CLI
+    # precisa da mesma resposta.
+    "workflows": "authoring",
     "grill.catalogo": "authoring",
     "grill.receita": "authoring",
     "grill.registro": "authoring",
