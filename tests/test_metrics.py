@@ -2,17 +2,17 @@ from random import Random
 
 from orchestrator.agent.proposal import Confidence, InvestigationOutput, Proposal
 from orchestrator.cli import build_benchmark
+from orchestrator.conciliacao import default_resolvers, reconcile
 from orchestrator.kernel.cost import Cost, CostClass
+from orchestrator.kernel.definition import Stage, WorkflowDefinition
 from orchestrator.kernel.resolution import Resolution
+from orchestrator.kernel.resolver import Resolver, ResolverDescription, ResolverOutput
 from orchestrator.kernel.work import WorkSet
-from orchestrator.matching.engine import default_resolvers, reconcile
 from orchestrator.metrics import evaluate
 from orchestrator.models import banco, contabil, divergencias
 from orchestrator.money import format_brl
 from orchestrator.synth.generator import build_dataset, generate_clean_pairs
 from orchestrator.synth.injectors import DefasagemTemporal, PagamentoAgregado
-from orchestrator.workflow.definition import Stage, WorkflowDefinition
-from orchestrator.workflow.resolver import Resolver, ResolverDescription, ResolverOutput
 
 
 def _definicao(cascade: list[Resolver]) -> WorkflowDefinition:
@@ -432,8 +432,8 @@ class _ResolverHumanoFalso:
 
 
 def _com_humano():
-    from orchestrator.matching.engine import default_resolvers
-    from orchestrator.workflow.definition import Stage, WorkflowDefinition
+    from orchestrator.conciliacao import default_resolvers
+    from orchestrator.kernel.definition import Stage, WorkflowDefinition
 
     return WorkflowDefinition(
         id="com-humano",
@@ -475,7 +475,7 @@ def _so_humano():
     `matches_by_class` nunca ganha a chave REGRA nesse caso — não porque uma
     regra rodou e não casou nada, mas porque nenhuma rodou.
     """
-    from orchestrator.workflow.definition import Stage, WorkflowDefinition
+    from orchestrator.kernel.definition import Stage, WorkflowDefinition
 
     return WorkflowDefinition(
         id="so-humano", name="só humano", stages=(Stage("revisar", (_ResolverHumanoFalso(),)),)

@@ -2,14 +2,14 @@ from random import Random
 
 from orchestrator.agent.proposal import InvestigationOutput, Proposal
 from orchestrator.cli import build_benchmark
+from orchestrator.conciliacao import default_resolvers, reconcile
 from orchestrator.kernel.cost import Cost, CostClass
+from orchestrator.kernel.definition import Stage, WorkflowDefinition
+from orchestrator.kernel.resolver import Resolver, ResolverDescription, ResolverOutput
 from orchestrator.kernel.work import WorkSet
-from orchestrator.matching.engine import default_resolvers, reconcile
 from orchestrator.models import divergencias
 from orchestrator.synth.generator import build_dataset, generate_clean_pairs
 from orchestrator.synth.injectors import DefasagemTemporal, DevolucaoFundos
-from orchestrator.workflow.definition import Stage, WorkflowDefinition
-from orchestrator.workflow.resolver import Resolver, ResolverDescription, ResolverOutput
 
 # Benchmark pequeno com divergências garantidas: n=60 na semente 1 produz 6
 # divergências, o suficiente para os testes de pool não serem degenerados.

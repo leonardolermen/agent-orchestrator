@@ -13,8 +13,8 @@ from typing import Any
 from orchestrator.agent.llm import LLMClient
 from orchestrator.agent.tools import ToolContext
 from orchestrator.grill.catalogo import CATALOGO, ClienteAusente
+from orchestrator.kernel.definition import Stage, WorkflowDefinition
 from orchestrator.review.fila import Fila
-from orchestrator.workflow.definition import Stage, WorkflowDefinition
 
 PADRAO_ID = re.compile(r"^[a-z][a-z0-9-]{2,39}$")
 ID_RESERVADOS = frozenset({"conciliacao"})

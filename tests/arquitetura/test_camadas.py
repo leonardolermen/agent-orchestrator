@@ -47,14 +47,14 @@ from .camadas import (
     violacoes,
 )
 
-# As 22 arestas ilegais que existem hoje, agrupadas pela CAUSA, não pelo arquivo.
+# As 15 arestas ilegais que existem hoje, agrupadas pela CAUSA, não pelo arquivo.
 #
 # Uma entrada sai daqui no mesmo PR que a elimina — nunca antes, nunca depois.
 # O PR anotado ao lado de cada grupo é o de `§27` do spec desta migração.
 VIOLACOES_CONHECIDAS: frozenset[tuple[str, str]] = frozenset(
     {
         # ---------------------------------------------------------------
-        # CAUSA 1 — tipos de domínio dentro do núcleo. 12 das 22 arestas.
+        # CAUSA 1 — tipos de domínio dentro do núcleo. 11 das 15 arestas.
         # É a lacuna nº 1 do §1.2: `WorkSet` conhece `BankEntry`, `Proposal`
         # conhece `DivergenceType`. Fecha nos PRs #3 (WorkItem) e #4 (Resolution).
         # ---------------------------------------------------------------
@@ -62,7 +62,6 @@ VIOLACOES_CONHECIDAS: frozenset[tuple[str, str]] = frozenset(
         # models`: `WorkSet` e `Resolution` são genéricos, e o domínio virou
         # payload opaco.
         ("agent.proposal", "taxonomy"),
-        ("matching.engine", "models"),
         ("agent.investigator", "models"),
         ("agent.investigator", "taxonomy"),
         ("agent.investigator", "agent.tools"),
@@ -82,33 +81,36 @@ VIOLACOES_CONHECIDAS: frozenset[tuple[str, str]] = frozenset(
         ("review.serial", "taxonomy"),
         ("metrics", "taxonomy"),
         ("metrics", "money"),
-        # Esta é a mais consequente das doze: a avaliação importa o GERADOR
+        # Esta é a mais consequente das onze: a avaliação importa o GERADOR
         # sintético, e por isso só sabe medir contra gabarito fabricado. É a
         # lacuna nº 4 do §1.2 na forma de uma seta. Fecha no PR que introduz
         # `ExpectedOutcome` com duas procedências (M6).
         ("metrics", "synth.dataset"),
         # ---------------------------------------------------------------
-        # CAUSA 2 — o motor conhece os resolvers do domínio, e a definição
-        # conhece o motor. É a circularidade do §2.1 (inversão 2), hoje
-        # escondida em imports locais. Fecha no PR #5, quando
-        # `default_resolvers()` e `default_definition()` saem para o domínio.
+        # CAUSA 2 — FECHADA no PR #5. Eram 6 arestas: o motor conhecia os três
+        # resolvers do domínio, e a definição conhecia o motor — a
+        # circularidade do §2.1, que dois imports locais escondiam do
+        # interpretador. `default_resolvers()` e `default_definition()` foram
+        # para `conciliacao.py`, e `execute()` passou a EXIGIR a definição. É a
+        # obrigatoriedade que quebra o ciclo: quem tem um padrão é quem conhece
+        # o domínio.
         # ---------------------------------------------------------------
-        ("matching.engine", "matching.exact"),
-        ("matching.engine", "matching.tolerance"),
-        ("matching.engine", "matching.grouping"),
-        ("workflow.definition", "matching.engine"),
-        ("workflow.definition", "review.fila"),
-        ("workflow.definition", "review.revisor"),
         # ---------------------------------------------------------------
         # CAUSA 3 — a plataforma importa o gerador de benchmark (inversão 3).
         # Fecha no PR #9, com `Source` e `input_ref`.
         # ---------------------------------------------------------------
         ("api.app", "cli"),
         # ---------------------------------------------------------------
-        # CAUSA 4 — a avaliação lê o resultado do motor em vez de um `Run` do
-        # store. Fecha no PR #7 (`Run`), consumido em M6.
+        # CAUSA 4 — a avaliação lê o resultado da execução em vez de um `Run`
+        # do store. Fecha no PR #7 (`Run`), consumido em M6.
+        #
+        # Era `metrics -> matching.engine` (evaluation -> runtime). Virou
+        # `metrics -> conciliacao` (evaluation -> domains) quando
+        # `ReconcileResult` desceu para o domínio no PR #5. A seta mudou de
+        # nome, o acoplamento é o mesmo: a avaliação depende do formato de
+        # saída de quem executou, em vez de ler um `Run` persistido.
         # ---------------------------------------------------------------
-        ("metrics", "matching.engine"),
+        ("metrics", "conciliacao"),
         # ---------------------------------------------------------------
         # CAUSA 5 — o agente usa a fila humana como cache de idempotência.
         # É o bug latente do §6.4, não só uma seta errada: o cache é permanente
@@ -158,9 +160,10 @@ def test_extrator_enxerga_import_local_e_type_checking():
     extrator ingênuo não veria, e os dois são usados aqui como fixture porque
     são fatos verificáveis do código de hoje:
 
-      - `workflow.definition -> review.revisor` existe só DENTRO de
-        `default_definition()`. O import é local justamente para o
-        interpretador não enxergar a circularidade.
+      - `conciliacao -> review.revisor` existe só DENTRO de
+        `default_definition()`. Depois do PR #5 o import local não esconde mais
+        circularidade nenhuma (`domains` pode importar `human`), mas continua
+        sendo um import que só um extrator que percorre a árvore inteira vê.
       - `agent.investigator -> review.fila` existe só sob `TYPE_CHECKING`. Não
         há acoplamento em tempo de execução — mas há acoplamento de
         CONHECIMENTO, e é isso que uma fronteira de arquitetura mede.
@@ -170,9 +173,9 @@ def test_extrator_enxerga_import_local_e_type_checking():
     não pode é o extrator voltar a ler só o cabeçalho.
     """
     arestas = {(d.de, d.para) for d in dependencias()}
-    assert ("workflow.definition", "review.revisor") in arestas, (
-        "o extrator perdeu um import DENTRO de função — é exatamente onde a "
-        "circularidade `engine <-> definition` se esconde"
+    assert ("conciliacao", "review.revisor") in arestas, (
+        "o extrator perdeu um import DENTRO de função — foi exatamente onde a "
+        "circularidade `engine <-> definition` se escondia até o PR #5"
     )
     assert ("agent.investigator", "review.fila") in arestas, (
         "o extrator perdeu um import sob TYPE_CHECKING — acoplamento de "

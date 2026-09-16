@@ -1,7 +1,7 @@
 import inspect
 
+from orchestrator.conciliacao import default_definition
 from orchestrator.kernel.cost import CostClass
-from orchestrator.workflow.definition import default_definition
 
 
 def test_definicao_padrao_tem_as_tres_regras_num_stage():
@@ -35,8 +35,8 @@ def test_definicao_padrao_sem_fila_nao_resolve_nada_pelo_revisor():
     # Sem fila, o revisor existe na cascata e é inerte. É isso que mantém a
     # CLI e o golden exatamente como estavam.
     from orchestrator.cli import build_benchmark
+    from orchestrator.conciliacao import reconcile
     from orchestrator.kernel.cost import CostClass as C
-    from orchestrator.matching.engine import reconcile
 
     ds = build_benchmark(seed=1, n=60, taxa_divergencia=0.15)
     r = reconcile(ds.bank, ds.ledger)

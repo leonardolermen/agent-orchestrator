@@ -1006,3 +1006,72 @@ O ponto não é arrumação: `tests/kernel/test_work.py` usa payloads inventados
 kernel não conhece conciliação — se um teste de lá precisar do domínio, a
 de-domainização falhou. Um teste de kernel escrito com `BankEntry` provaria
 menos, e provaria errado.
+
+## P6.19. PR #5 — a circularidade quebra por OBRIGATORIEDADE, não por mais um import local
+
+`execute(definition, work)` exige a definição. Não tem default.
+
+A circularidade `engine <-> definition` existia por uma razão só: `reconcile`
+caía para `default_definition()` quando ninguém passava uma, e por isso o motor
+precisava importar o módulo que importava o motor. Os dois imports locais que
+escondiam isso do interpretador eram sintoma, não causa.
+
+Tirar o default do motor resolve na raiz: quem tem um padrão é quem conhece o
+domínio. `conciliacao.reconcile(bank, ledger, definition=None)` continua
+existindo, com a mesma assinatura, e continua sendo a porta que a CLI, a API, o
+grill e o eval usam — só que agora ela mora na camada que pode conhecer os dois
+lados.
+
+Verificado: `grep -rn "seria circular" src/` devolve vazio. Não sobrou nenhum
+import local justificado por circularidade no repositório.
+
+Custo se errado: quem chamar `execute()` direto precisa construir a definição.
+É o comportamento desejado — um motor genérico não tem cascata padrão.
+
+## P6.20. `execute()` devolve `ExecutionResult`, não `ReconcileResult`
+
+Desvio do plano, que só previa mover o motor de lugar.
+
+Ao mover, ficou visível que `ReconcileResult.divergences: list[Divergence]`
+deixava o runtime importando `models` — uma aresta `runtime -> domains` que
+sobreviveria à mudança de diretório. O motor derivava a FORMA de pendência do
+domínio.
+
+`ExecutionResult` devolve `unresolved: WorkSet` — o resto do pool, cru. Quem o
+traduz para `Divergence` é `conciliacao.reconcile()`, que sabe o que isso
+significa. Os nomes dos campos (`resolutions`, `resolved_by_resolver`,
+`resolutions_by_class`) já são os de `Run`, para que o PR #7 acrescente em vez
+de renomear.
+
+Custo se errado: um tipo a mais na cadeia. Ele some no PR #7, quando `Run` o
+substitui.
+
+## P6.21. `ReconcileResult` mantém os nomes antigos dos campos, de propósito
+
+Ele desceu para `conciliacao.py` com `matches`, `matches_by_resolver` e
+`matches_by_class` — palavras de conciliação, num tipo de domínio, o que está
+certo — e sem renomear, o que é uma escolha.
+
+Renomear obrigaria a tocar `metrics.py`, `api/app.py`, `grill/cli.py` e uma
+dezena de testes para um tipo que o PR #7 substitui por `Run`. O §19.4 do plano
+manda o alias sumir "no PR que migra o último chamador"; aqui o tipo inteiro
+some.
+
+Custo se errado: por dois PRs, `saida.resolutions` (ExecutionResult) e
+`resultado.matches` (ReconcileResult) convivem. Mitigado por serem tipos
+diferentes: acessar o campo errado levanta na hora.
+
+## P6.22. O PR #5 fechou 8 arestas e abriu 1, e a que abriu é a mesma de antes
+
+Fechadas: as 6 da CAUSA 2 inteira, mais `matching.engine -> models` e
+`metrics -> matching.engine`.
+
+Aberta: `metrics -> conciliacao`. Não é acoplamento novo — é o mesmo
+`metrics -> matching.engine` com outro nome, porque `ReconcileResult` desceu
+para o domínio junto com o resto. A avaliação continua dependendo do formato de
+saída de quem executou, em vez de ler um `Run` persistido. Continua sendo a
+CAUSA 4 e continua fechando no PR #7.
+
+Registrado porque a leitura ingênua do diff da baseline ("uma nova apareceu")
+sugere regressão, e não é. Foi o mesmo tipo de confusão que P6.16 já registrou
+em sentido inverso.

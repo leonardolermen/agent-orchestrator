@@ -29,9 +29,9 @@ from orchestrator.agent.investigator import (
 from orchestrator.agent.proposal import Proposal, TraceEvent, TraceKind
 from orchestrator.agent.tools import TOOL_SCHEMAS, ToolContext
 from orchestrator.kernel.cost import Cost, CostClass
+from orchestrator.kernel.resolver import ResolverDescription, ResolverOutput
 from orchestrator.kernel.work import WorkSet
 from orchestrator.models import divergencias
-from orchestrator.workflow.resolver import ResolverDescription, ResolverOutput
 
 _SERVIDOR = "conciliacao"
 

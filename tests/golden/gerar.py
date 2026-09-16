@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 
 from orchestrator.cli import build_benchmark
-from orchestrator.matching.engine import reconcile
+from orchestrator.conciliacao import reconcile
 from orchestrator.metrics import evaluate
 
 CAMINHO = Path(__file__).parent / "cascata_12_sementes.json"

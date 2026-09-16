@@ -11,9 +11,9 @@ from itertools import combinations
 from orchestrator.dates import business_days_between
 from orchestrator.kernel.cost import CostClass
 from orchestrator.kernel.resolution import Resolution
+from orchestrator.kernel.resolver import ResolverDescription, ResolverOutput
 from orchestrator.kernel.work import WorkSet
 from orchestrator.models import LedgerEntry, banco, conciliacao, contabil
-from orchestrator.workflow.resolver import ResolverDescription, ResolverOutput
 
 
 @dataclass

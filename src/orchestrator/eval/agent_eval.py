@@ -17,10 +17,10 @@ from orchestrator.agent.llm import LLMClient
 from orchestrator.agent.proposal import TraceKind
 from orchestrator.agent.tools import ToolContext
 from orchestrator.cli import build_benchmark
-from orchestrator.matching.engine import default_resolvers, reconcile
+from orchestrator.conciliacao import default_resolvers, reconcile
+from orchestrator.kernel.definition import Stage, WorkflowDefinition
 from orchestrator.metrics import evaluate
 from orchestrator.review.fila import Fila, caminho_da_fila, dataset_id
-from orchestrator.workflow.definition import Stage, WorkflowDefinition
 
 MODELOS_PADRAO = ("claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5")
 

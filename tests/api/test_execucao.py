@@ -136,8 +136,8 @@ def test_resolver_com_layer_diferente_do_name_e_reportado_pelo_proprio_nome(monk
     que este teste existe para travar.
     """
     from orchestrator.kernel.cost import CostClass
-    from orchestrator.workflow.definition import Stage, WorkflowDefinition
-    from orchestrator.workflow.resolver import ResolverDescription, ResolverOutput
+    from orchestrator.kernel.definition import Stage, WorkflowDefinition
+    from orchestrator.kernel.resolver import ResolverDescription, ResolverOutput
 
     class _NomeDiferenteDaProveniencia:
         name = "resolver_x"

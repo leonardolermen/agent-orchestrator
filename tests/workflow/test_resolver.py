@@ -1,6 +1,6 @@
 from orchestrator.kernel.cost import Cost, CostClass
 from orchestrator.kernel.resolution import Resolution
-from orchestrator.workflow.resolver import ResolverDescription, ResolverOutput
+from orchestrator.kernel.resolver import ResolverDescription, ResolverOutput
 
 
 def test_saida_vazia_e_o_default():

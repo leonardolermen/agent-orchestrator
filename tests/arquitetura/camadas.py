@@ -19,7 +19,7 @@ RAIZ = Path(__file__).resolve().parents[2] / "src" / "orchestrator"
 # Duas ausências deliberadas, e são o ponto inteiro do desenho:
 #   - `kernel` não importa nada. Nem domínio, nem agente, nem pydantic.
 #   - NINGUÉM importa `domains`. Se uma camada precisar, o conceito está na
-#     camada errada — que é exatamente o defeito de hoje em `workflow/workset.py`.
+#     camada errada — foi exatamente o defeito que os PRs #3 e #5 fecharam.
 _BORDA = frozenset(
     {
         "kernel", "runtime", "storage", "observability", "agent", "human",
@@ -48,25 +48,27 @@ PERMITIDO: dict[str, frozenset[str]] = {
 # Onde cada módulo de HOJE deveria morar na arquitetura alvo.
 #
 # Esta tabela existe porque a migração ainda não aconteceu: o diretório de hoje
-# (`workflow/`, `matching/`, `grill/`) não é o diretório alvo (`kernel/`,
-# `runtime/`, `authoring/`). Ela ENCOLHE a cada PR — quando um módulo chega ao
+# (`matching/`, `review/`, `grill/`) não é o diretório alvo (`domains/`,
+# `human/`, `authoring/`). Ela ENCOLHE a cada PR — quando um módulo chega ao
 # diretório certo, a entrada sai daqui e o nome do diretório passa a responder
 # sozinho (ver `camada_de`).
 #
 # Uma entrada aqui é uma AFIRMAÇÃO de projeto, não uma observação. "Onde isto
 # deveria estar", não "onde está".
 DESTINO: dict[str, str] = {
-    # --- núcleo: o contrato de resolução, hoje em `workflow/` ---
-    "workflow.resolver": "kernel",
-    "workflow.definition": "kernel",
+    # --- núcleo ---
+    # O pacote `workflow/` deixou de existir no PR #5: `cost_class` virou
+    # `kernel/cost.py` (PR #2), `workset` virou `kernel/work.py` (PR #3), e
+    # `resolver`/`definition` foram para `kernel/`. O diretório responde por
+    # todos — não há mais entrada aqui.
     # `proposal.py` carrega DUAS coisas: Cost/Confidence/TraceEvent (kernel) e
     # a Proposal amarrada a DivergenceType (hoje, domínio). Vai para kernel
     # porque é para lá que o tipo vai depois de generalizado — e a violação que
     # isso produz (kernel -> domains, via `taxonomy`) é justamente a lacuna nº 1
     # do §1.2, que o PR #4 fecha.
     "agent.proposal": "kernel",
-    # --- runtime: o motor ---
-    "matching.engine": "runtime",
+    # --- runtime ---
+    # `matching.engine` virou `runtime/engine.py` no PR #5. Diretório responde.
     # --- agente: o laço genérico e a costura do modelo ---
     # `agent.llm`, `agent.anthropic_client` e `agent.investigator` NÃO aparecem
     # aqui: o diretório `agent/` já é o nome da camada e responde sozinho. Só
@@ -92,6 +94,10 @@ DESTINO: dict[str, str] = {
     "dates": "domains",
     "tax": "domains",
     "taxonomy": "domains",
+    # A cascata padrão e a porta do domínio. Este módulo é o que quebrou a
+    # circularidade `engine <-> definition`: a definição padrão é configuração
+    # de produto, e só a camada `domains` pode conhecer motor E resolvers.
+    "conciliacao": "domains",
     "matching.exact": "domains",
     "matching.tolerance": "domains",
     "matching.grouping": "domains",

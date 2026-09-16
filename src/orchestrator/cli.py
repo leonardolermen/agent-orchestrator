@@ -7,7 +7,7 @@ chamada de LLM: este é o piso contra o qual o agente será medido depois.
 import argparse
 from random import Random
 
-from orchestrator.matching.engine import reconcile
+from orchestrator.conciliacao import reconcile
 from orchestrator.metrics import evaluate
 from orchestrator.synth.dataset import Dataset, InjectionResult
 from orchestrator.synth.generator import build_dataset, generate_clean_pairs
