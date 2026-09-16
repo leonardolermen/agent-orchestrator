@@ -5,10 +5,7 @@ Não é uma flag a desligar — não existe caminho de código deste arquivo at�
 modelo. Ver o §5 do spec desta fatia e o teste em `tests/api/test_execucao.py`.
 """
 
-import inspect
-import sys
 from datetime import UTC, datetime
-from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
@@ -24,20 +21,30 @@ from orchestrator.api.schemas import (
     ResolverRunJSON,
     RunJSON,
     RunRequest,
+    RunResumoJSON,
     WorkflowJSON,
     WorkflowResumoJSON,
     workflow_json,
 )
-from orchestrator.cli import build_benchmark
-from orchestrator.conciliacao import default_definition, reconcile
-from orchestrator.grill.receita import Receita, construir
+from orchestrator.conciliacao import reconcile
 from orchestrator.grill.registro import listar_receitas
-from orchestrator.kernel.cost import CostClass
-from orchestrator.kernel.definition import WorkflowDefinition
+from orchestrator.kernel.cost import Cost, CostClass
+from orchestrator.kernel.event import EventBus
+from orchestrator.kernel.run import RunState
 from orchestrator.metrics import evaluate
+from orchestrator.observability.collector import SpanCollector
 from orchestrator.review.decision import Decision, Veredito, ids_de_conciliar_com
 from orchestrator.review.fila import Fila, caminho_da_fila, dataset_id
+from orchestrator.storage.jsonl.run_store import JsonlRunStore
+from orchestrator.storage.jsonl.trace_store import JsonlTraceStore
+from orchestrator.synth.benchmark import SyntheticSource, build_benchmark
 from orchestrator.taxonomy import DivergenceType
+from orchestrator.workflows import (
+    WorkflowContext,
+    construir_definicao,
+    descrever,
+    registry,
+)
 
 app = FastAPI(title="Agent Orchestrator — canvas")
 
@@ -46,61 +53,15 @@ app = FastAPI(title="Agent Orchestrator — canvas")
 _RAIZ_RECEITAS: Path | None = None
 
 
-def fabrica_de(receita: Receita):
-    """Uma fábrica de workflow a partir de uma receita.
-
-    O parâmetro chama-se `fila` PELO NOME, de propósito: `_construir_definicao`
-    decide repassar a fila com `inspect.signature`, e não há import nem type
-    check amarrando os dois lados. Renomear isto para `q` deixaria a suíte
-    inteira verde e faria todo workflow gerado servir fila vazia em silêncio.
-    Ver `tests/grill/test_fabrica.py`.
-
-    Cliente e contexto ficam nos DEFAULTS INERTES de propósito: como `/runs`
-    responde 409 para qualquer cascata com classe AGENTE (ver `_executar_memoizado`),
-    nenhum workflow com agente chega a executar por um endpoint — então não
-    existe caminho em que a API precise de um agente funcional, e portanto não
-    existe código aqui que o construa.
-    """
-
-    def fabrica(fila: Fila) -> WorkflowDefinition:
-        return construir(receita, fila=fila)
-
-    return fabrica
-
-
-def _fabricas() -> dict[str, object]:
-    fabricas: dict[str, object] = {"conciliacao": default_definition}
-    for receita in listar_receitas(_RAIZ_RECEITAS):
-        # A embutida nunca é sobrescrita por disco: `conciliacao` é id
-        # reservado no registro, e esta ordem é a segunda tranca.
-        if receita.id in fabricas:
-            continue
-        fabricas[receita.id] = fabrica_de(receita)
-    return fabricas
-
-
 @app.get("/api/workflows", response_model=list[WorkflowResumoJSON])
 def listar_workflows() -> list[WorkflowResumoJSON]:
     resumos = []
     por_id = {r.id: r for r in listar_receitas(_RAIZ_RECEITAS)}
-    for workflow_id, fabrica in _fabricas().items():
-        try:
-            definicao = _construir_definicao(fabrica, Fila.vazia())
-        except (ValueError, TypeError) as erro:
-            # Mesmo isolamento que `listar_receitas` já aplica ao PARSE, agora
-            # também na CONSTRUÇÃO — as duas metades da mesma frase: um
-            # arquivo ruim não pode derrubar a listagem inteira, mas também
-            # não pode sumir em silêncio. Sem isto, UMA receita que parseia e
-            # não constrói (um resolver que saiu do catálogo, um parâmetro
-            # renomeado — o catálogo é feito para crescer) devolve 500 em
-            # `GET /api/workflows` e mata o seletor do canvas para TODOS os
-            # workflows, enquanto cada um deles, individualmente, continua
-            # respondendo 200.
-            print(
-                f"workflow ignorado, receita não construível: {workflow_id} ({erro})",
-                file=sys.stderr,
-            )
-            continue
+    # `descrever` já isola a receita que parseia e não constrói: um arquivo
+    # ruim não derruba a listagem inteira, mas também não some em silêncio.
+    # A lógica saiu daqui para `workflows.py` porque a CLI precisa da mesma
+    # resposta, e duas cópias seriam o join frágil de sempre.
+    for workflow_id, definicao in descrever(_RAIZ_RECEITAS):
         classes = sorted(
             {r.cost_class.name for s in definicao.stages for r in s.cascade}
         )
@@ -119,78 +80,61 @@ def listar_workflows() -> list[WorkflowResumoJSON]:
 
 @app.get("/api/workflows/{workflow_id}", response_model=WorkflowJSON)
 def obter_workflow(workflow_id: str) -> WorkflowJSON:
-    fabrica = _fabricas().get(workflow_id)
+    fabrica = registry(_RAIZ_RECEITAS).get(workflow_id)
     if fabrica is None:
         raise HTTPException(status_code=404, detail=f"workflow desconhecido: {workflow_id}")
-    # Mesma construção de `_executar_memoizado`, nunca uma segunda via direto
-    # por `fabrica()`: `definition.py` declara que não existe "definição
+    # Mesma construção de `_executar`, nunca uma segunda via direto
+    # por `fabrica(...)`: `definition.py` declara que não existe "definição
     # servida" separada da "definição executada", e duas chamadas para o
     # mesmo objeto são exatamente o jeito de esse invariante parar de ser
     # estrutural. A fila vazia é inofensiva aqui — esta rota só descreve a
     # FORMA da cascata, que não muda com o conteúdo da fila.
-    return workflow_json(_construir_definicao(fabrica, Fila.vazia()))
+    return workflow_json(construir_definicao(fabrica, WorkflowContext.vazio()))
 
 
 @app.post("/api/workflows/{workflow_id}/runs", response_model=RunJSON)
 def executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
-    fabrica = _fabricas().get(workflow_id)
+    fabrica = registry(_RAIZ_RECEITAS).get(workflow_id)
     if fabrica is None:
         # 404 antes do cache, de propósito: um id desconhecido nunca deve
-        # entrar em `_executar_memoizado`, nem para ficar registrado como
-        # "chave inválida" numa memoização que não sabe o que fazer com isso.
+        # entrar em `_executar`, nem para virar um run persistido de um
+        # workflow que não existe.
         raise HTTPException(status_code=404, detail=f"workflow desconhecido: {workflow_id}")
-    return _executar_memoizado(workflow_id, pedido.seed, pedido.n, pedido.taxa_divergencia)
+    return _executar(workflow_id, pedido.seed, pedido.n, pedido.taxa_divergencia)
 
 
-def _construir_definicao(fabrica, fila: Fila) -> WorkflowDefinition:
-    """Repassa a fila só para fábricas que a declaram no próprio parâmetro.
+def _executar(workflow_id: str, seed: int, n: int, taxa: float) -> RunJSON:
+    """Executa e PERSISTE o run. Sem cache.
 
-    `_fabricas()["conciliacao"]` é `default_definition(fila=...)`, que lê a
-    fila para aplicar decisões humanas. Testes registram fábricas de zero
-    argumentos direto (ver `test_execucao.py`); chamar essas com `fila`
-    estouraria `TypeError` sem esta checagem de assinatura.
+    Era `@lru_cache(maxsize=64)`, e o docstring de então já admitia o problema:
+    a função tinha deixado de ser pura nos três parâmetros (ela lê a fila em
+    disco), e por isso o POST de decisão precisava chamar `cache_clear()` ou
+    uma aprovação recente ficaria invisível.
 
-    O nome `fila` é o único contrato entre este módulo e `default_definition`
-    (e `fabrica_de`) — não há import de tipo nem checagem estrutural que os
-    amarre. Uma fábrica cuja assinatura não seja "aceita `fila`" nem "não
-    aceita nada" é um caso não previsto: levanta em vez de cair
-    silenciosamente para `fabrica()`, que aplicaria o argumento errado a um
-    parâmetro qualquer ou simplesmente ignoraria a fila sem avisar ninguém.
-    """
-    parametros = inspect.signature(fabrica).parameters
-    if "fila" in parametros:
-        return fabrica(fila)
-    if not parametros:
-        return fabrica()
-    raise TypeError(
-        f"fábrica de workflow com assinatura não reconhecida: esperado um "
-        f"parâmetro `fila` ou nenhum parâmetro, recebido {list(parametros)}"
-    )
-
-
-@lru_cache(maxsize=64)
-def _executar_memoizado(workflow_id: str, seed: int, n: int, taxa: float) -> RunJSON:
-    """Cacheável por construção — mas não mais pura só dos três parâmetros.
+    Um cache que precisa ser invalidado à mão por outro endpoint não é cache —
+    é um store com o nome errado. O `RunStore` do PR #7 é o store de verdade, e
+    não invalida errado porque não finge ser cache. A execução voltou a rodar a
+    cada chamada: para uma cascata só de regras sobre n=300 isso é dezenas de
+    milissegundos, e ADR-14 registra o gatilho para revisitar.
 
     A definição servida aqui não tem agente: a execução não faz rede e não
     gasta em tokens. É isso que torna seguro um endpoint que qualquer F5
-    dispara. A chave do cache inclui `workflow_id` além dos três parâmetros do
-    benchmark — dois workflows diferentes com os mesmos parâmetros não podem
-    colidir na mesma entrada.
-
-    Ela agora também lê a fila em disco (via `_RAIZ_FILA`) para que o revisor
-    humano aplique as decisões já tomadas. Isso quebra a pureza formal da
-    função nos três parâmetros — por isso o POST de decisão precisa chamar
-    `cache_clear()` depois de gravar, ou uma aprovação recente ficaria
-    invisível para quem recarrega o canvas.
+    dispara.
     """
-    dataset = build_benchmark(seed=seed, n=n, taxa_divergencia=taxa)
+    # O coletor assina o barramento. O domínio não sabe que está sendo
+    # observado — ver `observability/collector.py`.
+    bus = EventBus()
+    coletor = SpanCollector().subscribe(bus)
+    fonte = SyntheticSource(seed=seed, n=n, taxa_divergencia=taxa)
+    dataset = fonte.dataset()
     fila, _ = _abrir_fila(workflow_id, seed, n, taxa)
-    definicao = _construir_definicao(_fabricas()[workflow_id], fila)
+    definicao = construir_definicao(
+        registry(_RAIZ_RECEITAS)[workflow_id], WorkflowContext(fila=fila)
+    )
 
     # A regra deste módulo — nenhum endpoint gasta dinheiro — aplicada a
-    # cascatas que a API não escreveu. `lru_cache` NÃO memoiza exceções, então
-    # levantar aqui dentro é seguro: a chave nunca recebe valor.
+    # cascatas que a API não escreveu. Levantar aqui é seguro e agora é
+    # trivialmente seguro: sem cache, não há entrada para envenenar.
     #
     # Esta é a porta educada. A tranca é `ClienteAusente`, que `construir`
     # injeta por default e que levanta se alguém chegar ao modelo por aqui.
@@ -204,7 +148,20 @@ def _executar_memoizado(workflow_id: str, seed: int, n: int, taxa: float) -> Run
             ),
         )
 
-    resultado = reconcile(dataset.bank, dataset.ledger, definition=definicao)
+    resultado = reconcile(
+        dataset.bank,
+        dataset.ledger,
+        definition=definicao,
+        # O `ref` vem da FONTE, não montado aqui: duas expressões que precisam
+        # concordar sobre o formato de um id são o join frágil de sempre.
+        input_ref=fonte.ref,
+        bus=bus,
+    )
+    # O run vai para o store ANTES de qualquer projeção para JSON: o que a tela
+    # mostra é derivado, o que o store guarda é o fato.
+    if resultado.run is not None:
+        _run_store().save(resultado.run)
+        _trace_store().save(coletor.trace(resultado.run))
     m = evaluate(dataset, resultado)
 
     total = m.bank_total
@@ -254,6 +211,23 @@ def _executar_memoizado(workflow_id: str, seed: int, n: int, taxa: float) -> Run
 # Raiz da fila em disco. É atributo de módulo para o teste poder trocá-la por
 # um tmp_path sem escrever no repositório.
 _RAIZ_FILA: Path | None = None
+
+
+def _run_store() -> JsonlRunStore:
+    """O store de runs, sob a MESMA raiz isolada da fila.
+
+    Sem isso, `conftest.py` isolaria a fila e não os runs, e a suíte passaria a
+    escrever em `data/runs.jsonl` do desenvolvedor — exatamente o defeito que a
+    fixture autouse de `conftest` existe para impedir, e que o docstring dela
+    descreve.
+    """
+    return JsonlRunStore((_RAIZ_FILA or Path("data")) / "runs.jsonl")
+
+
+def _trace_store() -> JsonlTraceStore:
+    """Sob a MESMA raiz isolada do run store, pelo mesmo motivo: sem isso a
+    suíte passaria a escrever `data/traces/` na máquina do desenvolvedor."""
+    return JsonlTraceStore(_RAIZ_FILA or Path("data"))
 
 
 def _abrir_fila(workflow_id: str, seed: int, n: int, taxa: float) -> tuple[Fila, str]:
@@ -336,7 +310,7 @@ def ler_fila(
     # aviso nenhum.
     estado: Literal["pendente", "decidida"] = "pendente",
 ) -> FilaJSON:
-    if workflow_id not in _fabricas():
+    if workflow_id not in registry(_RAIZ_RECEITAS):
         raise HTTPException(status_code=404, detail=f"workflow desconhecido: {workflow_id}")
     fila, dataset = _abrir_fila(workflow_id, seed, n, taxa_divergencia)
     ds = build_benchmark(seed=seed, n=n, taxa_divergencia=taxa_divergencia)
@@ -365,7 +339,7 @@ def decidir(
     n: int = Query(300, ge=1, le=5000),
     taxa_divergencia: float = Query(0.15, ge=0.0, le=1.0),
 ) -> ItemFilaJSON:
-    if workflow_id not in _fabricas():
+    if workflow_id not in registry(_RAIZ_RECEITAS):
         raise HTTPException(status_code=404, detail=f"workflow desconhecido: {workflow_id}")
     fila, _ = _abrir_fila(workflow_id, seed, n, taxa_divergencia)
 
@@ -440,13 +414,68 @@ def decidir(
             quando=datetime.now(UTC), motivo=pedido.motivo,
         )
     )
-    # A execução memoizada deixou de ser função só de (workflow, seed, n,
-    # taxa): ela agora depende do conteúdo da fila. Sem limpar, aprovar uma
-    # proposta e recarregar o canvas mostraria o estado anterior, e o revisor
-    # concluiria que a aprovação não funcionou.
-    _executar_memoizado.cache_clear()
+    # Não há cache para invalidar desde o PR #7. Aprovar uma proposta e
+    # recarregar o canvas mostra o estado novo porque a execução roda de novo,
+    # não porque alguém lembrou de limpar uma memoização.
 
     return _item(proposta, fila.decisao(divergence_id), por_id)
+
+
+def _resumo_json(s) -> RunResumoJSON:
+    return RunResumoJSON(
+        id=s.id,
+        workflow_id=s.workflow_id,
+        workflow_version=s.workflow_version,
+        state=s.state.value,
+        started_at=s.started_at.isoformat(),
+        finished_at=s.finished_at.isoformat() if s.finished_at else None,
+        duration_ms=s.duration_ms,
+        input_ref=s.input_ref,
+        resolved=s.resolved,
+        proposed=s.proposed,
+        unresolved=s.unresolved,
+        # Um resolver que não gastou token nenhum converte para zero em
+        # qualquer modelo — a mesma guarda de `metrics.evaluate`, para que uma
+        # cascata só de regras não exija um `model` válido para ler zero.
+        microcents=sum(
+            c.microcents("claude-opus-5") if c != Cost.zero() else 0
+            for c in s.cost_by_resolver.values()
+        ),
+    )
+
+
+@app.get("/api/runs", response_model=list[RunResumoJSON])
+def listar_runs(
+    workflow_id: str | None = None,
+    state: str | None = None,
+    limit: int = Query(50, ge=1, le=500),
+) -> list[RunResumoJSON]:
+    """O histórico de execuções. Mais recentes primeiro.
+
+    Antes do PR #7 isto era impossível: a "execução" era uma entrada num
+    `lru_cache` de 64 posições, sem id, sem timestamp e sem estado. "O que
+    aconteceu no fechamento de agosto" não tinha resposta.
+    """
+    try:
+        estado = RunState(state) if state else None
+    except ValueError:
+        raise HTTPException(
+            status_code=422,
+            detail=f"estado desconhecido: {state!r}; use um de "
+            f"{[e.value for e in RunState]}",
+        ) from None
+    return [
+        _resumo_json(s)
+        for s in _run_store().list(workflow_id=workflow_id, state=estado, limit=limit)
+    ]
+
+
+@app.get("/api/runs/{run_id}", response_model=RunResumoJSON)
+def obter_run(run_id: str) -> RunResumoJSON:
+    achado = _run_store().get(run_id)
+    if achado is None:
+        raise HTTPException(status_code=404, detail=f"run desconhecido: {run_id}")
+    return _resumo_json(achado)
 
 
 # De `src/orchestrator/api/app.py`: parents[0] é `api`, [1] é `orchestrator`,

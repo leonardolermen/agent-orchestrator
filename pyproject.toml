@@ -7,6 +7,11 @@ dependencies = ["anthropic>=1.0"]
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff>=0.6", "httpx>=0.27"]
 api = ["fastapi>=0.115", "uvicorn>=0.30"]
+# Só para EXPORTAR o trace. O modelo interno é `kernel/trace.py` e não OTel —
+# ver ADR-08 e o docstring de `observability/otel.py`: custo em micro-centavos
+# int não tem lugar canônico em OTel, e `abstencao`/`pulado` não são OK nem
+# ERROR. O kernel continua com UMA dependência de runtime.
+otel = ["opentelemetry-api>=1.20"]
 # Só para AVALIAÇÃO: roda o investigador pelo Claude Code local, na
 # assinatura do desenvolvedor. Não é runtime de produto — ver o docstring
 # de orchestrator/eval/assinatura.py. O adaptador de assinatura da
@@ -20,6 +25,7 @@ assinatura = ["claude-agent-sdk>=0.2"]
 orchestrator = "orchestrator.cli:main"
 orchestrator-eval = "orchestrator.eval.agent_eval:main"
 orchestrator-grill = "orchestrator.grill.cli:main"
+orchestrator-trace = "orchestrator.observability.cli:main"
 
 [build-system]
 requires = ["hatchling"]

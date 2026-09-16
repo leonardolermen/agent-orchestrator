@@ -1130,3 +1130,1077 @@ daquele domínio em vez de um degrau da cascata.
 
 Ele repete de propósito a política de decisão obsoleta (id fora do pool vira
 silêncio, não erro), e há teste — a política é do PADRÃO, não do `revisor.py`.
+
+## P6.27. PR #7 — o store guarda RESUMO, não o `Run` inteiro
+
+`Run` carrega o `WorkSet` que sobrou, e `WorkSet` carrega payloads do DOMÍNIO —
+dataclasses que o kernel nunca inspeciona e que ele, portanto, não sabe
+serializar. Persistir um `Run` inteiro exigiria que `storage/` conhecesse todo
+domínio, que é a dependência que a arquitetura proíbe.
+
+`StoredRun` guarda identidade, estado, tempo, custo e contagens. É o que a
+listagem de runs e a tela de custo precisam.
+
+Reconstruir a execução inteira é outro problema, com outra solução já no plano:
+`Source` + `input_ref` (PR #9) tornam a ENTRADA reproduzível, e `ReplayResume`
+(M7) reexecuta em vez de desserializar. Para trabalho de escala de minutos,
+replay é estritamente melhor que checkpoint — sem estado serializado para
+corromper, sem versão de snapshot para migrar (§12.5).
+
+Custo se errado: quem quiser inspecionar o pool pendente de um run antigo
+precisa reexecutar. É exatamente o que `resume()` faz.
+
+## P6.28. `WorkflowDefinition.version` é a FORMA da cascata, e o limite está declarado
+
+A versão é sha256 curto de `(id, nome do stage, nome e classe de cada resolver,
+na ordem de execução)`. Derivada, nunca escrita à mão — mesma razão de `_param()`
+ler o default do próprio dataclass.
+
+**Limite real:** trocar um PARÂMETRO (`L2(max_cents=5)` para `20`) não muda a
+versão. O kernel não tem como introspectar parâmetro de resolver genericamente,
+e fechar isso exige `Resolver.version` — PR #11, a mesma peça de que a chave de
+idempotência precisa.
+
+Registrado com teste próprio (`test_versao_NAO_muda_com_parametro_de_resolver`)
+para ser decisão em vez de surpresa no dia em que alguém comparar dois
+benchmarks que só diferem num parâmetro.
+
+Custo se errado: até o PR #11, a versão responde "a cascata mudou de FORMA?" e
+não "a cascata mudou?".
+
+## P6.29. `NullBus` em vez de `if bus is not None` no laço
+
+O default de `execute()` é um barramento que não emite nada, e não `None`.
+
+Assim não há uma checagem de nulo em cada ponto de emissão, e desligar
+observabilidade é trocar um objeto em vez de mudar o laço. Tem teste provando
+que ligar e desligar o barramento produz o MESMO resultado — se não produzisse,
+o golden dependeria de quem está assinando.
+
+Custo se errado: uma classe de três linhas.
+
+## P6.30. Assinante que levanta vai para stderr, não derruba o run
+
+Captura larga em `EventBus.emit`, e aqui ela é o requisito: observação não pode
+custar um fechamento. É a inversão exata da captura ESTREITA em volta de
+`client.complete()` — a mesma distinção que `Investigator` já documenta entre o
+laço e a execução de ferramenta.
+
+O preço é que um bug de assinante fica quieto. Por isso ele vai para stderr, e
+não some — a mesma política de `listar_receitas` com receita ilegível.
+
+Custo se errado: um assinante quebrado passa despercebido em execução não
+supervisionada. Aceitável enquanto assinante for observação; deixa de ser
+quando um deles gravar decisão — e aí a gravação não é assinante, é passo.
+
+## P6.31. `AGUARDANDO_HUMANO` só vale quando existe degrau humano na cascata
+
+Sobrar item não basta: `domains/swe` sem revisor sobra e ESTÁ concluído — a
+lacuna fica declarada, não pendurada. O estado é "sobrou E há quem decida".
+
+Sem essa condição, todo run de uma cascata sem humano ficaria eternamente
+"aguardando" alguém que não existe, e a listagem de pendências viraria ruído.
+
+Custo se errado: um run que deveria esperar conclui. Detectável na tela de
+runs, e o teste pina os três casos (sobrou com humano, sobrou sem humano, não
+sobrou com humano).
+
+## P6.32. PR #8 — a correção não é inspecionar melhor, é não precisar inspecionar
+
+`api/app.py::_construir_definicao` decidia repassar a fila olhando o **nome** do
+parâmetro da fábrica com `inspect.signature`, e o docstring de lá era honesto
+sobre o preço: "renomear isto para `q` deixaria a suíte inteira verde e faria
+todo workflow gerado servir fila vazia em silêncio".
+
+A tentação é tornar a inspeção mais robusta. A correção é tirar a inspeção:
+toda fábrica passa a ter a MESMA assinatura,
+`(WorkflowContext) -> WorkflowDefinition`, e quem não precisa do contexto o
+ignora.
+
+A uniformidade é a mesma disciplina que `EntradaCatalogo.construir` já aplica no
+grill — e o comentário de lá já apontava para cá: "assinaturas variáveis
+exigiriam introspecção para saber o que passar — e é exatamente esse padrão que
+já nos deu um defeito silencioso no `_construir_definicao` da API."
+
+Custo se errado: fábricas que não precisam do contexto recebem um argumento que
+ignoram. É o preço de ter um caminho em vez de três.
+
+## P6.33. `WorkflowContext` é dataclass tipado, não `dict[str, Any]`
+
+A alternativa óbvia — um saco de serviços com chave `"fila"` — trocaria um
+contrato fraco (nome de parâmetro) por outro igualmente fraco (chave de
+dicionário), e o defeito original voltaria com outra roupa. O docstring que eu
+estava corrigindo reclamava exatamente de "o nome é o único contrato"; um dict
+key chamado `"fila"` é o mesmo contrato.
+
+Ele tem um campo hoje porque há um domínio. Quando houver mais, ganha campos — e
+cada um some do `TypeError` para dentro do type checker.
+
+Custo se errado: acrescentar um serviço mexe numa classe em vez de numa chave.
+É o lado certo para errar.
+
+## P6.34. O teste do rename prova o OPOSTO do que o plano pedia, e está certo
+
+O §27 do plano pedia "um teste que renomeia o parâmetro e prova que **agora
+quebra alto**". Escrevi o contrário: um teste que renomeia o parâmetro e prova
+que **não tem consequência nenhuma**.
+
+Quebrar alto num rename seria continuar tratando o nome como contrato, só que
+com erro melhor. O objetivo nunca foi fazer o rename falhar; era torná-lo
+irrelevante. `test_renomear_o_parametro_da_fabrica_deixou_de_ter_consequencia`
+pina isso.
+
+`tests/grill/test_fabrica.py` foi REMOVIDO em vez de adaptado, e pelo mesmo
+motivo: ele travava o nome (`assert "fila" in inspect.signature(...).parameters`).
+Um teste que trava nome de parâmetro é a confissão de que o contrato é um nome
+de parâmetro. Não há mais nada ali para proteger.
+
+## P6.35. O registro de workflows saiu da API
+
+`_fabricas()` virou `workflows.registry()`, e `descrever()` levou junto o
+isolamento de receita não construível.
+
+Quais workflows existem não é assunto da camada HTTP: a CLI precisa da mesma
+resposta (PR #9 e o `orchestrator run <workflow>` de M5), e duas listas
+paralelas seriam o join frágil que P3.2 já custou uma correção.
+
+Camada `authoring`: o registro precisa conhecer as duas fontes — o embutido
+(`conciliacao`, domains) e os gerados pelo grill (authoring) — e `authoring` é a
+única camada que pode importar as duas.
+
+Custo se errado: um módulo a mais na raiz do pacote até a migração para
+`authoring/`. A catraca já registra isso como "deslocado".
+
+## P6.36. PR #9 — `build_benchmark` nunca foi código de CLI
+
+A inversão nº 3 (`api.app -> cli`) fecha movendo uma função, não criando uma
+abstração. `build_benchmark` é o gerador do dataset com gabarito; ele morava em
+`cli.py` só porque a CLI foi o primeiro chamador. A camada HTTP importar do
+ponto de entrada de linha de comando era consequência disso, não causa.
+
+Foi para `synth/benchmark.py`, junto do resto do gerador sintético.
+
+Custo se errado: nenhum. É rename com atualização de import, e `cli.py` ficou
+com 30 linhas — só o `main()`, que é o que um ponto de entrada deve ter.
+
+## P6.37. `Source` entra, parser de OFX não
+
+O `Source` é a costura; formato bancário real está fora do escopo desde §1.3.
+Duas coisas diferentes, e vale separá-las:
+
+**O que o `Source` resolve, e não é ler arquivo:** a identidade de uma execução.
+Antes, ela era a tupla `(seed, n, taxa)` — e era ela que escopava a fila de
+decisões humanas via `dataset_id`. Um framework cujo id de execução é uma tupla
+de parâmetros de benchmark não consegue representar execução nenhuma que não
+seja um benchmark, e um domínio novo não tem de onde receber trabalho sem
+inventar um segundo `build_benchmark`.
+
+**O que fica de fora:** OFX, CNAB, CSV de razão. Quem tiver o dado escreve um
+`Source` de 40 linhas — e é essa a promessa do framework, não uma tarefa dele.
+
+`SyntheticSource` tem `dataset()` além de `load()`, e a separação é deliberada:
+`load()` devolve só o trabalho, `dataset()` devolve o gabarito. O motor recebe o
+primeiro; a avaliação, o segundo. Um `Source` de dado real não tem o segundo
+método — e é por isso que `metrics.evaluate` continua exigindo um `Dataset` em
+vez de um `Source`.
+
+Custo se errado: um protocolo de dois membros sem segunda implementação. É a
+mesma aposta de `LLMClient` no plano 2, que se pagou.
+
+## P6.38. O `ref` vem da fonte, não montado no chamador
+
+`api/app.py` construía `input_ref=f"synth:{dataset_id(seed, n, taxa)}"`. Agora
+lê `fonte.ref`.
+
+São duas expressões que precisariam concordar sobre o formato de um id —
+exatamente o join frágil que P3.2 já custou uma correção, e que o `enum` do
+grill derivado do `CATALOGO` evita pelo mesmo motivo.
+
+Custo se errado: nenhum; o formato passa a ter um dono.
+
+---
+
+# M2 — Agent, Task e Tool
+
+## P6.39. `conciliacao` virou pacote porque `agent/tools.py` estava no lugar errado
+
+`agent/tools.py` guardava `ToolContext` — buscar lançamento contábil, calcular
+retenção de imposto. Ferramenta DE CONCILIAÇÃO dentro do pacote do agente
+genérico, e ocupando exatamente o nome que o `ToolRegistry` precisava.
+
+As duas coisas se resolvem com o mesmo mover: `conciliacao.py` virou
+`conciliacao/workflow.py`, `agent/tools.py` virou
+`conciliacao/ferramentas.py`, e `conciliacao/__init__.py` re-exporta a
+superfície pública para que `from orchestrator.conciliacao import reconcile`
+continue valendo.
+
+A catraca já apontava a seta (`agent.tools -> domains`) desde o PR #1.
+
+Custo se errado: um pacote de dois módulos. Reversível com dois `git mv`.
+
+## P6.40. A unidade de trabalho do agente NÃO é o `WorkItem`
+
+Foi o achado de projeto do M2, e não estava no plano.
+
+Na conciliação, um agente investiga uma `Divergence` — que é DERIVADA do pool,
+agrupa ids e tem prefixo próprio (`d-b-`, `d-l-`). Em `domains/swe`, a unidade é
+a issue direto. Um `Agent` que iterasse `work.items` não conseguiria expressar a
+primeira; um que iterasse divergências não conseguiria expressar a segunda.
+
+`AgentSpec.units: Callable[[WorkSet], list[AgentTask]]` resolve: quem sabe o que
+é uma unidade de investigação é o domínio. `AgentTask(id, prompt)` é o mínimo
+que o laço precisa — o id que vai para `Proposal.item_id` e o texto que o modelo
+lê.
+
+Alternativa rejeitada: fazer o `Agent` iterar `WorkItem` e obrigar o domínio a
+modelar divergência como item. Isso mudaria o `WorkSet` da conciliação e o
+golden junto — trocar um problema de agente por um de motor.
+
+Custo se errado: um `Callable` a mais na spec. Ele é o que torna o agente
+declarável.
+
+## P6.41. Cinco campos de domínio, e nenhum é string mágica
+
+O laço é genérico; o que é do domínio é: (a) o system prompt, (b) as
+ferramentas, (c) como um item vira pergunta, (d) como o texto vira proposta,
+(e) qual é o rótulo de "não sei". Os cinco viram campos de `AgentSpec`.
+
+Nenhum é uma string que o laço precise interpretar — `parse` e `abstain` são
+callables, `units` é callable, ferramentas vêm do registry. Um laço que
+inspecionasse convenções de nome seria o `_construir_definicao` de novo.
+
+Custo se errado: `AgentSpec` tem três callables, e callables não são
+serializáveis. `version` cobre só `(name, system, model, max_turns)` — o
+suficiente para o benchmark comparar prompts, insuficiente para reconstruir a
+spec de um JSON. Quando isso for preciso, os callables viram nomes registrados
+num `AgentRegistry`, que é PR próprio.
+
+## P6.42. `TOOL_SCHEMAS` sobrevive, derivado do registry
+
+`eval/assinatura.py` monta um servidor MCP a partir dos schemas, e não tem um
+`ToolContext` na mão para construir um registry. Em vez de duplicar a lista,
+`TOOL_SCHEMAS = registry_de(ToolContext([], [])).schemas()`.
+
+O contexto vazio é seguro porque o schema NÃO depende do conteúdo do contexto —
+só dos nomes e assinaturas, que são do módulo. Se algum dia depender, a linha
+vira função e o chamador passa o contexto dele.
+
+Custo se errado: uma constante derivada em tempo de import. Barata e verificada
+pelos testes que a consomem.
+
+## P6.43. `Task()` é açúcar, e não um conceito
+
+`Task(name, resolver=x)` devolve um `Stage`. Não há tipo novo.
+
+O spec de composição §1.2 diz textualmente que passo simples e cascata "não são
+dois conceitos; é um". Criar `Task` como entidade separada duplicaria estado,
+duplicaria serialização e criaria a pergunta "uma task tem stages ou um stage
+tem tasks?", que não tem resposta boa.
+
+Existe para que quem chega do CrewAI encontre a palavra que espera. É a única
+concessão de vocabulário do M2, e ela não custa nada ao kernel.
+
+## P6.44. O critério do M2, verificado nos dois sentidos
+
+**Extração não perdeu nada:** as 714 linhas de `tests/agent/test_investigator.py`
+passam contra o `Agent` genérico, sem mudança de asserção. Turnos, orçamento em
+dois níveis, retry de formato, erro de ferramenta voltando ao modelo, abstenção
+— tudo preservado, incluindo as duas capturas de exceção INVERTIDAS (estreita em
+volta de `complete()`, larga na execução de ferramenta) com os comentários que
+explicam a inversão.
+
+**Declarar um agente novo é barato:** `domains/swe` ganhou um agente de verdade
+em ~15 linhas de declaração, num domínio sem relação com conciliação, com custo
+contabilizado pelo mesmo mecanismo. Se isso exigisse mais do que uma
+`AgentSpec`, um `ToolRegistry` e três funções, a extração teria falhado.
+
+Os dois lados importam: o primeiro sozinho provaria que nada quebrou; o segundo
+sozinho provaria que algo novo cabe. Juntos provam que a extração foi extração.
+
+---
+
+# M3 — Motor de política
+
+## P6.45. A política decide SE roda; `Stage.ordered()` decide a ORDEM
+
+As duas são ortogonais, e mantê-las ortogonais é o que impede a política de
+poder chamar inteligência antes da regra de graça — a invariante nº 2 do §1.5.
+
+`ExecutionPolicy` não tem campo que expresse ordem, e há teste que verifica isso
+por introspecção (`test_nenhuma_politica_consegue_inverter_a_ordem_de_custo`).
+Não é "ninguém vai fazer"; é "não há como escrever".
+
+Alternativa rejeitada: deixar a política reordenar a cascata. Ela seria mais
+expressiva e destruiria a única garantia que o produto tem sobre custo.
+
+## P6.46. Dois níveis de decisão, porque o motor pergunta em momentos diferentes
+
+Regras 1–5 decidem se um RESOLVER roda (antes de chamá-lo). Regras 6–7 decidem
+se ele roda sobre um ITEM (estreitando o pool que ele recebe).
+
+Não é refinamento: são perguntas diferentes com respostas diferentes.
+"Orçamento estourado" vale para o resolver inteiro; "esta divergência de R$ 3,00
+não vale US$ 0,04" vale para um item.
+
+Consequência: o resolver pode receber um `WorkSet` menor que o pool. Com
+`POLITICA_ATUAL` o filtro é identidade (devolve o MESMO objeto), e é por isso
+que o motor de política entra sem mudar um número.
+
+## P6.47. `PARAR` encerra o stage; `PULAR` passa ao próximo resolver
+
+Orçamento estourado não melhora com o próximo resolver — ele é mais caro, pela
+ordem da cascata. Já "classe acima do teto" é específico daquele resolver, e o
+próximo pode caber.
+
+Custo se errado: com `PULAR` no lugar de `PARAR`, uma execução sem orçamento
+consultaria a política N vezes para nada. Barato, mas ruidoso no trace.
+
+## P6.48. A regra 7 não se aplica a resolver de graça
+
+Uma regra que não custa deve rodar sobre tudo, sempre. Sem esta guarda, um item
+de valor baixo sairia até do L1 — e a cascata barata, que é o que entrega os
+85,3%, pararia de ver metade do pool.
+
+Achado ao escrever o teste, não por análise: a primeira versão de
+`_por_que_pular` aplicava a regra 7 a qualquer resolver.
+
+## P6.49. BUG REAL — a regra 7 comparava micro-centavos de USD com centavos de BRL
+
+O achado mais importante do M3, e ele não veio de leitura: veio de rodar.
+
+`custo_estimado` devolve o orçamento do agente, em **micro-centavos de USD**
+(4.000.000). `valor_em_risco` devolvia o lançamento, em **centavos de BRL**
+(1.050 para R$ 10,50). A regra comparava `4.000.000 > 1.050 × 0,02` — verdadeiro
+SEMPRE.
+
+Medido: `POLITICA_ECONOMICA` pulou 20 de 20 divergências e reportou custo zero.
+Parecia economia máxima. Era unidade errada, e o sintoma era indistinguível do
+sucesso.
+
+Correção: `valor_em_risco` devolve micro-centavos de USD, convertendo com
+`MICROCENTS_POR_CENTAVO_BRL = 192_308` — constante com nome, derivação no
+comentário, e taxa FIXA de propósito (uma política que muda de comportamento com
+a cotação do dia seria impossível de reproduzir num benchmark).
+
+Dois testes prendem isso: um verifica a unidade de `valor_em_risco`, outro
+verifica que o limiar de R$ 10,40 do comentário é o limiar de verdade — porque
+comentário com número é número que desatualiza.
+
+Num repositório cuja primeira regra é "ponto flutuante é proibido; dinheiro é
+int em centavos", comparar duas moedas sem conversão é a mesma classe de defeito
+que `parse_brl("10.5")` teria sido. Ele passou porque o kernel, corretamente,
+não sabe o que é moeda — só compara dois inteiros. A responsabilidade da unidade
+é do domínio, e agora está escrita lá.
+
+## P6.50. No benchmark sintético a política econômica não economiza nada, e isso é informação
+
+Medido em `seed=1, n=120, taxa=0.20`: zero itens pulados. As divergências que o
+gerador produz são todas de valor alto (centenas a milhares de reais), e todas
+passam folgado no limiar de R$ 10,40.
+
+Não ajustei o limiar para produzir um número bonito. A demonstração da tese usa
+um dataset com valores CONTROLADOS (metade das divergências forçada a R$ 3,00), e
+ali a economia é real: 78 investigações → 43, US$ 0,74 → US$ 0,41.
+
+O que isso diz sobre o benchmark: ele não exercita a faixa de valor baixo. É
+uma lacuna do GERADOR, não da política — e entra como caso novo quando o
+`synth/` for revisitado.
+
+## P6.51. A política NÃO entra em `WorkflowDefinition.version`
+
+Ela é variável de EXPERIMENTO (§14.4). Rodar o mesmo workflow com duas políticas
+tem de produzir a mesma `workflow_version`, ou o benchmark de M6 compararia dois
+workflows em vez de duas políticas.
+
+A política é observável pelo `Run`, em `policy_decisions` — que é onde ela
+precisa aparecer.
+
+---
+
+# M4 — Observabilidade
+
+## P6.52. Spans vêm do barramento; o domínio nunca sabe que está sendo observado
+
+Não por decorator, não por monkey-patching, não por context manager espalhado.
+O coletor assina o `EventBus`, e um resolver não importa nada de
+`observability/`.
+
+É o que permite testar todo resolver sem instrumentação e desligar a
+observabilidade inteira sem tocar em lógica — com teste provando que ligar e
+desligar o barramento produz o MESMO resultado. Se não produzisse, o golden
+dependeria de quem está assinando.
+
+## P6.53. LIMITAÇÃO — LLM e ferramenta são DERIVADOS, não emitidos
+
+`run`, `stage`, `policy` e `resolver` vêm do stream. `item`, `llm` e `tool` são
+derivados de `Proposal.trace` DEPOIS que o run termina.
+
+A razão é estrutural: quem sabe de LLM e ferramenta é o agente, e o agente não
+recebe o barramento. Fechar isso exige `Resolver.resolve(work, ctx)` — mudança
+de assinatura em TODO resolver, que está agendada para o M6, onde ela também
+paga por timeout e cancelamento.
+
+Consequência prática: a árvore de `orchestrator-trace` é completa, mas o detalhe
+de LLM e ferramenta só existe DEPOIS do run, não durante. Observabilidade ao
+vivo — que ninguém pediu — precisa daquele contexto.
+
+Registrado no docstring do módulo, não só aqui: quem lê o coletor precisa saber
+que metade da árvore chega por outro caminho.
+
+## P6.54. `custo_total` soma FOLHAS, e essa é a única forma correta
+
+Somar todos os spans contaria cada token duas vezes — uma no span de `llm` e
+outra no `resolver` que o contém. Custo de pai é agregação dos filhos, e agregar
+a agregação é o erro clássico desta estrutura.
+
+Tem teste que pina isso comparando o total com o custo do único span folha.
+
+## P6.55. `abstencao` e `pulado` não são erro, e é por isso que OTel é só saída
+
+`SpanStatus` tem quatro valores: OK, ERRO, ABSTENCAO, PULADO. Os dois últimos
+são desfechos legítimos e comercialmente DISTINTOS — abstenção é o agente
+dizendo "não sei" e custou dinheiro; pulado é a política dizendo "não vale a
+pena" e economizou.
+
+OTel tem dois status. O exportador mapeia os quatro para OK/ERROR e preserva o
+real em `orchestrator.status`, porque sem isso "o agente absteve" e "o agente
+respondeu" chegariam idênticos ao backend, e a taxa de abstenção — que é métrica
+de produto — sumiria.
+
+É metade do ADR-08. A outra metade é o custo: micro-centavos `int` não tem lugar
+canônico em OTel e viraria atributo float. Ponto flutuante em dinheiro é
+proibido desde `money.py`, e "só no exportador" é exatamente como esse tipo de
+erro entra. O exportador manda inteiro e deixa a divisão para quem consome.
+
+Teste verifica que `kernel/` não contém a string `opentelemetry`.
+
+## P6.56. O span de política tem custo zero e duração ~0, e não é desperdício
+
+Ele é o registro de POR QUE o runtime NÃO gastou dinheiro. Sem ele, a decisão
+mais valiosa do sistema — a única que economiza — é a única que não deixa
+rastro, e "a política pulou o agente" fica indistinguível de "o agente não achou
+nada".
+
+Mesma classe de ambiguidade que `proposals_api_failed` elimina em
+`agent_eval.py`, e a mesma razão para existir.
+
+## P6.57. A lacuna é um span declarado, não uma ausência
+
+`SpanKind.GAP` aparece na árvore com a contagem de itens que nenhum resolver
+cobriu. O canvas já a desenha, e o spec de composição §3.4 chama isso de "o
+ponto mais valioso da tela".
+
+Uma árvore que mostrasse só o que foi resolvido esconderia exatamente o que
+importa — e "não apareceu na árvore" seria indistinguível de "não sobrou nada".
+
+## P6.58. `orchestrator-trace` é entrada própria, não subcomando
+
+Mesmo motivo que `orchestrator-eval` e `orchestrator-grill` já documentam: o
+`main()` de `orchestrator` é argparse plano, e introduzir subcomandos quebraria
+a invocação de hoje sem ganho. A unificação em `orchestrator trace <run-id>` é o
+M5 (DX), onde vem com despachante e alias legado.
+
+Tem teste de que não existe caminho de código dali até o modelo — a mesma regra
+da API, pelo mesmo tipo de teste. Um `orchestrator-trace` que gastasse dinheiro
+seria a pior surpresa possível numa ferramenta de leitura.
+
+## P6.59. Um arquivo de trace POR RUN
+
+`RunStore` pode ser um arquivo só porque guarda uma linha por run. Um trace tem
+dezenas a milhares de spans, e um arquivo único faria `orchestrator-trace <id>`
+varrer o histórico inteiro para achar um.
+
+Mesma serialização campo a campo de `review/serial.py`, com os CINCO campos de
+`Cost` — perder um faria o trace reportar custo menor que o real, e há teste.
+
+## P6.60. O corte de itens na árvore é declarado, nunca silencioso
+
+`render(max_itens=5)`. Um run de 300 divergências produziria 300 subárvores e a
+saída deixaria de ser legível — que é o oposto do que um trace serve.
+
+O corte sai como `... e mais N itens`. Truncar em silêncio seria a mesma classe
+de defeito que `limite=-3` em `buscar_lancamentos` já custou uma correção:
+devolver menos do que o pedido sem dizer.
+
+---
+
+# M5 — CLI, SDK e DX
+
+## P6.61. TOML e não YAML, ao contrário do que o plano pedia
+
+O §16.4 especificava `orchestrator.yaml`. Entregue como `orchestrator.toml`.
+
+`tomllib` é stdlib desde o Python 3.11, que é EXATAMENTE o piso declarado em
+`requires-python`. YAML custaria `pyyaml` como dependência de RUNTIME num pacote
+que tem uma (`anthropic`), e a superfície mínima de dependência está no §2.4 da
+auditoria como ATIVO, não como acaso — é ela que torna a extração barata.
+
+De brinde, o projeto já fala TOML: `pyproject.toml` está na raiz, e quem edita
+um sabe editar o outro.
+
+Há teste que verifica que `dependencies` continua com um item só.
+
+Custo se errado: TOML não tem âncora nem multi-documento. Nada na configuração
+prevista precisa dos dois.
+
+## P6.62. A regra do despachante é UMA linha, e não uma lista de nomes
+
+"Se o primeiro argumento começa com `-`, é a invocação legada."
+
+A alternativa óbvia — uma lista de subcomandos conhecidos, e tudo que não estiver
+nela vai para o legado — precisaria ser mantida em sincronia com o parser, e
+colidiria no dia em que alguém criasse um subcomando chamado `seed`. A regra do
+prefixo não tem essas duas propriedades.
+
+`--help` é a única exceção, e passa a mostrar os subcomandos: quem roda `--help`
+está procurando o que existe. É melhoria, não quebra.
+
+**O que isso protege:** o job `conciliador` do CI roda
+`orchestrator --seed 1 --n 500` e faz `grep` da linha do percentual. Quebrar
+seria apagar o único check que transforma regressão de qualidade em CI vermelho.
+Verificado com o entry point INSTALADO, não só com `python -m`.
+
+## P6.63. `bench` delega para o `main` antigo em vez de reimprimir
+
+A linha que o CI faz `grep` sai de UM lugar. Duas formatações que precisassem
+concordar seriam o join frágil de sempre — e há teste comparando a saída dos
+dois caminhos byte a byte.
+
+## P6.64. O scaffold é um projeto que RODA, não um esqueleto com `TODO`
+
+`orchestrator init` gera uma cascata completa e executável: regra barata, agente
+(com `FakeLLMClient`, para rodar sem chave), política com teto de gasto, trace
+renderizado e dois testes que passam.
+
+O primeiro feedback que alguém tem do framework é se ele executa. Um scaffold com
+`raise NotImplementedError` transfere para a primeira hora do usuário o trabalho
+de descobrir a forma — e, com a regra dos três usos suspensa (§1.3), feedback de
+quem chega de fora é o substituto que sobrou para validar a abstração.
+
+Os testes rodam o projeto gerado num SUBPROCESSO, de verdade. Um scaffold
+verificado só por `assert arquivo.exists()` é um scaffold que quebra sem ninguém
+ver.
+
+Defeito achado assim: o README dizia `python workflows/triagem.py`, que põe
+`workflows/` no `sys.path[0]` e faz os imports de `dominio` e `regras`
+falharem. Corrigido para `python -m workflows.triagem`.
+
+## P6.65. O scaffold tem uma pasta `dominio/`, e é diferença deliberada do CrewAI
+
+Lá o scaffold é `agents.yaml` + `tasks.yaml`, porque o domínio É o texto do
+prompt. Aqui o domínio é código tipado, e a pasta existe para dizer, na
+ESTRUTURA, que o que é determinístico não mora num YAML de prompt.
+
+`data/` é ignorado pelo git; `avaliacoes/casos/` não. É a decisão de ativo do
+projeto visível na árvore — o §1.1 do spec pai chama o conjunto de avaliação de
+"a coisa que um concorrente não copia", e coisa que não se copia vai para o
+versionamento.
+
+## P6.66. A fachada pública NÃO exporta conciliação, nem o provider
+
+`orchestrator/__init__.py` exporta 46 nomes e nenhum deles é de conciliação.
+Exportá-los faria todo usuário do framework carregar a taxonomia de divergência
+fiscal brasileira.
+
+`AnthropicClient` também fica de fora: importar o framework não pode exigir
+credencial. Quem quer o provider importa `orchestrator.agent.providers`; quem só
+quer declarar um workflow não paga por isso.
+
+`Tool` e `Workflow` são APELIDOS de `ToolSpec` e `WorkflowDefinition`. Os nomes
+longos dizem o que a coisa é; os curtos são o que alguém escreve. Apelido não é
+conceito novo — mesma razão de `Task()` ser açúcar sobre `Stage`.
+
+## P6.67. A fachada precisou de uma camada própria, e de um teste que a catraca não daria
+
+`orchestrator/__init__.py` virou um módulo com conteúdo, e o mapa de camadas
+precisou de um nome para ele — camada `public`, com permissão de borda.
+
+Mas há uma invariante que a catraca sozinha NÃO pega: **nenhum módulo interno
+pode importar a fachada.** Importar `orchestrator` de dentro criaria um ciclo em
+tempo de import (a fachada importa quase tudo) e tornaria a ordem de import
+significativa. A catraca não pegaria porque `orchestrator` não é uma camada — é
+o pacote.
+
+`test_NENHUM_modulo_interno_importa_a_fachada` fecha isso, varrendo a AST.
+
+---
+
+# Verificação ponta a ponta (2026-09-16)
+
+## P6.68. O agente rodou de verdade, e o produto fecha o loop
+
+Pelo caminho da ASSINATURA (`--via assinatura`), porque a conta de API continua
+sem crédito — o erro é literal: *"Your credit balance is too low"*. O README já
+afirmava isso dois dias antes; agora está verificado.
+
+O que rodou, com modelo real, sobre `seed=1 n=40`:
+
+  - 2 divergências investigadas
+  - **100% de precisão** na única que arriscou um tipo
+  - 50% de abstenção — e a abstenção foi CORRETA: o agente usou cinco
+    ferramentas, não achou contrapartida e disse isso
+  - custo **não medido**, e o relatório disse "não medido" em vez de imprimir
+    US$ 0,0000 (a guarda de `custo_medido` fazendo o trabalho dela)
+
+A proposta que ele produziu para `d-b-b00003` citou seis evidências, cada uma
+com o retorno de uma ferramenta real, e a ação saiu bem formada
+(`conciliar_com(b00003, l00003)`). Levada à fila e aceita por um humano pela
+API, virou `MatchResult` do revisor na execução seguinte e a lacuna foi de 1
+para 0.
+
+**A tese inteira, com modelo real, ponta a ponta.**
+
+Uma confirmação bonita de passagem: os dois ids que o agente produziu —
+`d-b-b00003` e `d-l-l00003` — são EXATAMENTE os que o comentário de
+`revisor.py` cita como "o caso do fantasma" ao explicar por que `consumidos`
+existe. A guarda foi escrita para um caso observado, e o agente real o
+reproduziu.
+
+## P6.69. ACHADO — 21% do custo do agente é o mesmo par investigado duas vezes
+
+`models.divergencias()` cria uma divergência por lançamento órfão, cada lado
+separado: `d-b-{id}` e `d-l-{id}`. Quando um par fica órfão dos DOIS lados, o
+agente investiga a mesma situação duas vezes e paga duas vezes.
+
+Medido:
+
+    n=40   2 divergências   1 par em dobro   50% do custo
+    n=120  12               6                50%
+    n=300  62               13               21%
+    n=500  116              24               21%
+
+E não é hipótese: na execução real acima, o lado bancário achou a contrapartida
+e propôs conciliar; o lado contábil viu `lancamentos_bancarios: []` e absteve.
+Uma das duas chamadas era estruturalmente incapaz de concluir.
+
+**Não é defeito introduzido pela migração** — está em `as_divergences()` desde o
+plano 1, e ninguém tinha medido. Achado rodando, não lendo.
+
+Duas saídas, nenhuma para agora: o domínio pareia órfãos por documento/valor
+antes de derivar divergências, ou a política pula o segundo lado (regra 6,
+`skip_when`). A segunda é mais barata e cabe no M3 que já existe.
+
+## P6.70. DEFEITO MEU — o docstring da fachada citava um módulo que não existe
+
+`orchestrator/__init__.py` e `tests/test_api_publica.py` diziam que quem quer o
+provider importa `orchestrator.agent.providers`. **Esse módulo não existe** — o
+provider é `orchestrator.agent.anthropic_client`.
+
+Achado ao tentar rodar o agente de verdade, não por leitura: o `import` estourou
+`ModuleNotFoundError` num comando de diagnóstico.
+
+O teste agora IMPORTA o módulo em vez de citá-lo numa prosa. Documentação que
+nomeia um módulo é documentação que pode mentir, e a única defesa é o import.
+
+## P6.71. Verificação ponta a ponta: o que foi coberto, e o que continua sem prova
+
+Coberto nesta passada:
+
+  - os **seis PRs da pilha, cada um isolado**: 489/530/542/566/588/620 testes,
+    ruff limpo, `85.3%`, golden intacto em TODOS
+  - API sobre HTTP real (uvicorn, não `TestClient`): canvas, fila e `canvas.js`
+    respondendo 200; `POST /runs`; `GET /runs`; 409 para cascata paga
+  - fluxo humano completo: proposta do agente real → fila → decisão → match
+  - `orchestrator-trace` contra um run persistido de verdade
+  - determinismo: duas execuções sobre a mesma entrada, resoluções e
+    divergências idênticas, `run.id` diferente (identidade, não resultado)
+  - pureza: `reconcile()` num diretório vazio não criou arquivo nenhum
+
+**O que continua sem prova, e é a lacuna que mais importa:** o laço genérico
+`Agent` extraído no M2 nunca falou com um modelo de verdade. O caminho da
+assinatura exercita o PROMPT, as FERRAMENTAS e o PARSER — mas tem laço próprio
+(`InvestigadorAssinatura`), e por isso não prova o laço novo. O caminho pago
+exercitaria os dois e exige crédito.
+
+`grill/assinatura.py` já registrava por que não existe um `LLMClient` movido a
+assinatura (P5.1): construí-lo exigiria acoplar ao formato de transcript INTERNO
+do SDK, que o próprio pacote declara não-versionado. Continua valendo — e
+continua sendo a razão de a prova do M2 depender de crédito.
+
+## P6.72. SONDADO — a assinatura pode provar o LAÇO, mas nunca pode medir CUSTO
+
+Pergunta do dono: dá para usar o plano Max enquanto testamos, em vez de crédito
+de API?
+
+**Em parte, e já estamos.** `--via assinatura` roda no Claude Code local, ou
+seja, no plano do dono, e provou prompt, ferramentas, parser e abstenção contra
+um modelo de verdade (P6.68). Isso é real e é de graça.
+
+**A pergunta de fundo era outra:** dá para a assinatura mover o laço `Agent`
+extraído no M2 — que é a lacuna que sobrou? Sondado por EXECUÇÃO, não por
+leitura de assinatura (a mesma disciplina que fez a sonda do P5.1 achar que
+`bypassPermissions` desliga `can_use_tool` em silêncio).
+
+**Achado 1 — o mecanismo de deferimento FUNCIONA.** Hook `PreToolUse` devolvendo
+`permissionDecision: "defer"` para o turno sem executar a ferramenta, e a
+chamada volta em `ResultMessage.deferred_tool_use` com `stop_reason:
+tool_deferred`. É exatamente o primitivo que um `complete()` precisa: um turno,
+a ferramenta pedida mas não executada, controle de volta para o nosso laço.
+
+**Achado 2 — a ferramenta MCP chega atrás de `ToolSearch`.** A chamada deferida
+não foi `mcp__sonda__somar`: foi `ToolSearch(query="select:mcp__sonda__somar")`.
+Este build do Claude Code carrega schema de MCP sob demanda. O laço genérico
+receberia um nome que não está no `ToolRegistry` dele e devolveria "ferramenta
+inexistente" para sempre.
+
+**Achado 3, e é o que decide — o custo medido NÃO é o nosso.** Um prompt de
+cinco palavras ("Responda: OK") reportou:
+
+    input_tokens: 2    cache_creation: 28.542    costUSD: 0,28553
+
+Dois tokens nossos; 28 mil do harness do Claude Code (system prompt, skills,
+ferramentas, contexto). Uma segunda chamada com system 1.200 tokens maior
+reportou `input_tokens: 2` de novo e o delta foi todo para cache. E o modelo
+sai como `claude-opus-5[1m]`, que nem está na tabela de preços do projeto.
+
+Uma investigação que a nossa contabilidade precifica em US$ 0,0024 aparece como
+US$ 0,2855 — **duas ordens de grandeza**.
+
+**Por que o achado 3 é disqualificante e o 2 não seria.** A metade do laço que
+ainda não tem prova é justamente o orçamento em DOIS NÍVEIS — o teto por item e
+o teto por execução, ambos comparando `Cost.microcents(model)` contra um limiar.
+Pela assinatura, essa comparação seria alimentada com o consumo do harness.
+Provaríamos o laço provando nada sobre a coisa que o laço existe para controlar.
+
+**Atualiza P5.1 com um motivo melhor.** Lá a razão para não construir um
+`LLMClient` de assinatura era acoplamento ao formato de transcript interno —
+argumento sobre superfície de API. Este é sobre VALIDADE DE MEDIÇÃO, e é mais
+forte: mesmo que o acoplamento fosse aceitável, o número sairia errado.
+
+**Conclusão operacional.** A assinatura fica onde está: ferramenta de avaliação
+do domínio (`--via assinatura`), com `custo_medido=False` — que agora tem uma
+segunda justificativa medida, além de "não tem preço por chamada". Fechar a
+lacuna do M2 continua custando ~1,5 centavo de crédito de API, e continua sendo
+a forma mais barata de fechá-la.
+
+Sondas reprodutíveis no scratchpad da sessão (`sonda_llmclient.py`, `sonda2.py`).
+
+## M6 — Avaliação
+
+### P6.73. A camada de avaliação PONTUA; ela não executa
+
+`PERMITIDO["evaluation"]` é `{kernel, storage, observability}` — sem `runtime` e
+sem `agent`. O spec do §14.2 escreve `Evaluator.evaluate(run, dataset)`, que
+RECEBE um run, e a tabela de camadas concorda: o executor do benchmark entra por
+injeção (`benchmark.Executor`), e quem o fornece é a borda.
+
+Alternativa rejeitada: relaxar `PERMITIDO` para deixar `evaluation` importar
+`runtime`. Custo de estar errado: a avaliação viraria feature do runtime, e o
+caminho de produção passaria a carregar código que só existe para medir.
+
+Ganho colateral que não estava previsto: dá para pontuar um run lido do disco
+meses depois, um run de produção, ou um run de um motor que ainda não existe.
+
+### P6.74. `abstem_com` é parâmetro, e é o que impede a camada nova de herdar a violação antiga
+
+`orchestrator/metrics.py` conta abstenção comparando contra
+`DivergenceType.NAO_IDENTIFICADO`. Essa linha É a violação `metrics -> taxonomy`
+que a catraca lista há seis PRs. A camada genérica resolve a mesma pergunta
+recebendo o vocabulário na chamada.
+
+Alternativa rejeitada: detectar abstenção por `acao_sugerida ==
+"investigar_manual"`, que é o que `Proposal.abstencao` estampa. Custo de estar
+errado: um domínio que estampasse outra coisa passaria a ter zero abstenção
+medida, sem erro nenhum — e abstenção medida a menos infla precisão.
+
+### P6.75. Redução pessimista, e em duas direções diferentes
+
+Qualidade reduz por `min` entre sementes; custo reduz por `max`. Preservado da
+decisão 26. Cinco sementes a 90% e uma a 20% dão média 78% e passam em qualquer
+limiar razoável; o mínimo vê o 20%. Tem teste que demonstra numericamente.
+
+`max_abstention_increase` entra junto e não estava no spec: sem ela, "não
+responder nada" é a estratégia ótima contra o CI — a precisão das que sobraram
+sobe e nada mais é medido.
+
+### P6.76. `waste.py` mede e aponta; quem julga é o benchmark
+
+O achado do `swe` (ferramenta chamada em 5 de 5, provocando ~56% do custo) virou
+métrica. O módulo se recusa a chamar aquilo de desperdício: desperdício exige
+contrafactual, e o contrafactual tem nome nesta camada — dois `BenchmarkArm`
+sobre o mesmo conjunto.
+
+Alternativa rejeitada: um relatório "custo evitável" que somasse as chamadas
+suspeitas. Custo de estar errado: seria a mesma classe de erro que relatar custo
+zero quando nada foi medido — um número com aparência de medida e sem medição
+atrás.
+
+**Medido em 2026-09-16, com os dois braços rodando de verdade:**
+
+    braço                   precisão   abst.   US$ total   US$/acerto
+    com-ferramenta            100,0%   20,0%      0,0139     0,003474
+    sem-ferramenta            100,0%   20,0%      0,0046     0,001138
+
+Três vezes mais caro para a mesma precisão. E a diferença é MAIOR que os 56%
+atribuídos à ferramenta, porque o braço com ela também paga o schema no turno 1
+— o schema entra no custo mesmo quando a ferramenta não é chamada.
+
+Com cinco casos isto é indício, não prova, e o veredito impresso diz isso.
+
+### P6.77. ACHADO — no `swe`, "não sei" e "é uma dúvida" são a MESMA palavra
+
+`_abstain` devolve `Proposal.abstencao(item_id, "DUVIDA", ...)` e `DUVIDA` é
+também um tipo legítimo do vocabulário. Consequência medida: a issue I-3, que É
+uma dúvida e foi classificada corretamente, entra na taxa de ABSTENÇÃO em vez da
+de acerto — 20% de abstenção nos dois braços, quando o agente não se absteve
+nenhuma vez.
+
+Não é defeito da camada de avaliação; é do domínio esqueleto. A avaliação
+apenas o tornou visível, que é para isso que ela existe. Fica anotado e não
+corrigido neste PR: mudar o vocabulário do `swe` junto com a entrega do M6
+misturaria duas coisas, e o número de hoje é o que serve de linha de base para a
+mudança.
+
+## M8 — Tripulação
+
+### P6.78. Concordância une evidência e NÃO eleva confiança
+
+É o ponto mais contraintuitivo do módulo. No modo sequencial o agente 2 LEU a
+resposta do agente 1 antes de responder — eles não são independentes, então
+concordar é em parte ancoragem, não corroboração. Elevar a confiança venderia
+como evidência aquilo que o próprio desenho do modo produz.
+
+A confiança final é a MENOR entre os que concordaram.
+
+Alternativa rejeitada: somar ou promover confiança com acordo, que é o que a
+intuição pede. Custo de estar errado: o produto passaria a emitir ALTA confiança
+com frequência crescente conforme se acrescentam agentes, e confiança alta é
+exatamente o que faz um revisor parar de olhar.
+
+### P6.79. Voto ponderado por confiança está FORA, e continua fora
+
+Confiança de LLM não é calibrada. Ponderar por ela daria autoridade a um número
+que o M6 ainda não mediu se significa alguma coisa. Quando medir, a decisão se
+revisita com dado.
+
+### P6.80. Desacordo é informação, e é o default
+
+Duas leituras plausíveis viram abstenção COM as duas hipóteses na evidência. O
+humano que receber o item precisa saber que houve divergência e qual foi — senão
+a tripulação custou dinheiro para produzir um "não sei" idêntico ao de um agente
+sozinho.
+
+Maioria é a alternativa barata e ela APAGA essa informação; por isso não é o
+default. Empate por maioria cai em abstenção, porque empate por maioria é
+abstenção com passos extras.
+
+### P6.81. MEDIDO — a tripulação NÃO se paga neste domínio
+
+O §10.5 dizia que "Crew vale o custo?" viraria uma linha na tabela de benchmark
+em vez de opinião. Virou:
+
+    braço                 precisão   abst.   US$/acerto
+    agente-sozinho          100,0%   20,0%     0,003488
+    tripulacao-2            100,0%   40,0%     0,011611
+
+**2,1x por acerto para a mesma precisão.** E a tripulação abstém o DOBRO — em
+duas das três execuções ela converteu uma resposta em "não sei" por desacordo
+interno, o que é a política funcionando e ainda assim é uma resposta a menos.
+
+Ressalva que o próprio veredito imprime: com cinco casos, um acerto vale vinte
+pontos, e entre execuções o agente sozinho variou de 75% a 100%. Isto indica
+direção; não decide. A próxima pergunta é o mesmo par sobre um conjunto maior —
+não remover o Crew.
+
+**O valor de ter construído não é a tripulação; é a resposta.** Nenhum framework
+de agentes responde essa pergunta sobre si mesmo, porque responder exige conjunto
+de avaliação, custo por proposta correta e braço de contrafactual — as três
+coisas do M6.
+
+### P6.82. ACHADO — o Crew descartava o trace dos agentes
+
+A primeira execução ao vivo da tripulação reportou "nenhuma ferramenta foi
+chamada" num braço cujos agentes têm `contar_palavras` e a chamaram seis vezes.
+Causa: as propostas finais do Crew copiavam o trace DELE e não o dos agentes.
+Custo saía certo; observabilidade saía vazia.
+
+Não foi um teste que achou — foi o relatório de economia da avaliação. É a
+terceira vez neste projeto que rodar acha o que a suíte não achou, e as três
+vezes foram sobre custo ou sobre o que produziu o custo.
+
+Corrigido com `trace.extend(p.trace)` nos dois modos, mais um teste que compara
+`p.cost.calls` com a contagem de eventos de LLM — se os dois divergirem de novo,
+falha.
+
+### P6.83. ACHADO — o veredito casava por rótulo e sumiu quando os rótulos mudaram
+
+`_veredito` procurava `"com-ferramenta"`/`"sem-ferramenta"`. Com os braços de
+tripulação, ele simplesmente não saiu — e a frase que ele imprime é justamente a
+ressalva sobre tamanho de amostra. Ausência de ressalva lê-se como ausência de
+ressalva, no experimento mais fácil de sobreinterpretar.
+
+Agora é genérico em qualquer par de braços, e tem teste.
+
+## 5 → 50 casos: o que mudou quando o ruído saiu
+
+### P6.84. REVOGA P6.81 — a tripulação SE PAGA, e a conclusão anterior era ruído
+
+Com cinco casos (P6.81): tripulação 2,1x mais cara, MESMA precisão. Conclusão
+registrada: "não se paga neste domínio".
+
+Com cinquenta:
+
+    braço                 precisão   abst.   US$/acerto
+    agente-sozinho          91,2%    32,0%     0,004629
+    tripulacao-2           100,0%    44,0%     0,007165
+
+    por dificuldade         n   precisão   abst.
+    agente-sozinho  facil   30    100,0%   33,3%
+    agente-sozinho  advers. 20     78,6%   30,0%
+    tripulacao-2    facil   30    100,0%   33,3%
+    tripulacao-2    advers. 20    100,0%   60,0%
+
+**1,5x por acerto, nove pontos de precisão a mais, e todo o ganho no estrato
+adversarial.** O agente sozinho erra 21% dos casos difíceis; a tripulação erra
+zero — abstendo em 60% deles.
+
+Ou seja: ela não acerta mais, ela ERRA MENOS, convertendo caso difícil em
+escalada. É exatamente a política de desacordo (P6.80) fazendo o que foi
+desenhada para fazer, e o efeito é invisível num conjunto onde os casos
+difíceis não estão representados.
+
+**Se isso vale depende do preço de um erro contra o preço de uma revisão
+humana**, e esse número é do domínio, não nosso. Numa conciliação auditada, um
+falso positivo custa muito mais que um item na fila.
+
+**O que eu aprendi, e é a lição do PR inteiro:** P6.81 não estava "impreciso",
+estava INVERTIDO. Com n=5 a diferença entre 2,1x-sem-ganho e 1,5x-com-ganho é
+ruído. A ressalva impressa (*"indica direção, não decide"*) estava certa e foi
+lida por mim mesmo como se fosse mais fraca do que era.
+
+### P6.85. REFORÇA P6.76 — a ferramenta não só custa 3x, ela PIORA
+
+    braço                  precisão   abst.   US$/acerto
+    com-ferramenta            90,9%   34,0%     0,004738
+    sem-ferramenta           100,0%   32,0%     0,001495
+
+    por dificuldade          n   precisão
+    com-ferramenta  advers. 20     76,9%
+    sem-ferramenta  advers. 20    100,0%
+
+Com cinco casos, a ferramenta era "3x mais cara pela mesma precisão". Com
+cinquenta, ela é 3,2x mais cara E nove pontos PIOR — e toda a perda está no
+estrato adversarial. `contar_palavras` foi chamada em 46 de 50 itens.
+
+Hipótese (não medida): gastar um turno contando palavras desloca a atenção do
+modelo do conteúdo para o tamanho, e nos casos em que a superfície engana isso
+é justamente o pior lugar para olhar. Testável com um terceiro braço.
+
+### P6.86. LIMITAÇÃO MEDIDA — 32% do conjunto não é pontuado (o P6.77 tem preço)
+
+O P6.77 anotou que no `swe` "não sei" e "é uma dúvida" são a mesma palavra.
+Agora dá para dizer quanto custa: dos 50 casos, **16 (32%) têm `DUVIDA` como
+tipo esperado**, e como `DUVIDA` é também o rótulo de abstenção, esses 16 **não
+entram no denominador da precisão**.
+
+As taxas de abstenção medidas — 32% e 34% — são praticamente a fatia de DUVIDA
+do conjunto. Não é coincidência: é a colisão de vocabulário aparecendo no
+número.
+
+Consequências, e nenhuma é cosmética:
+- a precisão publicada é sobre ~34 casos, não 50;
+- a taxa de abstenção não mede abstenção neste domínio;
+- 6 dos 20 casos adversariais são DUVIDA, então o estrato mais informativo é o
+  mais afetado.
+
+A comparação ENTRE braços continua válida (os dois carregam o mesmo defeito), e
+é por isso que P6.84 e P6.85 valem. O número absoluto não vale.
+
+**Correção:** separar o rótulo de abstenção do vocabulário de tipos no `swe` —
+`NAO_SEI` para "não consegui classificar", `DUVIDA` para "esta issue é uma
+pergunta". É mudança de domínio, fica para PR próprio, e o número de hoje é a
+linha de base dela.
+
+### P6.87. ACHADO — o Crew duplicava spans de ITEM, e o denominador denunciou
+
+O relatório de economia da tripulação imprimiu `29/71` itens num conjunto de
+**50**. Causa: a correção do P6.82 passou a juntar o trace dos agentes ao do
+Crew, incluindo o `TraceKind.ENTRADA` de cada um — e é ele que abre um span de
+ITEM no coletor. N agentes, N+1 spans por item.
+
+Uma correção que criou um defeito. O que o pegou foi a decisão de imprimir
+`46/50` em vez de `92%`: **um denominador impossível se vê; uma porcentagem
+errada, não.**
+
+Quarto defeito deste projeto achado por execução, e não pela suíte.
+
+## Corrigido o P6.86: os números com o vocabulário separado
+
+### P6.88. REVOGA P6.84 — a vantagem da tripulação era ARTEFATO DE MEDIÇÃO
+
+Terceira resposta para a mesma pergunta, e a terceira derruba a segunda:
+
+    n=5,  vocabulário com colisão   tripulação 2,1x mais cara, MESMA precisão
+                                    → "não se paga"                    (P6.81)
+    n=50, vocabulário com colisão   tripulação 1,5x mais cara, +9 PONTOS
+                                    → "se paga"                        (P6.84)
+    n=50, vocabulário separado      tripulação 2,7x mais cara, +1 caso
+                                    → dentro do ruído                  (AQUI)
+
+    braço             precisão   abst.   US$/acerto   adversarial
+    agente-sozinho      92,0%     0,0%    0,002726        80,0%
+    tripulacao-2        93,3%    40,0%    0,007320        80,0%
+
+Os nove pontos do P6.84 vinham da colisão: as respostas `DUVIDA` da tripulação
+eram contadas como abstenção e saíam do denominador. Com o rótulo separado, a
+diferença é **um caso** — e o estrato adversarial é **idêntico**, 80,0% nos dois.
+
+A conclusão prática volta a ser a do P6.81 ("não se paga"), mas por um motivo
+diferente e melhor sustentado: não é que a tripulação não ajude, é que **a ajuda
+não é distinguível de ruído neste conjunto**, e o custo é 2,7x.
+
+**A lição, e ela é sobre mim.** Três medições, duas conclusões erradas. Cada
+erro veio de tratar o número como resposta em vez de perguntar o que ele
+media. A ressalva impressa avisou nas três vezes; nas duas primeiras eu a li
+como formalidade.
+
+### P6.89. CONFIRMA P6.85 — a ferramenta continua piorando, com efeito menor
+
+    braço              precisão   US$/acerto   adversarial
+    com-ferramenta       92,0%     0,002720       80,0%
+    sem-ferramenta       98,0%     0,000934       95,0%
+
+Com a colisão, eram 9 pontos. Sem ela, são **3 casos** — e a direção sobreviveu
+à correção, o que a distingue do achado da tripulação. Toda a perda continua no
+estrato adversarial (80,0% x 95,0%), e o custo é 2,9x.
+
+Veredito impresso: *"indica direção e não decide"*. Este merece um conjunto
+maior; o da tripulação, não — lá o dado já diz que não há o que ver.
+
+### P6.90. Teste de estabilidade que saiu de graça
+
+`agente-sozinho` e `com-ferramenta` são a MESMA configuração, medidas em duas
+execuções independentes com minutos de diferença:
+
+    agente-sozinho    92,0%   adversarial 80,0%
+    com-ferramenta    92,0%   adversarial 80,0%
+
+Idênticas. Com n=5, o mesmo braço oscilava de 75% a 100% entre execuções.
+
+Não foi planejado — os dois eixos por acaso compartilham um braço. Mas é a
+melhor evidência disponível de que o conjunto de 50 saiu da faixa de ruído, e
+vale mais que qualquer argumento sobre tamanho de amostra.
+
+### P6.91. A invariante, no lugar onde os dois vocabulários se encontram
+
+`medir` agora LEVANTA quando um rótulo de abstenção é também tipo esperado no
+conjunto, e a mensagem diz quantos casos se perderiam ("16 de 50"). Genérico:
+vale para qualquer domínio futuro.
+
+Alternativa rejeitada: avisar em vez de levantar. Custo de estar errado — um
+relatório que roda e sai errado é pior que um que não roda, porque alguém o lê.
+Foi exatamente o que aconteceu: o relatório rodou por três execuções pagas.
+
+A conciliação nunca teve o problema (`NAO_IDENTIFICADO` nunca é tipo esperado
+no gabarito), e a invariante confirma isso em vez de supor.
+
+### P6.92. A ressalva agora ESCALA com a amostra e com o efeito
+
+Antes: "indica direção, não decide", sempre. Agora, quatro faixas — empate,
+diferença que cabe em ≤2 acertos (ruído), <5 acertos (direção), acima disso
+(resultado).
+
+O caso que motivou: empate com n=5 dizia "indica direção", que se lê como
+"provavelmente não há diferença". Agora diz **"não é evidência de equivalência:
+é ausência de diferença DETECTÁVEL neste tamanho"** — que é o que estava
+acontecendo e o que eu não li.

@@ -43,6 +43,10 @@ PERMITIDO: dict[str, frozenset[str]] = {
     # Bordas: podem importar tudo. São elas que compõem o produto final.
     "api": _BORDA,
     "cli": _BORDA,
+    # A FACHADA pública (`orchestrator/__init__.py`): o que alguém importa sem
+    # ler o código. Pode alcançar qualquer camada, e NINGUÉM interno pode
+    # importá-la — código interno importa o módulo de verdade. Há teste.
+    "public": _BORDA,
 }
 
 # Onde cada módulo de HOJE deveria morar na arquitetura alvo.
@@ -98,20 +102,39 @@ DESTINO: dict[str, str] = {
     "dates": "domains",
     "tax": "domains",
     "taxonomy": "domains",
-    # A cascata padrão e a porta do domínio. Este módulo é o que quebrou a
-    # circularidade `engine <-> definition`: a definição padrão é configuração
-    # de produto, e só a camada `domains` pode conhecer motor E resolvers.
+    # A cascata padrão e a porta do domínio. `conciliacao/workflow.py` é o que
+    # quebrou a circularidade `engine <-> definition`: a definição padrão é
+    # configuração de produto, e só a camada `domains` pode conhecer motor E
+    # resolvers.
+    #
+    # Virou PACOTE no M2: `agent/tools.py` guardava as ferramentas DE
+    # CONCILIAÇÃO dentro do pacote do agente genérico, e ocupava o nome que o
+    # `ToolRegistry` precisava. As duas coisas se resolvem com o mesmo mover.
     "conciliacao": "domains",
+    "conciliacao.workflow": "domains",
+    "conciliacao.ferramentas": "domains",
+    "conciliacao.politica": "domains",
     "matching.exact": "domains",
     "matching.tolerance": "domains",
     "matching.grouping": "domains",
-    # `ToolContext` busca lançamento contábil e calcula retenção de imposto.
-    # É ferramenta DE CONCILIAÇÃO, não do runtime de agente.
-    "agent.tools": "domains",
+    # `build_benchmark` saiu de `cli.py` no PR #9. Nunca foi codigo de CLI: e o
+    # gerador do dataset com gabarito, e morava la so porque a CLI foi o
+    # primeiro chamador. Era a inversao nº 3 do §2.1 — a camada HTTP importando
+    # do ponto de entrada de linha de comando.
+    "synth.benchmark": "domains",
     "synth.dataset": "domains",
     "synth.generator": "domains",
     "synth.injectors": "domains",
     # --- autoria de workflow (hoje `grill/`) ---
+    # `workflows.py` é o REGISTRO: de um id para uma definição executável.
+    # Fica em `authoring` porque precisa conhecer as duas fontes — o embutido
+    # (`conciliacao`, domains) e os gerados pelo grill (authoring) —, e
+    # `authoring` é a camada que pode importar as duas. Saiu de `api/app.py`
+    # no PR #8: quais workflows existem não é assunto da camada HTTP, e a CLI
+    # precisa da mesma resposta.
+    # A fachada pública.
+    "__init__": "public",
+    "workflows": "authoring",
     "grill.catalogo": "authoring",
     "grill.receita": "authoring",
     "grill.registro": "authoring",
@@ -120,10 +143,9 @@ DESTINO: dict[str, str] = {
     "grill.prompt": "authoring",
     "grill.assinatura": "authoring",
     # --- bordas ---
-    # `cli` é módulo de topo (`cli.py`, não `cli/`), então o diretório não
-    # responde por ele: a entrada é load-bearing. `api.app`/`api.schemas` não
-    # aparecem — `api/` já é o nome da camada.
-    "cli": "cli",
+    # `cli/` virou PACOTE no M5 (despachante de subcomandos), então o diretório
+    # responde por ele. `api.app`/`api.schemas` também não aparecem — `api/` já
+    # é o nome da camada.
     "grill.cli": "cli",
     "eval.agent_eval": "cli",
 }
@@ -168,7 +190,10 @@ def modulos() -> list[str]:
         if relativo.name == "__init__.py":
             if not caminho.read_text(encoding="utf-8").strip():
                 continue
-            partes = relativo.parts[:-1]
+            # O `__init__.py` da RAIZ do pacote não tem parte nenhuma antes
+            # dele, e `".".join(())` daria nome vazio. Ele é a fachada pública,
+            # e precisa de nome para poder ter camada.
+            partes = relativo.parts[:-1] or ("__init__",)
         else:
             partes = (*relativo.parts[:-1], relativo.stem)
         achados.append(".".join(partes))

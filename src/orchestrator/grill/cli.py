@@ -16,7 +16,6 @@ import argparse
 import sys
 from pathlib import Path
 
-from orchestrator.cli import build_benchmark
 from orchestrator.conciliacao import reconcile
 from orchestrator.grill.entrevistador import (
     Entrevistador,
@@ -33,6 +32,7 @@ from orchestrator.grill.registro import (
 from orchestrator.kernel.cost import CostClass
 from orchestrator.kernel.definition import Stage, WorkflowDefinition
 from orchestrator.metrics import evaluate
+from orchestrator.synth.benchmark import build_benchmark
 
 RESSALVA = "Este número é do NOSSO benchmark sintético, não dos seus dados."
 

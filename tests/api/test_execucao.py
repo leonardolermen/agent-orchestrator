@@ -4,7 +4,7 @@ pytest.importorskip("fastapi")
 
 from fastapi.testclient import TestClient
 
-from orchestrator.api.app import _executar_memoizado, _fabricas, app
+from orchestrator.api.app import app
 from orchestrator.models import banco, conciliacao, contabil
 
 cliente = TestClient(app)
@@ -12,19 +12,18 @@ cliente = TestClient(app)
 
 @pytest.fixture(autouse=True)
 def _cache_limpo():
-    """`executar()` delega para `_executar_memoizado`, que é `lru_cache`d.
+    """`executar()` delega para `_executar`, que é `lru_cache`d.
 
     Duas funções neste arquivo postam o EXATO mesmo corpo
     (`{"seed": 1, "n": 100, "taxa_divergencia": 0.15}`): o canário
     (`test_execucao_nao_chama_o_modelo_de_jeito_nenhum`) e
     `test_execucao_nao_serve_resolver_que_gasta_dinheiro`. Se uma rodar depois da
     outra com o cache ainda quente, a segunda vira cache hit — o corpo de
-    `_executar_memoizado` nem executa — e uma asserção sobre "o que foi
+    `_executar` nem executa — e uma asserção sobre "o que foi
     chamado" passa vazia, sem ter provado nada. Hoje isso só não acontece por
     acidente de ordem no arquivo; `-k`, um teste novo inserido antes, ou um
     plugin de ordem aleatória destruiriam essa garantia em silêncio.
     """
-    _executar_memoizado.cache_clear()
 
 
 def test_execucao_nao_chama_o_modelo_de_jeito_nenhum(monkeypatch):
@@ -32,7 +31,7 @@ def test_execucao_nao_chama_o_modelo_de_jeito_nenhum(monkeypatch):
 
     A primeira versão deste teste levantava `AssertionError` de dentro de
     `AnthropicClient.complete` e checava só `status_code == 200`. Isso é
-    vazio: `Investigator._uma()` (ver `investigator.py`) envolve exatamente
+    vazio: `Investigator.investigar()` (ver `investigator.py`) envolve exatamente
     essa chamada num `try/except Exception` largo e PROPOSITAL — qualquer
     exceção vinda do modelo, canário incluído, vira uma abstenção silenciosa
     e a rota devolve 200 do mesmo jeito. Medido: liguei um `Investigator` de
@@ -161,25 +160,25 @@ def test_resolver_com_layer_diferente_do_name_e_reportado_pelo_proprio_nome(monk
         def describe(self) -> ResolverDescription:
             return ResolverDescription(self.name, self.cost_class, "name != layer, de propósito")
 
-    def _fabrica():
+    def _fabrica(ctx):
         return WorkflowDefinition(
             id="layer_diferente",
             name="teste — name != layer",
             stages=(Stage(name="s", cascade=(_NomeDiferenteDaProveniencia(),)),),
         )
 
-    # `_fabricas()` monta um dict NOVO a cada chamada (embutida + disco); não
+    # `registry()` monta um dict NOVO a cada chamada (embutida + disco); não
     # há mais um `_WORKFLOWS` mutável para `setitem`. Envolve a fábrica
     # original e acrescenta a entrada de teste por cima, preservando as
     # entradas reais (`conciliacao`).
-    _fabricas_original = _fabricas
+    from orchestrator.workflows import registry as _registry_original
 
-    def _fabricas_com_extra():
-        fabricas = _fabricas_original()
+    def _registry_com_extra(raiz=None):
+        fabricas = _registry_original(raiz)
         fabricas["layer_diferente"] = _fabrica
         return fabricas
 
-    monkeypatch.setattr("orchestrator.api.app._fabricas", _fabricas_com_extra)
+    monkeypatch.setattr("orchestrator.api.app.registry", _registry_com_extra)
 
     corpo = cliente.post(
         "/api/workflows/layer_diferente/runs",

@@ -1,14 +1,22 @@
-"""Execução ponta a ponta do núcleo determinístico.
+"""O gerador de benchmark sintético, e o `Source` que o expõe.
 
-Gera um benchmark sintético, reconcilia e imprime as métricas. Nenhuma
-chamada de LLM: este é o piso contra o qual o agente será medido depois.
+Saiu de `cli.py` no PR #9. `build_benchmark` nunca foi código de CLI: é o
+gerador do dataset com gabarito, e ele morava ali só porque a CLI foi o
+primeiro chamador. A consequência era a inversão nº 3 do §2.1 — `api/app.py`
+importava de `orchestrator.cli`, a camada HTTP dependendo do ponto de entrada
+de linha de comando.
+
+`SyntheticSource` é a primeira implementação de `Source`, e por enquanto a
+única. Com a conciliação rebaixada a implementação de referência (§1.3), ler
+OFX/CNAB saiu do escopo: quem tiver o dado escreve um `Source` de 40 linhas, e
+é essa a promessa do framework.
 """
 
-import argparse
+from dataclasses import dataclass
 from random import Random
 
-from orchestrator.conciliacao import reconcile
-from orchestrator.metrics import evaluate
+from orchestrator.kernel.work import WorkSet
+from orchestrator.models import pool
 from orchestrator.synth.dataset import Dataset, InjectionResult
 from orchestrator.synth.generator import build_dataset, generate_clean_pairs
 from orchestrator.synth.injectors import (
@@ -71,18 +79,39 @@ def build_benchmark(seed: int, n: int, taxa_divergencia: float) -> Dataset:
     return build_dataset(pares, injecoes)
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Conciliação determinística sintética")
-    parser.add_argument("--seed", type=int, default=1)
-    parser.add_argument("--n", type=int, default=500)
-    parser.add_argument("--taxa-divergencia", type=float, default=0.15)
-    args = parser.parse_args(argv)
+@dataclass(frozen=True)
+class SyntheticSource:
+    """O benchmark sintético como `Source`.
 
-    dataset = build_benchmark(args.seed, args.n, args.taxa_divergencia)
-    resultado = reconcile(dataset.bank, dataset.ledger)
-    print(evaluate(dataset, resultado).render())
-    return 0
+    `ref` é o que torna uma execução identificável e reproduzível. Antes do
+    PR #9, a identidade de um run era a tupla `(seed, n, taxa)` — e era ela que
+    escopava a fila de decisões humanas, via `dataset_id`. Um framework cujo id
+    de execução é uma tupla de parâmetros de benchmark não consegue representar
+    execução nenhuma que não seja um benchmark.
 
+    O prefixo `synth:` é o que abre espaço para os outros: `file:extrato.ofx#sha256:...`,
+    `erp:…`. O formato depois dos dois pontos é assunto de cada `Source`.
+    """
 
-if __name__ == "__main__":
-    raise SystemExit(main())
+    seed: int = 1
+    n: int = 300
+    taxa_divergencia: float = 0.15
+
+    @property
+    def ref(self) -> str:
+        return f"synth:s{self.seed}-n{self.n}-t{self.taxa_divergencia}"
+
+    def dataset(self) -> Dataset:
+        """O dataset COM gabarito.
+
+        Separado de `load()` de propósito: o gabarito é insumo de AVALIAÇÃO, e
+        o motor não deve recebê-lo. Um `Source` de dado real não tem este
+        método — e é justamente por isso que `metrics.evaluate` continua
+        exigindo um `Dataset` em vez de um `Source`.
+        """
+        return build_benchmark(self.seed, self.n, self.taxa_divergencia)
+
+    def load(self) -> WorkSet:
+        """O que o motor recebe: só o trabalho, sem gabarito."""
+        ds = self.dataset()
+        return pool(ds.bank, ds.ledger)

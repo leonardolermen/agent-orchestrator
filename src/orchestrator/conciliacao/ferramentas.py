@@ -12,6 +12,12 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
+from orchestrator.agent.tools.registry import (
+    ToolPermission,
+    ToolRegistry,
+    ToolSpec,
+    tool_schema,
+)
 from orchestrator.dates import business_days_between
 from orchestrator.models import BankEntry, LedgerEntry
 from orchestrator.tax import calcular_retencao as _calcular_retencao
@@ -109,24 +115,42 @@ class ToolContext:
         }
 
 
-def _schema(
-    nome: str, descricao: str, props: dict[str, Any], obrigatorios: list[str]
-) -> dict[str, Any]:
-    return {
-        "name": nome,
-        "description": descricao,
-        "strict": True,
-        "input_schema": {
-            "type": "object",
-            "properties": props,
-            "required": obrigatorios,
-            "additionalProperties": False,
-        },
-    }
+def _spec(
+    contexto: ToolContext,
+    nome: str,
+    descricao: str,
+    props: dict[str, Any],
+    obrigatorios: list[str],
+) -> ToolSpec:
+    """Uma entrada do registro, com o método do contexto JÁ LIGADO.
+
+    `fn=getattr(contexto, nome)` é o que mata o join frágil: antes o despacho
+    era `getattr(self.context, c.name)` cruzado com
+    `{s["name"] for s in TOOL_SCHEMAS}` — duas listas paralelas, e uma
+    ferramenta podia existir num lado e não no outro. Aqui o schema que o
+    modelo vê e a função que roda saem da MESMA linha. Se o nome não existir no
+    contexto, `getattr` levanta no REGISTRO, não numa chamada do modelo.
+
+    Todas são `READ_ONLY`, e é por isso que este plano não tem compensação,
+    idempotência nem rollback (§6.5). A primeira que escrever vai precisar
+    declarar a compensadora, e o registry recusa se não declarar.
+    """
+    return ToolSpec(
+        name=nome,
+        description=descricao,
+        input_schema=tool_schema(nome, descricao, props, obrigatorios),
+        fn=getattr(contexto, nome),
+        permission=ToolPermission.READ_ONLY,
+    )
 
 
-TOOL_SCHEMAS: list[dict[str, Any]] = [
-    _schema(
+def registry_de(contexto: ToolContext) -> ToolRegistry:
+    """As cinco ferramentas do investigador de conciliação."""
+    return ToolRegistry([_spec(contexto, *args) for args in _FERRAMENTAS])
+
+
+_FERRAMENTAS: list[tuple[str, str, dict[str, Any], list[str]]] = [
+    (
         "buscar_lancamentos",
         "Busca lançamentos contábeis por valor líquido em centavos, fornecedor "
         "ou documento. Devolve no máximo `limite` resultados, ou 10 se `limite` "
@@ -135,28 +159,32 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             "valor": {"type": ["integer", "null"], "description": "valor líquido em centavos"},
             "fornecedor": {"type": ["string", "null"]},
             "documento": {"type": ["string", "null"]},
+            # Sem `minimum`: a Messages API recusa a requisição inteira com
+            # `tools.0.custom: For 'integer' type, property 'minimum' is not
+            # supported`. A invariante não se perdeu — quem a garante é
+            # `buscar_lancamentos`, que levanta em `limite < 1` e tem o
+            # comentário de medição. O schema só a ANUNCIA, em prosa.
             "limite": {
                 "type": ["integer", "null"],
-                "minimum": 1,
                 "description": "máximo de resultados; pelo menos 1",
             },
         },
         ["valor", "fornecedor", "documento", "limite"],
     ),
-    _schema(
+    (
         "buscar_documento_fiscal",
         "Busca o lançamento contábil de um documento fiscal pelo número.",
         {"documento": {"type": "string"}},
         ["documento"],
     ),
-    _schema(
+    (
         "historico_fornecedor",
         "Padrão histórico de pagamento de um fornecedor: quantidade de "
         "lançamentos, valor total e contas usadas.",
         {"fornecedor": {"type": "string"}},
         ["fornecedor"],
     ),
-    _schema(
+    (
         "calcular_retencao",
         "Calcula retenção na fonte em centavos sobre um valor bruto. A alíquota "
         "vai em basis points: 500 significa 5%. Use esta ferramenta em vez de "
@@ -167,7 +195,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         },
         ["bruto", "aliquota_bp"],
     ),
-    _schema(
+    (
         "calendario_bancario",
         "Conta dias úteis entre duas datas no formato AAAA-MM-DD. Fins de "
         "semana não contam.",
@@ -175,3 +203,14 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         ["de", "ate"],
     ),
 ]
+
+
+# Os schemas que o modelo vê, DERIVADOS do registro em vez de escritos ao lado
+# dele. É a metade do join frágil que sobrevive por ser consumida por quem não
+# tem um `ToolContext` na mão: o servidor MCP de `eval/assinatura.py` monta as
+# ferramentas a partir da forma, e liga a função por conta própria.
+#
+# O contexto vazio é seguro aqui porque o schema NÃO depende do conteúdo do
+# contexto — só dos nomes e assinaturas, que são do módulo. Se algum dia
+# depender, esta linha vira uma função e o chamador passa o contexto dele.
+TOOL_SCHEMAS: list[dict[str, Any]] = registry_de(ToolContext([], [])).schemas()

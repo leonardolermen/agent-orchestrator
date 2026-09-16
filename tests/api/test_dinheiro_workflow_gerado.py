@@ -19,9 +19,7 @@ from orchestrator.grill.receita import Receita, ResolverReceita, para_json
 def _isolado(tmp_path, monkeypatch):
     monkeypatch.setattr(app_mod, "_RAIZ_FILA", tmp_path)
     monkeypatch.setattr(app_mod, "_RAIZ_RECEITAS", tmp_path)
-    app_mod._executar_memoizado.cache_clear()
     yield
-    app_mod._executar_memoizado.cache_clear()
 
 
 def _gravar_pago(tmp_path) -> None:

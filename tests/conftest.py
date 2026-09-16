@@ -13,6 +13,14 @@ máquina local falha, sem nada em `git status` para apontar a causa.
 Esta fixture é autouse e cobre toda a suíte, não só `tests/api/`: qualquer
 teste futuro que chame `avaliar(..., gravar_fila=True)` ou bata numa rota da
 API herda o isolamento sem precisar lembrar de pedir.
+
+Desde o PR #7 ela isola também o `RunStore`, que vive sob a MESMA raiz
+(`api.app._run_store()`). Sem isso a suíte passaria a escrever
+`data/runs.jsonl` na máquina do desenvolvedor — o mesmo defeito que esta
+fixture existe para impedir, com um arquivo novo.
+
+O `cache_clear()` do `_executar` sumiu junto com a memoização: não há
+mais cache para invalidar.
 """
 
 import pytest
@@ -28,13 +36,9 @@ def _raiz_da_fila_isolada(tmp_path, monkeypatch):
         api_app = None
     if api_app is not None:
         monkeypatch.setattr(api_app, "_RAIZ_FILA", tmp_path)
-        api_app._executar_memoizado.cache_clear()
 
     import orchestrator.eval.agent_eval as agent_eval
 
     monkeypatch.setattr(agent_eval, "_RAIZ_FILA", tmp_path)
 
     yield
-
-    if api_app is not None:
-        api_app._executar_memoizado.cache_clear()
