@@ -2406,3 +2406,59 @@ sobre renderização, e apontam a mesma lacuna por outro lado: **não há teste 
 tela neste projeto, e não vai haver por enquanto.** O substituto declarado é
 dirigir a página no navegador antes de dizer que ela está pronta — foi o que
 achou os três.
+
+### P6.101. O nó do agente mostra as ferramentas, e o modelo como PADRÃO
+
+Pedido: um card de agente como o da referência, com modelo e ferramentas.
+
+**As ferramentas dá para mostrar: elas são reais e estáticas.** Vêm de
+`registry_de`, derivadas do MESMO registro que o `Investigator` recebe — uma
+lista escrita à mão em `EntradaCatalogo` divergiria no dia em que alguém
+acrescentasse uma ferramenta, e a tela mostraria quatro de cinco sem sintoma.
+Há teste comparando as duas.
+
+**O modelo NÃO dá para cravar, e é a diferença para a referência.** No canvas do
+CrewAI o nó exibe `gpt-5.6-luna` como se fosse propriedade do agente. Aqui a
+`Receita` não carrega modelo nenhum — quem escolhe é a execução (`--model`), e
+`para_json(receita)` não tem a palavra. Então o nó mostra o default, rotulado
+`padrão`, e um teste garante que a receita serializada continua sem modelo.
+
+Cravar o modelo no nó seria a mesma classe de mentira que desenhar uma seta que
+a execução não segue.
+
+**Efeito colateral de layout, achado na tela:** o nó do agente tem 268px contra
+104 dos determinísticos. A constante `NO_H` deixou de servir para calcular as
+arestas — a seta saía do meio do cartão. Agora `alturaDe()` mede o elemento
+real, e `acrescentar` desenha ANTES de posicionar, porque um nó que ainda não
+está no DOM mede a altura mínima.
+
+### P6.102. O botão Run, e por que ele fica DESABILITADO na cascata cara
+
+Compor sem poder rodar é meia tela. O endpoint já existia
+(`POST /api/workflows/{id}/runs`); faltava o botão.
+
+**Defesa em profundidade, e a segunda camada é a que vale.** A tela desabilita o
+botão quando a cascata tem classe `AGENTE`, com o motivo no `title`. Forcei o
+clique no navegador, com `disabled = false`, e o servidor recusou com 409 e a
+mensagem do domínio: *"tem uma etapa paga e não pode ser executado pela web.
+rode pela CLI"*.
+
+A regra que governa `api/app.py` é que **nenhum endpoint gasta dinheiro**, e ela
+não é uma flag — é ausência de caminho de código. O botão desabilitado existe
+para a pessoa não descobrir isso no erro; a garantia é o servidor.
+
+**Medido pela tela, ponta a ponta:** cascata `L1 + L2 + revisor` composta no
+canvas, gravada, executada — **84,1% resolvido sem gastar nada**, L1 com 254
+matches, 48 itens na lacuna (15,9%). Bate com o benchmark da CLI, onde L2 também
+casa zero neste dataset.
+
+### P6.103. NÃO-DEFEITO que parecia defeito: servidor sem `--reload`
+
+A tela quebrou com `Cannot read properties of undefined (reading 'map')` logo
+depois de eu acrescentar `ferramentas` ao catálogo. O `uvicorn` tinha subido
+ANTES da edição e sem `--reload`: o navegador falava com a API antiga.
+
+Fica registrado porque a tentação foi defender o JS com `(e.ferramentas || [])`,
+e isso teria sido pior — mascararia drift real entre API e tela, que é
+exatamente o que um `undefined` gritando denuncia. O código continua estrito; o
+que mudou foi eu reiniciar o servidor.

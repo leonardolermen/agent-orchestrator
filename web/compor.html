@@ -22,6 +22,7 @@
       <input id="campo-id" placeholder="id: conciliacao-cliente-x" autocomplete="off" spellcheck="false">
       <input id="campo-nome" placeholder="nome" autocomplete="off">
       <button id="salvar" type="button" disabled>Compor e validar</button>
+      <button id="rodar" type="button" disabled hidden>▶ Run</button>
     </div>
     <a class="link-outro" href="/">← cascata em execução</a>
   </header>
@@ -69,6 +70,12 @@
           desenhou.
         </p>
         <ol id="construida" class="paleta"></ol>
+      </section>
+
+      <section class="bloco" id="execucao" hidden>
+        <h2>Execução</h2>
+        <p class="ajuda" id="execucao-ajuda"></p>
+        <div id="execucao-numeros"></div>
       </section>
     </aside>
 

@@ -100,6 +100,8 @@ def catalogo() -> list[EntradaCatalogoJSON]:
                 ParametroJSON(nome=p.nome, default=p.default, descricao=p.descricao)
                 for p in e.parametros
             ],
+            ferramentas=list(e.ferramentas),
+            modelo_padrao=e.modelo_padrao,
         )
         for e in sorted(CATALOGO.values(), key=lambda e: (e.cost_class, e.nome))
     ]

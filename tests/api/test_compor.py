@@ -223,3 +223,76 @@ def test_a_pagina_tem_o_marcador_de_SETA_do_svg():
     diz em que sentido a cascata corre, que é a única coisa que ela precisa
     dizer."""
     assert 'id="seta"' in cliente.get("/compor.html").text
+
+
+# -- o nó do agente: modelo e ferramentas ----------------------------------
+
+
+def test_o_catalogo_expoe_as_ferramentas_DERIVADAS_do_registro():
+    """Uma lista escrita à mão divergiria no dia em que alguém acrescentasse
+    uma ferramenta, e a tela mostraria quatro de cinco sem nenhum sintoma."""
+    from orchestrator.conciliacao.ferramentas import ToolContext, registry_de
+
+    agente = next(e for e in cliente.get("/api/catalogo").json() if e["nome"] == "agente")
+
+    assert tuple(agente["ferramentas"]) == registry_de(ToolContext([], [])).names()
+
+
+def test_o_modelo_do_agente_e_PADRAO_e_nao_escolha_gravada():
+    """Quem decide o modelo é a execução (`--model`). Cravar um modelo na
+    receita faria o canvas prometer algo que a receita não carrega — e é a
+    diferença exata para o canvas de referência, que fixa o modelo no nó."""
+    from datetime import UTC, datetime
+
+    from orchestrator.grill.receita import Receita, ResolverReceita, para_json
+
+    agente = next(e for e in cliente.get("/api/catalogo").json() if e["nome"] == "agente")
+    assert agente["modelo_padrao"] == "claude-opus-5"
+
+    r = Receita(
+        id="x", nome="x", justificativa="", gerado_em=datetime.now(UTC),
+        resolvers=(ResolverReceita(nome="agente"),),
+    )
+    # A receita SERIALIZADA não carrega modelo nenhum. É isso que o "padrão" na
+    # tela está dizendo.
+    assert "model" not in str(para_json(r)).lower()
+
+
+def test_resolver_DETERMINISTICO_nao_tem_modelo_nem_ferramenta():
+    """`None` e lista vazia, não `"-"`: a tela usa a AUSÊNCIA para não desenhar
+    uma linha de modelo onde não houve escolha de modelo."""
+    for nome in ("L1", "L2", "L3", "revisor"):
+        e = next(x for x in cliente.get("/api/catalogo").json() if x["nome"] == nome)
+        assert e["modelo_padrao"] is None, nome
+        assert e["ferramentas"] == [], nome
+
+
+# -- o botão Run ------------------------------------------------------------
+
+
+def test_a_pagina_tem_o_botao_RUN():
+    assert 'id="rodar"' in cliente.get("/compor.html").text
+
+
+def test_cascata_GRATIS_composta_pela_tela_RODA_de_verdade():
+    """O fluxo inteiro: compor, gravar, executar — sem sair da web."""
+    cliente.post("/api/receitas", json=_corpo([{"nome": "L1"}], wid="so-regra"))
+
+    r = cliente.post("/api/workflows/so-regra/runs", json={"seed": 1, "n": 120})
+
+    assert r.status_code == 200, r.text
+    assert r.json()["deterministic_rate"] > 0
+    # A LACUNA sempre aparece, mesmo quando é zero: é invariante do §1.5, e
+    # esconder a linha faria o leitor não saber se foi medida.
+    assert "items" in r.json()["gap"]
+
+
+def test_cascata_PAGA_composta_pela_tela_e_recusada_pelo_SERVIDOR():
+    """A tela desabilita o botão, mas quem garante é o servidor. Testado
+    forçando o POST — que é exatamente o que fiz no navegador."""
+    cliente.post("/api/receitas", json=_corpo([{"nome": "agente"}], wid="com-agente"))
+
+    r = cliente.post("/api/workflows/com-agente/runs", json={"seed": 1, "n": 60})
+
+    assert r.status_code == 409
+    assert "etapa paga" in r.json()["detail"]

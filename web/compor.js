@@ -13,7 +13,15 @@
 
 const ORDEM_CLASSE = ["REGRA", "AGENTE", "CREW", "HUMANO"];
 const NO_L = 230; // largura do nó, em px — casada com `.no` no CSS
-const NO_H = 104;
+// Altura MÍNIMA. O nó do agente é mais alto (modelo + cinco ferramentas), então
+// as arestas medem a altura real do elemento em vez de assumir esta — assumir
+// faria a seta sair do meio do cartão do agente.
+const NO_H_MIN = 104;
+
+function alturaDe(nome) {
+  const el = document.querySelector(`.no[data-nome="${nome}"]`);
+  return el ? el.offsetHeight : NO_H_MIN;
+}
 
 const estado = {
   catalogo: [],
@@ -93,16 +101,21 @@ function acrescentar(nome) {
   // grafo nascer legível sem obrigar ninguém a arrumar nada.
   estado.nos.push({ nome, parametros, x: 0, y: 0, fixado: false });
   estado.selecionado = nome;
-  autoLayout();
   desenharPaleta();
+  // Desenha ANTES de posicionar: `alturaDe` mede o elemento real, e um nó que
+  // ainda não está no DOM mede a altura mínima. Foi o que fez a seta sair do
+  // meio do cartão do agente na primeira tentativa.
+  desenharNos();
+  autoLayout();
   redesenhar();
 }
 
 function remover(nome) {
   estado.nos = estado.nos.filter((n) => n.nome !== nome);
   if (estado.selecionado === nome) estado.selecionado = null;
-  autoLayout();
   desenharPaleta();
+  desenharNos();
+  autoLayout();
   redesenhar();
 }
 
@@ -117,11 +130,13 @@ function remover(nome) {
 function autoLayout() {
   const canvas = $("canvas");
   const centro = Math.max(40, (canvas.clientWidth - NO_L) / 2);
+  let proximoY = 48;
   let i = 0;
   for (const n of emOrdemDeExecucao()) {
     if (!n.fixado) {
       n.x = centro;
-      n.y = 48 + i * (NO_H + 64);
+      n.y = proximoY;
+      proximoY += alturaDe(n.nome) + 64;
     }
     i++;
   }
@@ -161,6 +176,17 @@ function desenharNos() {
       `<div class="no-topo"><span class="nome">${e.nome}</span>` +
       `<span class="tag">${e.cost_class}</span></div>` +
       `<p class="no-resumo">${e.resumo}</p>` +
+      // Modelo e ferramentas só aparecem em quem os TEM. Desenhar "modelo: —"
+      // num resolver de regra sugeriria que houve uma escolha; não houve, não
+      // há modelo nenhum no caminho.
+      (e.modelo_padrao
+        ? `<div class="no-linha modelo" title="o modelo é escolhido na execução (--model); este é o padrão">` +
+          `<span class="ic">◇</span>${e.modelo_padrao}` +
+          `<em>padrão</em></div>`
+        : "") +
+      e.ferramentas
+        .map((f) => `<div class="no-linha ferramenta"><span class="ic">⚒</span>${f}</div>`)
+        .join("") +
       (params ? `<p class="no-params">${params}</p>` : "");
 
     div.addEventListener("pointerdown", (ev) => comecarArraste(ev, n, div));
@@ -183,7 +209,7 @@ function desenharArestas() {
     const a = ordem[i];
     const b = ordem[i + 1];
     const x1 = a.x + NO_L / 2;
-    const y1 = a.y + NO_H;
+    const y1 = a.y + alturaDe(a.nome);
     const x2 = b.x + NO_L / 2;
     const y2 = b.y;
     const meio = (y1 + y2) / 2;
@@ -346,6 +372,91 @@ function mensagemDeErro(dados, status) {
   return `erro ${status}`;
 }
 
+// O botão Run só aparece DEPOIS de compor, e só fica ativo se a cascata não
+// tiver etapa paga. Não é gentileza: a regra que governa `api/app.py` é que
+// nenhum endpoint gasta dinheiro, e ela é aplicada no servidor (409). A tela
+// desabilitar antes existe para a pessoa não descobrir isso no erro.
+function ajustarRun(workflow) {
+  const paga = workflow.stages.some((s) =>
+    s.cascade.some((r) => r.cost_class === "AGENTE"),
+  );
+  const b = $("rodar");
+  b.hidden = false;
+  b.disabled = paga;
+  b.title = paga
+    ? "esta cascata tem etapa paga; a API não executa nada que gaste dinheiro — rode pela CLI"
+    : "roda sobre o benchmark sintético, de graça";
+  b.dataset.workflow = workflow.id;
+}
+
+async function rodar() {
+  const wid = $("rodar").dataset.workflow;
+  $("erro").textContent = "";
+  $("rodar").disabled = true;
+  $("rodar").textContent = "rodando…";
+
+  const r = await fetch(`/api/workflows/${encodeURIComponent(wid)}/runs`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ seed: 1, n: 300 }),
+  });
+  $("rodar").textContent = "▶ Run";
+  $("rodar").disabled = false;
+
+  if (!r.ok) {
+    const dados = await r.json().catch(() => ({}));
+    $("erro").textContent = mensagemDeErro(dados, r.status);
+    return;
+  }
+  desenharExecucao(await r.json());
+}
+
+function desenharExecucao(run) {
+  $("execucao").hidden = false;
+  $("execucao-ajuda").textContent =
+    `benchmark sintético, semente ${run.seed}, ${run.n} lançamentos.`;
+
+  const alvo = $("execucao-numeros");
+  alvo.textContent = "";
+
+  const taxa = document.createElement("p");
+  taxa.className = "numero-grande";
+  taxa.innerHTML =
+    `<strong>${(100 * run.deterministic_rate).toFixed(1)}%</strong>` +
+    `<span>resolvido sem gastar nada</span>`;
+  alvo.appendChild(taxa);
+
+  const ul = document.createElement("ul");
+  ul.className = "por-resolver";
+  for (const linha of run.by_resolver) {
+    const li = document.createElement("li");
+    li.className = `classe-${linha.cost_class.toLowerCase()}`;
+    // O custo por resolver vem em micro-centavos de dólar — inteiro, porque a
+    // constraint de dinheiro do projeto proíbe ponto flutuante acumulando. Aqui
+    // ele só é dividido para exibir.
+    const custo =
+      linha.microcents > 0
+        ? `US$ ${(linha.microcents / 100000000).toFixed(4)}`
+        : "grátis";
+    li.innerHTML =
+      `<span class="nome">${linha.name}</span>` +
+      `<span class="qtd">${linha.matches}</span>` +
+      `<span class="preco">${custo}</span>`;
+    ul.appendChild(li);
+  }
+  alvo.appendChild(ul);
+
+  // A LACUNA, declarada. É invariante do §1.5: o que não foi resolvido aparece
+  // como lacuna, nunca some. Zero também é dito — "0 itens sem resolução" é
+  // informação, e esconder a linha faria o leitor não saber se foi medido.
+  const gap = document.createElement("p");
+  gap.className = "lacuna";
+  gap.textContent =
+    `${run.gap.items} item(ns) sem resolução ` +
+    `(${(100 * run.gap.rate).toFixed(1)}%)`;
+  alvo.appendChild(gap);
+}
+
 function desenharConstruida(workflow) {
   const alvo = $("construida");
   alvo.textContent = "";
@@ -361,9 +472,11 @@ function desenharConstruida(workflow) {
     }
   }
   $("resultado").hidden = false;
+  ajustarRun(workflow);
 }
 
 $("salvar").addEventListener("click", salvar);
+$("rodar").addEventListener("click", rodar);
 $("remover").addEventListener("click", () => remover(estado.selecionado));
 window.addEventListener("resize", () => {
   desenharArestas();

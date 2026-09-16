@@ -210,6 +210,11 @@ class EntradaCatalogoJSON(BaseModel):
     cost_class: str
     resumo: str
     parametros: list[ParametroJSON]
+    ferramentas: list[str] = Field(default_factory=list)
+    # `None` para resolver determinístico. A tela usa a AUSÊNCIA para não
+    # desenhar uma linha de modelo onde não há modelo — dizer "modelo: —" num
+    # resolver de regra sugeriria que houve uma escolha.
+    modelo_padrao: str | None = None
 
 
 class ResolverReceitaJSON(BaseModel):

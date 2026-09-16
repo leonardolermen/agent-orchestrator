@@ -14,7 +14,7 @@ from typing import Any
 
 from orchestrator.agent.investigator import Investigator
 from orchestrator.agent.llm import LLMClient, LLMResponse
-from orchestrator.conciliacao.ferramentas import ToolContext
+from orchestrator.conciliacao.ferramentas import ToolContext, registry_de
 from orchestrator.kernel.cost import CostClass
 from orchestrator.kernel.resolver import Resolver
 from orchestrator.matching.exact import ExactMatcher
@@ -74,6 +74,18 @@ class EntradaCatalogo:
     # exatamente esse padrão que já nos deu um defeito silencioso no
     # `_construir_definicao` da API.
     construir: Callable[..., Resolver]
+    # As ferramentas que este resolver dá ao modelo, e qual modelo ele usaria.
+    # Vazio e `None` para os determinísticos — que são a maioria, e é a tese.
+    #
+    # Existem porque a composição precisa mostrá-las: "classe AGENTE" é um
+    # rótulo, não a lista do que ele pode fazer. Ficam DEPOIS de `construir`
+    # porque têm default e ele não.
+    #
+    # `modelo_padrao` é o DEFAULT, não uma escolha gravada: quem decide o
+    # modelo é a execução (`--model`). Cravar um modelo na receita faria o
+    # canvas prometer algo que a receita não carrega.
+    ferramentas: tuple[str, ...] = ()
+    modelo_padrao: str | None = None
 
 
 def _param(cls: type, nome: str, descricao: str) -> ParametroSpec:
@@ -171,6 +183,12 @@ CATALOGO: dict[str, EntradaCatalogo] = {
                 "teto de gasto da execução inteira, em micro-centavos de dólar",
             ),
         ),
+        # Derivadas do MESMO registro que o `Investigator` recebe — uma lista
+        # escrita à mão aqui divergiria no dia em que alguém acrescentasse uma
+        # ferramenta, e a tela mostraria quatro de cinco sem nenhum sintoma.
+        # Há teste comparando as duas.
+        ferramentas=registry_de(ToolContext([], [])).names(),
+        modelo_padrao=MODELO_INERTE,
         construir=_agente,
     ),
     "revisor": EntradaCatalogo(

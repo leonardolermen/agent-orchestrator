@@ -253,6 +253,84 @@ button.item:disabled { opacity: .42; cursor: not-allowed; }
 .custo.gratis { color: var(--regra); background: #eef6f1; }
 .custo[hidden] { display: none; }
 
+/* -- o nó do agente: modelo e ferramentas -------------------------------- */
+
+.no-linha {
+  display: flex;
+  align-items: center;
+  gap: .35rem;
+  margin-top: .25rem;
+  padding-top: .25rem;
+  border-top: 1px solid #efece7;
+  font-size: .74rem;
+  color: #4a4640;
+}
+.no-linha .ic { color: #a8a199; font-size: .8rem; }
+.no-linha em {
+  margin-left: auto;
+  font-style: normal;
+  font-size: .64rem;
+  color: #a8a199;
+}
+.no-linha.modelo { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.no-linha.ferramenta { color: #6b6660; }
+
+/* -- botão Run e o resultado da execução --------------------------------- */
+
+#rodar {
+  font: inherit;
+  font-size: .85rem;
+  padding: .4rem .9rem;
+  border: 1px solid var(--regra);
+  border-radius: 4px;
+  background: var(--regra);
+  color: #fff;
+  cursor: pointer;
+  white-space: nowrap;
+}
+#rodar:disabled {
+  background: #fff;
+  color: #a8a199;
+  border-color: var(--borda);
+  cursor: not-allowed;
+}
+
+.numero-grande {
+  margin: 0 0 .6rem;
+  display: flex;
+  align-items: baseline;
+  gap: .4rem;
+}
+.numero-grande strong { font-size: 1.5rem; color: var(--regra); }
+.numero-grande span { font-size: .74rem; color: #6b6660; }
+
+.por-resolver { list-style: none; margin: 0 0 .6rem; padding: 0; }
+.por-resolver li {
+  display: flex;
+  align-items: baseline;
+  gap: .5rem;
+  padding: .22rem 0;
+  border-bottom: 1px solid #f2efeb;
+  font-size: .78rem;
+}
+.por-resolver .nome { font-weight: 500; font-size: .78rem; }
+.por-resolver .qtd { margin-left: auto; font-variant-numeric: tabular-nums; }
+.por-resolver .preco {
+  width: 5.5rem;
+  text-align: right;
+  color: #8f8880;
+  font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.lacuna {
+  margin: 0;
+  padding: .4rem .6rem;
+  border-radius: 4px;
+  font-size: .76rem;
+  color: var(--lacuna);
+  background: var(--lacuna-fundo);
+}
+
 .erro { margin: 0 0 1rem; color: #9c2a2a; font-size: .78rem; }
 .erro:empty { display: none; }
 
