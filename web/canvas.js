@@ -59,15 +59,47 @@ async function popularSeletor() {
   });
 }
 
+// `fetch` só rejeita em falha de rede — um 409 (etapa paga) ou um 404
+// (workflow desconhecido) chegam com `ok === false` e um corpo JSON
+// `{"detail": "..."}` que `.then((r) => r.json())` sozinho ignoraria: o
+// chamador acabaria desenhando a cascata a partir do corpo de erro. A CLI do
+// grill imprime `?workflow=<id>` como último passo do fluxo — se a receita
+// tiver classe AGENTE, esse é o link que o parceiro clica, direto, sem passar
+// pelo seletor (cuja opção desabilitada só protege quem troca de workflow
+// PELO dropdown). Por isso a checagem de `ok` é obrigatória aqui, não só lá.
+async function buscarJSON(url, opcoes) {
+  const r = await fetch(url, opcoes);
+  const corpo = await r.json().catch(() => null);
+  return { ok: r.ok, status: r.status, corpo };
+}
+
 async function carregar() {
-  const [definicao, execucao] = await Promise.all([
-    fetch(`/api/workflows/${WORKFLOW}`).then((r) => r.json()),
-    fetch(`/api/workflows/${WORKFLOW}/runs`, {
+  const [definicaoResp, execucaoResp] = await Promise.all([
+    buscarJSON(`/api/workflows/${WORKFLOW}`),
+    buscarJSON(`/api/workflows/${WORKFLOW}/runs`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(PEDIDO),
-    }).then((r) => r.json()),
+    }),
   ]);
+
+  const falha = !definicaoResp.ok
+    ? definicaoResp
+    : !execucaoResp.ok
+      ? execucaoResp
+      : null;
+  if (falha) {
+    // `detail` é texto do servidor, mas carrega o id do workflow — escolhido
+    // por quem gerou a receita a partir da prosa do parceiro. `textContent`,
+    // nunca `innerHTML`, pela mesma razão que `nome` em `popularSeletor`.
+    document.getElementById("titulo").textContent = "workflow indisponível";
+    document.getElementById("proveniencia").textContent =
+      falha.corpo?.detail ?? `falhou ao carregar (${falha.status})`;
+    document.getElementById("stages").innerHTML = "";
+    return;
+  }
+  const definicao = definicaoResp.corpo;
+  const execucao = execucaoResp.corpo;
 
   document.getElementById("titulo").textContent = definicao.name;
   document.getElementById("proveniencia").textContent =
