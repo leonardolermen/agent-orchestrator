@@ -17,6 +17,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 
 from orchestrator.kernel.cost import Cost, CostClass
+from orchestrator.kernel.policy import PolicyDecision
 from orchestrator.kernel.resolution import Proposal, Resolution
 from orchestrator.kernel.work import WorkSet
 
@@ -71,6 +72,11 @@ class Run:
     cost_by_resolver: dict[str, Cost] = field(default_factory=dict)
     resolved_by_resolver: dict[str, int] = field(default_factory=dict)
     resolutions_by_class: dict[CostClass, list[Resolution]] = field(default_factory=dict)
+    # POR QUE o runtime fez o que fez. Sem isto, uma execução em que a
+    # política pulou o agente é indistinguível de uma em que o agente não achou
+    # nada — a mesma ambiguidade que `proposals_api_failed` elimina em
+    # `agent_eval.py`.
+    policy_decisions: tuple[PolicyDecision, ...] = ()
     finished_at: datetime | None = None
     error: str | None = None
 

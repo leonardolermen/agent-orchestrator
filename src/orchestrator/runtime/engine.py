@@ -15,9 +15,11 @@ from datetime import UTC, datetime
 from orchestrator.kernel.cost import Cost, CostClass
 from orchestrator.kernel.definition import WorkflowDefinition
 from orchestrator.kernel.event import Event, EventBus, EventKind, NullBus
+from orchestrator.kernel.policy import PolicyContext, PolicyDecision, Route
 from orchestrator.kernel.resolution import Proposal, Resolution
 from orchestrator.kernel.run import Run, RunState, new_run_id
 from orchestrator.kernel.work import WorkSet
+from orchestrator.runtime import policy_engine
 
 
 def execute(
@@ -27,6 +29,8 @@ def execute(
     bus: EventBus | None = None,
     input_ref: str = "",
     run_id: str | None = None,
+    policy: PolicyContext | None = None,
+    model: str = "claude-opus-5",
 ) -> Run:
     """Roda uma definição sobre um pool. Puro: não lê disco, não chama rede.
 
@@ -59,6 +63,8 @@ def execute(
         )
 
     definicao = definition
+    decisoes: list[PolicyDecision] = []
+    pctx = policy or PolicyContext(model=model)
     emitir(
         EventKind.RUN_INICIADO,
         workflow=definicao.id,
@@ -77,13 +83,46 @@ def execute(
     for stage in definicao.stages:
         emitir(EventKind.STAGE_INICIADO, stage=stage.name)
         for resolver in stage.ordered():
+            # A POLÍTICA decide se este resolver roda. `Stage.ordered()`
+            # continua sendo a ORDEM — as duas coisas são ortogonais, e é isso
+            # que impede a política de chamar inteligência antes da regra de
+            # graça (invariante nº 2 do §1.5).
+            pctx.spent = _somar(custos)
+            decisao = policy_engine.decide(resolver, stage.policy, pctx)
+            decisoes.append(decisao)
+            emitir(
+                EventKind.POLITICA_DECIDIU,
+                resolver=resolver.name,
+                rota=decisao.route.value,
+                motivo=decisao.reason,
+            )
+            if decisao.route is Route.PARAR:
+                break
+            if decisao.route is Route.PULAR:
+                continue
+
             emitir(
                 EventKind.RESOLVER_INICIADO,
                 resolver=resolver.name,
                 cost_class=resolver.cost_class.name,
                 pendentes=len(work.items),
             )
-            saida = resolver.resolve(work)
+            # Regras 6 e 7, por item: o pool que o resolver recebe pode ser
+            # menor que o pool. Um item excluído sai com motivo registrado —
+            # nunca em silêncio.
+            elegiveis, por_item = policy_engine.filtrar(
+                resolver, work, stage.policy, pctx
+            )
+            decisoes.extend(por_item)
+            for d in por_item:
+                emitir(
+                    EventKind.POLITICA_DECIDIU,
+                    resolver=resolver.name,
+                    item=d.item_id,
+                    rota=d.route.value,
+                    motivo=d.reason,
+                )
+            saida = resolver.resolve(elegiveis)
             todos.extend(saida.resolutions)
             propostas.extend(saida.proposals)
             # Uma entrada por resolver que RODOU, mesmo que o custo seja
@@ -151,4 +190,17 @@ def execute(
         cost_by_resolver=custos,
         resolved_by_resolver=matches_por_resolver,
         resolutions_by_class=matches_por_classe,
+        policy_decisions=tuple(decisoes),
     )
+
+
+def _somar(custos: dict[str, Cost]) -> Cost:
+    """O gasto acumulado da execução, para a regra 2 da política.
+
+    Somado a cada resolver e não mantido incremental de propósito: o dicionário
+    é a fonte, e um acumulador paralelo seria mais um join frágil.
+    """
+    total = Cost.zero()
+    for c in custos.values():
+        total = total + c
+    return total

@@ -18,9 +18,11 @@ forma, com ~80 linhas cada.
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from orchestrator.conciliacao.politica import POLITICA_ATUAL, contexto
 from orchestrator.kernel.cost import Cost, CostClass
 from orchestrator.kernel.definition import Stage, WorkflowDefinition
 from orchestrator.kernel.event import EventBus
+from orchestrator.kernel.policy import ExecutionPolicy, PolicyContext
 from orchestrator.kernel.resolution import Proposal, Resolution
 from orchestrator.kernel.resolver import Resolver
 from orchestrator.kernel.run import Run
@@ -63,7 +65,9 @@ def default_resolvers() -> list[Resolver]:
     return [ExactMatcher(), ToleranceMatcher(), GroupingMatcher()]
 
 
-def default_definition(fila: "Fila | None" = None) -> WorkflowDefinition:
+def default_definition(
+    fila: "Fila | None" = None, policy: ExecutionPolicy | None = None
+) -> WorkflowDefinition:
     """O conciliador: três regras e o revisor humano.
 
     Sem agente — ele é opcional, custa dinheiro, e a definição que a API serve
@@ -88,6 +92,7 @@ def default_definition(fila: "Fila | None" = None) -> WorkflowDefinition:
             Stage(
                 name="conciliar lançamentos",
                 cascade=(*default_resolvers(), revisor),
+                policy=policy or POLITICA_ATUAL,
             ),
         ),
     )
@@ -100,6 +105,8 @@ def reconcile(
     *,
     bus: "EventBus | None" = None,
     input_ref: str = "",
+    policy: "PolicyContext | None" = None,
+    model: str = "claude-opus-5",
 ) -> ReconcileResult:
     """Concilia um extrato contra um razão. A porta de entrada do domínio.
 
@@ -112,7 +119,17 @@ def reconcile(
     quem tem um padrão é quem conhece o domínio.
     """
     definicao = default_definition() if definition is None else definition
-    run = execute(definicao, pool(bank, ledger), bus=bus, input_ref=input_ref)
+    run = execute(
+        definicao,
+        pool(bank, ledger),
+        bus=bus,
+        input_ref=input_ref,
+        # O contexto traz `valor_em_risco` e `custo_estimado` — o que o kernel
+        # não sabe e o domínio sabe. Sem ele, a regra 7 simplesmente não se
+        # aplica, que é o comportamento certo para quem não passou nada.
+        policy=policy or contexto(model),
+        model=model,
+    )
     return ReconcileResult(
         matches=list(run.resolutions),
         divergences=divergencias(run.unresolved),

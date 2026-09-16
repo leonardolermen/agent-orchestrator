@@ -1416,3 +1416,101 @@ contabilizado pelo mesmo mecanismo. Se isso exigisse mais do que uma
 
 Os dois lados importam: o primeiro sozinho provaria que nada quebrou; o segundo
 sozinho provaria que algo novo cabe. Juntos provam que a extração foi extração.
+
+---
+
+# M3 — Motor de política
+
+## P6.45. A política decide SE roda; `Stage.ordered()` decide a ORDEM
+
+As duas são ortogonais, e mantê-las ortogonais é o que impede a política de
+poder chamar inteligência antes da regra de graça — a invariante nº 2 do §1.5.
+
+`ExecutionPolicy` não tem campo que expresse ordem, e há teste que verifica isso
+por introspecção (`test_nenhuma_politica_consegue_inverter_a_ordem_de_custo`).
+Não é "ninguém vai fazer"; é "não há como escrever".
+
+Alternativa rejeitada: deixar a política reordenar a cascata. Ela seria mais
+expressiva e destruiria a única garantia que o produto tem sobre custo.
+
+## P6.46. Dois níveis de decisão, porque o motor pergunta em momentos diferentes
+
+Regras 1–5 decidem se um RESOLVER roda (antes de chamá-lo). Regras 6–7 decidem
+se ele roda sobre um ITEM (estreitando o pool que ele recebe).
+
+Não é refinamento: são perguntas diferentes com respostas diferentes.
+"Orçamento estourado" vale para o resolver inteiro; "esta divergência de R$ 3,00
+não vale US$ 0,04" vale para um item.
+
+Consequência: o resolver pode receber um `WorkSet` menor que o pool. Com
+`POLITICA_ATUAL` o filtro é identidade (devolve o MESMO objeto), e é por isso
+que o motor de política entra sem mudar um número.
+
+## P6.47. `PARAR` encerra o stage; `PULAR` passa ao próximo resolver
+
+Orçamento estourado não melhora com o próximo resolver — ele é mais caro, pela
+ordem da cascata. Já "classe acima do teto" é específico daquele resolver, e o
+próximo pode caber.
+
+Custo se errado: com `PULAR` no lugar de `PARAR`, uma execução sem orçamento
+consultaria a política N vezes para nada. Barato, mas ruidoso no trace.
+
+## P6.48. A regra 7 não se aplica a resolver de graça
+
+Uma regra que não custa deve rodar sobre tudo, sempre. Sem esta guarda, um item
+de valor baixo sairia até do L1 — e a cascata barata, que é o que entrega os
+85,3%, pararia de ver metade do pool.
+
+Achado ao escrever o teste, não por análise: a primeira versão de
+`_por_que_pular` aplicava a regra 7 a qualquer resolver.
+
+## P6.49. BUG REAL — a regra 7 comparava micro-centavos de USD com centavos de BRL
+
+O achado mais importante do M3, e ele não veio de leitura: veio de rodar.
+
+`custo_estimado` devolve o orçamento do agente, em **micro-centavos de USD**
+(4.000.000). `valor_em_risco` devolvia o lançamento, em **centavos de BRL**
+(1.050 para R$ 10,50). A regra comparava `4.000.000 > 1.050 × 0,02` — verdadeiro
+SEMPRE.
+
+Medido: `POLITICA_ECONOMICA` pulou 20 de 20 divergências e reportou custo zero.
+Parecia economia máxima. Era unidade errada, e o sintoma era indistinguível do
+sucesso.
+
+Correção: `valor_em_risco` devolve micro-centavos de USD, convertendo com
+`MICROCENTS_POR_CENTAVO_BRL = 192_308` — constante com nome, derivação no
+comentário, e taxa FIXA de propósito (uma política que muda de comportamento com
+a cotação do dia seria impossível de reproduzir num benchmark).
+
+Dois testes prendem isso: um verifica a unidade de `valor_em_risco`, outro
+verifica que o limiar de R$ 10,40 do comentário é o limiar de verdade — porque
+comentário com número é número que desatualiza.
+
+Num repositório cuja primeira regra é "ponto flutuante é proibido; dinheiro é
+int em centavos", comparar duas moedas sem conversão é a mesma classe de defeito
+que `parse_brl("10.5")` teria sido. Ele passou porque o kernel, corretamente,
+não sabe o que é moeda — só compara dois inteiros. A responsabilidade da unidade
+é do domínio, e agora está escrita lá.
+
+## P6.50. No benchmark sintético a política econômica não economiza nada, e isso é informação
+
+Medido em `seed=1, n=120, taxa=0.20`: zero itens pulados. As divergências que o
+gerador produz são todas de valor alto (centenas a milhares de reais), e todas
+passam folgado no limiar de R$ 10,40.
+
+Não ajustei o limiar para produzir um número bonito. A demonstração da tese usa
+um dataset com valores CONTROLADOS (metade das divergências forçada a R$ 3,00), e
+ali a economia é real: 78 investigações → 43, US$ 0,74 → US$ 0,41.
+
+O que isso diz sobre o benchmark: ele não exercita a faixa de valor baixo. É
+uma lacuna do GERADOR, não da política — e entra como caso novo quando o
+`synth/` for revisitado.
+
+## P6.51. A política NÃO entra em `WorkflowDefinition.version`
+
+Ela é variável de EXPERIMENTO (§14.4). Rodar o mesmo workflow com duas políticas
+tem de produzir a mesma `workflow_version`, ou o benchmark de M6 compararia dois
+workflows em vez de duas políticas.
+
+A política é observável pelo `Run`, em `policy_decisions` — que é onde ela
+precisa aparecer.

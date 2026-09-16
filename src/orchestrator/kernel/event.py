@@ -24,6 +24,7 @@ class EventKind(StrEnum):
     RUN_CONCLUIDO = "run.concluido"
     RUN_FALHOU = "run.falhou"
     STAGE_INICIADO = "stage.iniciado"
+    POLITICA_DECIDIU = "politica.decidiu"
     RESOLVER_INICIADO = "resolver.iniciado"
     RESOLVER_CONCLUIDO = "resolver.concluido"
     ITEM_RESOLVIDO = "item.resolvido"
