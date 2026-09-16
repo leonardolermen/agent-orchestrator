@@ -8,10 +8,11 @@ from fastapi.testclient import TestClient
 
 from orchestrator.api.app import app
 from orchestrator.api.schemas import stage_json
-from orchestrator.workflow.cost_class import CostClass
-from orchestrator.workflow.definition import Stage, default_definition
-from orchestrator.workflow.resolver import ResolverDescription, ResolverOutput
-from orchestrator.workflow.workset import WorkSet
+from orchestrator.conciliacao import default_definition
+from orchestrator.kernel.cost import CostClass
+from orchestrator.kernel.definition import Stage
+from orchestrator.kernel.resolver import ResolverDescription, ResolverOutput
+from orchestrator.kernel.work import WorkSet
 
 cliente = TestClient(app)
 

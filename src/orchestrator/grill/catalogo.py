@@ -15,13 +15,13 @@ from typing import Any
 from orchestrator.agent.investigator import Investigator
 from orchestrator.agent.llm import LLMClient, LLMResponse
 from orchestrator.agent.tools import ToolContext
+from orchestrator.kernel.cost import CostClass
+from orchestrator.kernel.resolver import Resolver
 from orchestrator.matching.exact import ExactMatcher
 from orchestrator.matching.grouping import GroupingMatcher
 from orchestrator.matching.tolerance import ToleranceMatcher
 from orchestrator.review.fila import Fila
 from orchestrator.review.revisor import RevisorHumano
-from orchestrator.workflow.cost_class import CostClass
-from orchestrator.workflow.resolver import Resolver
 
 # Um modelo REAL da tabela de preços, de propósito: `Investigator.__post_init__`
 # chama `Cost.zero().microcents(self.client.model)` e um nome inventado faria a

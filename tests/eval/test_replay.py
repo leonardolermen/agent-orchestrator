@@ -3,8 +3,8 @@ import re
 import pytest
 
 from orchestrator.agent.llm import FakeLLMClient, LLMResponse, ToolCall
-from orchestrator.agent.proposal import Cost
 from orchestrator.eval.replay import RecordingClient, ReplayClient
+from orchestrator.kernel.cost import Cost
 
 
 def _respostas():

@@ -6,10 +6,11 @@ Tolerância padrão vem do spec: 5 centavos e 3 dias úteis.
 from dataclasses import dataclass, field
 
 from orchestrator.dates import business_days_between
-from orchestrator.models import BankEntry, LedgerEntry, MatchResult
-from orchestrator.workflow.cost_class import CostClass
-from orchestrator.workflow.resolver import ResolverDescription, ResolverOutput
-from orchestrator.workflow.workset import WorkSet
+from orchestrator.kernel.cost import CostClass
+from orchestrator.kernel.resolution import Resolution
+from orchestrator.kernel.resolver import ResolverDescription, ResolverOutput
+from orchestrator.kernel.work import WorkSet
+from orchestrator.models import LedgerEntry, banco, conciliacao, contabil
 
 
 @dataclass
@@ -38,17 +39,16 @@ class ToleranceMatcher:
         )
 
     def resolve(self, work: WorkSet) -> ResolverOutput:
-        return ResolverOutput(matches=self._casar(work.bank, work.ledger))
+        return ResolverOutput(resolutions=self._casar(work))
 
-    def _casar(
-        self, bank: list[BankEntry], ledger: list[LedgerEntry]
-    ) -> list[MatchResult]:
+    def _casar(self, work: WorkSet) -> list[Resolution]:
+        bank, ledger = banco(work), contabil(work)
         por_documento: dict[str, list[LedgerEntry]] = {}
         for le in ledger:
             if le.document is not None and le.cash_date is not None:
                 por_documento.setdefault(le.document, []).append(le)
 
-        resultados: list[MatchResult] = []
+        resultados: list[Resolution] = []
         usados: set[str] = set()
 
         for be in bank:
@@ -66,10 +66,10 @@ class ToleranceMatcher:
 
                 usados.add(le.id)
                 resultados.append(
-                    MatchResult(
-                        bank_ids=frozenset({be.id}),
-                        ledger_ids=frozenset({le.id}),
-                        layer=self.name,
+                    conciliacao(
+                        work,
+                        frozenset({be.id, le.id}),
+                        produced_by=self.name,
                         rule=(
                             f"tolerância: até {self.max_cents} centavos e "
                             f"{self.max_business_days} dias úteis"

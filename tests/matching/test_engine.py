@@ -1,14 +1,15 @@
 from random import Random
 
-from orchestrator.agent.proposal import Cost, InvestigationOutput, Proposal
 from orchestrator.cli import build_benchmark
-from orchestrator.matching.engine import default_resolvers, reconcile
+from orchestrator.conciliacao import default_resolvers, reconcile
+from orchestrator.kernel.cost import Cost, CostClass
+from orchestrator.kernel.definition import Stage, WorkflowDefinition
+from orchestrator.kernel.resolution import InvestigationOutput, Proposal
+from orchestrator.kernel.resolver import Resolver, ResolverDescription, ResolverOutput
+from orchestrator.kernel.work import WorkSet
+from orchestrator.models import abstencao, divergencias
 from orchestrator.synth.generator import build_dataset, generate_clean_pairs
 from orchestrator.synth.injectors import DefasagemTemporal, DevolucaoFundos
-from orchestrator.workflow.cost_class import CostClass
-from orchestrator.workflow.definition import Stage, WorkflowDefinition
-from orchestrator.workflow.resolver import Resolver, ResolverDescription, ResolverOutput
-from orchestrator.workflow.workset import WorkSet
 
 # Benchmark pequeno com divergências garantidas: n=60 na semente 1 produz 6
 # divergências, o suficiente para os testes de pool não serem degenerados.
@@ -42,7 +43,7 @@ def test_camadas_sao_aplicadas_em_ordem():
     r = reconcile(ds.bank, ds.ledger)
 
     # tudo limpo deve ser resolvido na camada mais barata
-    assert {m.layer for m in r.matches} == {"L1"}
+    assert {m.produced_by for m in r.matches} == {"L1"}
 
 
 def test_defasagem_grande_vira_divergencia():
@@ -74,7 +75,7 @@ def test_nenhum_lancamento_aparece_em_match_e_divergencia():
 
     r = reconcile(ds.bank, ds.ledger)
 
-    casados = {i for m in r.matches for i in m.bank_ids | m.ledger_ids}
+    casados = {i for m in r.matches for i in m.item_ids}
     divergentes = {i for d in r.divergences for i in d.bank_ids | d.ledger_ids}
     assert casados & divergentes == set()
 
@@ -117,12 +118,12 @@ class _InvestigadorFalso:
     def investigate(self, divergences):
         self.recebeu = divergences
         return InvestigationOutput(
-            proposals=[Proposal.abstencao(d.id, "teste") for d in divergences],
+            proposals=[abstencao(d.id, "teste") for d in divergences],
             cost=Cost(calls=len(divergences)),
         )
 
     def resolve(self, work: WorkSet) -> ResolverOutput:
-        saida = self.investigate(work.as_divergences())
+        saida = self.investigate(divergencias(work))
         return ResolverOutput(proposals=saida.proposals, cost=saida.cost)
 
     def describe(self) -> ResolverDescription:
@@ -235,7 +236,7 @@ def test_custo_de_dois_resolvers_na_cascata_e_somado_nao_sobrescrito_no_agent_co
 
 
 def test_agente_na_cascata_recebe_as_mesmas_divergencias_que_recebia_por_parametro():
-    # Quando o agente roda por último, `work.as_divergences()` produz
+    # Quando o agente roda por último, `divergencias(work)` produz
     # exatamente a lista que o parâmetro `investigator=` entregava. Este teste
     # é o que autoriza remover o parâmetro.
     registro: list[list[str]] = []
@@ -245,7 +246,7 @@ def test_agente_na_cascata_recebe_as_mesmas_divergencias_que_recebia_por_paramet
         cost_class = CostClass.AGENTE
 
         def resolve(self, work: WorkSet) -> ResolverOutput:
-            registro.append([d.id for d in work.as_divergences()])
+            registro.append([d.id for d in divergencias(work)])
             return ResolverOutput()
 
         def describe(self) -> ResolverDescription:
@@ -337,7 +338,7 @@ def test_ordenacao_e_por_stage_nao_global():
 def test_proposta_nao_remove_nada_do_pool():
     # Um resolver que só propõe não pode encolher o pool. Se encolher, o item
     # sai de divergente sem ninguém ter aprovado nada.
-    from orchestrator.agent.proposal import Confidence, Proposal
+    from orchestrator.kernel.resolution import Confidence
     from orchestrator.taxonomy import DivergenceType
 
     class _SoPropoe:
@@ -348,14 +349,14 @@ def test_proposta_nao_remove_nada_do_pool():
             return ResolverOutput(
                 proposals=[
                     Proposal(
-                        divergence_id=d.id,
+                        item_id=d.id,
                         tipo=DivergenceType.NAO_IDENTIFICADO,
                         explicacao="",
                         evidencia=[],
                         confianca=Confidence.BAIXA,
                         acao_sugerida="investigar_manual",
                     )
-                    for d in work.as_divergences()
+                    for d in divergencias(work)
                 ]
             )
 

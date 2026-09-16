@@ -12,7 +12,6 @@ from datetime import UTC, datetime
 from typing import Any
 
 from orchestrator.agent.llm import LLMClient, ToolCall, blocos_assistente
-from orchestrator.agent.proposal import Cost
 from orchestrator.grill.ferramentas import (
     Pergunta,
     PropostaBruta,
@@ -22,6 +21,7 @@ from orchestrator.grill.ferramentas import (
 )
 from orchestrator.grill.prompt import SYSTEM
 from orchestrator.grill.receita import Receita, construir, validar_id
+from orchestrator.kernel.cost import Cost
 
 # Derivação (rodada em 2026-09-15, ver Step 1 da Task 4):
 #

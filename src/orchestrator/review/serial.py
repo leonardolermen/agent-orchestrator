@@ -8,20 +8,15 @@ lista ORDENADA — o arquivo é append-only e precisa ser diffável.
 from datetime import datetime
 from typing import Any
 
-from orchestrator.agent.proposal import (
-    Confidence,
-    Cost,
-    Proposal,
-    TraceEvent,
-    TraceKind,
-)
+from orchestrator.kernel.cost import Cost
+from orchestrator.kernel.resolution import Confidence, Proposal, TraceEvent, TraceKind
 from orchestrator.review.decision import Decision, Veredito
 from orchestrator.taxonomy import DivergenceType
 
 
 def proposta_para_dict(p: Proposal) -> dict[str, Any]:
     return {
-        "divergence_id": p.divergence_id,
+        "divergence_id": p.item_id,
         "tipo": p.tipo.value,
         "explicacao": p.explicacao,
         "evidencia": list(p.evidencia),
@@ -42,7 +37,7 @@ def proposta_para_dict(p: Proposal) -> dict[str, Any]:
 
 def proposta_de_dict(d: dict[str, Any]) -> Proposal:
     return Proposal(
-        divergence_id=d["divergence_id"],
+        item_id=d["divergence_id"],
         tipo=DivergenceType(d["tipo"]),
         explicacao=d["explicacao"],
         evidencia=list(d["evidencia"]),

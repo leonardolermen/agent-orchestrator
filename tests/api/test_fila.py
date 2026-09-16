@@ -4,8 +4,8 @@ pytest.importorskip("fastapi")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from orchestrator.agent.proposal import Confidence, Proposal  # noqa: E402
 from orchestrator.api.app import app  # noqa: E402
+from orchestrator.kernel.resolution import Confidence, Proposal  # noqa: E402
 from orchestrator.review.fila import Fila, caminho_da_fila, dataset_id  # noqa: E402
 from orchestrator.taxonomy import DivergenceType  # noqa: E402
 
@@ -39,7 +39,7 @@ def _grava_proposta(divergence_id: str, **overrides) -> None:
     import orchestrator.api.app as modulo
 
     campos = {
-        "divergence_id": divergence_id,
+        "item_id": divergence_id,
         "tipo": DivergenceType.DEFASAGEM_TEMPORAL,
         "explicacao": "atraso de compensação bancária",
         "evidencia": ["extrato e razão citam o mesmo documento"],

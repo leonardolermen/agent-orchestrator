@@ -669,3 +669,464 @@ por `test_o_entrevistador_nao_importa_o_sdk`, que agora varre todo o pacote
 não muda: `orchestrator-grill` gasta crédito de API por chave
 (`ANTHROPIC_API_KEY`), não a assinatura pessoal do Claude Code — apesar do
 nome do módulo, herdado do vocabulário do plano.
+
+---
+
+# Plano 6 — Runtime de orquestração
+
+Spec: [`2026-09-16-runtime-de-orquestracao-design.md`](specs/2026-09-16-runtime-de-orquestracao-design.md)
+
+Decisões da auditoria e do PR #1. Mesmo critério dos planos anteriores: cada
+uma traz a alternativa rejeitada e o custo de estar errada.
+
+---
+
+## P6.1. Decisão do DONO, não minha — a regra dos três usos fica suspensa
+
+O spec §2.1 exige "três usos concretos" antes de qualquer abstração de
+plataforma; o §9 condiciona a DSL a três workflows em produção; o §10 classifica
+"deriva para plataforma cedo demais" como risco Alto. O dono decidiu construir a
+plataforma agora, a partir de uma instância.
+
+Registrada aqui **e** no §1.3 do spec novo, porque decisão que contraria um spec
+precisa aparecer onde o spec é lido — não só numa conversa.
+
+Alternativa rejeitada: seguir a regra e adiar a plataforma. Rejeitada por quem
+tem autoridade para isso.
+
+Custo se errado: a abstração é desenhada a partir de uma instância e sai errada,
+que é exatamente o que a regra existia para evitar. Mitigação em P6.2.
+
+## P6.2. O substituto de engenharia: dois domínios esqueleto em M0, não em M5
+
+A regra dos três usos existia por uma razão técnica que não desaparece com a
+decisão do dono: abstração desenhada a partir de zero instâncias costuma estar
+errada. O substituto barato não é esperar três clientes — é escrever as outras
+duas instâncias como esqueletos executáveis **junto** com a abstração, enquanto
+o kernel ainda está mole.
+
+Procurement (`REGRA → REGRA → AGENTE → HUMANO`) e Software Eng (o caso
+DEGENERADO: `AGENTE → HUMANO`, sem nenhum resolver de classe REGRA), ~80 linhas
+cada, do spec de composição §1.3. Critério binário: `git diff --stat
+src/orchestrator/kernel/` vazio no PR que os adiciona.
+
+Alternativa rejeitada: validar a generalidade em M5, como no plano original.
+Rejeitada porque descobrir que a abstração não serve custa um dia no PR #6 e um
+mês no M5.
+
+Custo se errado: dois PRs (~200 linhas) de domínio que ninguém usa. Barato
+comparado ao que protegem.
+
+## P6.3. Conciliação descartável NÃO significa suíte descartável
+
+O dono classificou a conciliação como "caso inicial, descartável". Li isso como
+**não investir nela** — sem parser de OFX/CNAB, sem camada de matching nova, sem
+feature de produto — e **não** como afrouxar os 449 testes, o golden de 12
+sementes e os três números do CI.
+
+Razão: num refactor que reescreve `WorkSet`, `Resolution`, o motor e o store, a
+única coisa que separa "generalizei corretamente" de "quebrei em silêncio" é um
+domínio complexo o bastante (cardinalidade N:M, dinheiro em inteiros, três
+classes de custo, FP/FN assimétricos) com saída travada. A conciliação vale mais
+como fixture agora do que valia como produto antes, porque agora é a única coisa
+que pode falhar alto.
+
+Alternativa rejeitada: relaxar o job `conciliador` do CI já que o produto não é
+mais o alvo. Rejeitada por remover a única rede no exato PR em que o kernel é
+reescrito.
+
+Custo se errado: carregamos uma suíte de um domínio que ninguém vai vender. É
+exatamente o que uma suíte de regressão é.
+
+## P6.4. Catraca com baseline, não `xfail`, no teste de camadas
+
+O plano do spec (§27, PR #1) pedia um teste `xfail` listando as violações
+conhecidas. Entreguei como baseline com catraca, **verde desde o primeiro dia**:
+violação nova falha um teste, violação corrigida sem apagar a linha falha outro.
+
+Duas razões. (a) `xfail` é um check vermelho permanente, e este repositório já
+recusou isso uma vez pelo motivo certo — o comentário sobre `ruff format` no
+`.github/workflows/ci.yml`: "um check de formato vermelho desde o primeiro dia é
+um check que as pessoas aprendem a ignorar". (b) `xfail` não detecta violação
+NOVA; a catraca detecta nos dois sentidos, que é o que protege a arquitetura
+durante a janela em que ela é reescrita.
+
+Alternativa rejeitada: `xfail` como o plano pedia. Custo se errado: a baseline é
+uma lista que pode virar desculpa permanente — mitigado por
+`test_baseline_honesta`, que falha quando ela deixa de ser honesta.
+
+Provado por experimento, não por leitura: violação introduzida em
+`workflow/cost_class.py` fez 2 testes falharem; entrada obsoleta na baseline fez
+`test_baseline_honesta` falhar. Os dois lados restaurados depois.
+
+## P6.5. `DESTINO` vence o diretório, e isso foi medido
+
+`camada_de()` resolve a camada de um módulo por tabela explícita primeiro,
+diretório depois. A ordem inversa parecia mais natural (o diretório é o estado
+final) e estava **errada**: três diretórios de hoje têm o nome de uma camada
+alvo sem serem ela — `agent/` guarda `proposal.py` (kernel) e `tools.py`
+(domains) junto do laço; `api/` e `cli` coincidem.
+
+Medido: com a ordem errada, o relatório saiu com 36 violações e **sem a mais
+importante** — `kernel -> agent`, a inversão nº 1 do §2.1, sumia porque
+`agent.proposal` resolvia como camada `agent`. O teste atestaria uma arquitetura
+que não existe.
+
+Custo se errado: nenhum hoje; a redundância que a ordem explícita cria é
+detectada por `test_destino_sem_entrada_redundante`, que obriga a tabela a
+encolher até sumir.
+
+## P6.6. `eval/replay.py` e `eval/assinatura.py` são camada `agent`, não `evaluation`
+
+Os dois moram em `eval/` por PROPÓSITO DE USO, mas `ReplayClient`/
+`RecordingClient` são implementações de `LLMClient` e `InvestigadorAssinatura` é
+um `Resolver`. A camada é dada pelo que a coisa É, não por quem a usa.
+
+Alternativa rejeitada: mapear para `evaluation`, seguindo o diretório. Produzia
+violações `evaluation -> agent` que nenhum PR deveria fechar, porque não há nada
+errado ali — e violação falsa na baseline é ruído que faz a lista inteira perder
+credibilidade.
+
+Custo se errado: quando `evaluation/` existir de verdade, os dois arquivos vão
+para `agent/providers/` em vez de acompanhar o resto de `eval/`; uma linha na
+tabela.
+
+## P6.7. O extrator lê a árvore inteira, não o topo do arquivo
+
+`ast.walk` sobre toda a AST, incluindo imports dentro de função e sob
+`TYPE_CHECKING`.
+
+Necessário, não zeloso: a circularidade `engine ↔ definition` existe SÓ em
+imports locais — colocados lá justamente para o interpretador não vê-la — e
+`agent.investigator -> review.fila` existe só sob `TYPE_CHECKING`. Um extrator
+que lesse só o cabeçalho não veria os dois acoplamentos mais antigos do
+repositório e diria que a arquitetura está melhor do que está.
+
+`TYPE_CHECKING` conta porque acoplamento de conhecimento também é acoplamento:
+`workflow/` conhecer `Fila` é o fato que a fronteira mede, mesmo sem import em
+tempo de execução.
+
+Custo se errado: a fronteira fica mais severa que o runtime exige. É o lado certo
+para errar, e `test_extrator_enxerga_import_local_e_type_checking` pina a
+capacidade usando os dois casos reais como fixture.
+
+## P6.8. Import relativo no teste — o absoluto quebra a COLETA no CI
+
+`from .camadas import ...`, não `from tests.arquitetura.camadas import ...`.
+
+Não é estilo. `tests/` não tem `__init__.py`, então o pytest importa o arquivo
+como `arquitetura.test_camadas` e põe `tests/` no `sys.path` — não a raiz do
+repositório. Com `python -m pytest` o absoluto funciona **por acidente** (o `-m`
+põe o CWD no path); com `pytest tests/ -q`, que é como o CI invoca, ele levanta
+na coleta e derruba a suíte INTEIRA.
+
+Medido, não suposto: `pytest tests/ -q` saiu com "Interrupted: 1 error during
+collection" e zero testes rodados, enquanto `python -m pytest tests/ -q` dava 468
+verdes na mesma árvore. Achado rodando as duas invocações de propósito, antes de
+commitar — é a segunda vez que esta classe de defeito aparece no repositório, e a
+primeira foi o que motivou o CI existir (ver o cabeçalho de
+`.github/workflows/ci.yml`).
+
+Custo se errado: nenhum; o import relativo é correto dentro de um pacote de teste
+que tem `__init__.py`.
+
+## P6.9. As "três inversões" do §2.1 são 23 arestas e 5 causas — e uma delas não era dependência
+
+A auditoria por leitura identificou três inversões. O teste, medindo, encontrou
+**23 arestas ilegais** em 5 causas, sendo 14 delas uma só: tipos de domínio
+dentro de kernel, runtime, agent, human e evaluation.
+
+Correção ao que a auditoria afirmava: a **inversão 1 não é problema de
+dependência, é de localização**. `workflow/resolver.py` importar `Cost` de
+`agent/proposal.py` só é ilegal porque `Cost` está no diretório errado — não há
+acoplamento a desfazer, o PR #2 é literalmente mover o arquivo. Por isso o teste
+separa `violacoes()` de `deslocados()`: sem a separação, um PR que só move
+arquivo pareceria ter consertado acoplamento.
+
+Consequência para o roadmap: confirma a ordem escolhida por aritmética, não por
+cautela — 14 das 23 arestas fecham nos PRs #3 e #4, que são a de-domainização do
+kernel.
+
+## P6.10. PR #2 — `CREW` entra na enum, `Budget` não
+
+O plano (§27, PR #2) pedia os dois. Entreguei só `CostClass.CREW`.
+
+`Budget` é um tipo NOVO sem nenhum chamador até o motor de política (M3), e
+tipo sem chamador é capacidade especulativa — a mesma disciplina que a decisão 9
+aplicou a `add_business_days` ("YAGNI sem chamador"). `CREW` é diferente:
+acrescentar um membro no MEIO de uma enum cujo valor numérico É a semântica
+renumera `HUMANO` de 2 para 3, e renumerar depois custa mexer na ordenação com
+mais código dependendo dela. Estender uma ordem que já existe e inventar um tipo
+que ninguém usa são coisas diferentes.
+
+Verificado antes de decidir: nenhum lugar do repositório compara `CostClass` a
+literal numérico — as 57 referências são todas por nome. A renumeração é
+invisível.
+
+Custo se errado: `CREW` fica órfã na enum até M8. Custo real: zero, porque nada
+constrói um `Crew` e a chave nunca aparece em `matches_by_class`.
+
+## P6.11. PR #2 — migração completa dos imports, sem alias de compatibilidade
+
+O plano pedia `agent/proposal.py` re-exportando `Cost` com `DeprecationWarning`.
+Migrei os 39 arquivos e não deixei alias.
+
+Razão: alias existe para consumidor externo, e não há nenhum — o pacote não está
+publicado. O próprio plano (§19.4) diz que "aliases permanentes viram API pública
+por acidente" e que um alias vive até o último chamador migrar. Se dá para migrar
+todos no mesmo PR, o alias nasce morto. Além disso `DeprecationWarning` em nível
+de módulo dispararia em 469 testes.
+
+Custo se errado: um PR maior (39 arquivos em vez de 3). Mitigado por serem
+mudanças mecânicas de import, com a suíte inteira como verificação.
+
+## P6.12. PR #2 — dois defeitos meus, achados por rodar em vez de ler
+
+Registrados porque os dois são da mesma família e a segunda ocorrência do mesmo
+erro num dia é sinal, não azar.
+
+**(a) O script de migração reescreveu imports DENTRO de função na coluna zero.**
+`ast.walk` encontra imports aninhados; meu gerador emitia a linha nova sem
+indentação. Quebrou `tests/api/test_execucao.py` e `tests/grill/test_registro.py`
+com `IndentationError` — e, como os dois erros são de COLETA, derrubavam a suíte
+inteira, não só os dois arquivos. Corrigido restaurando os dois do git e fazendo
+a substituição in-place na própria linha, onde a indentação vem de graça.
+
+**(b) `workflow.cost_class` ficou órfão em `DESTINO` e nenhum dos 19 testes
+reclamou.** O teste de higiene que eu tinha escrito (`test_destino_sem_entrada
+_redundante`) só checava redundância por diretório, não existência do módulo.
+Entrada órfã infla `DESLOCADOS_CONHECIDOS`, e um módulo novo criado no lugar
+errado com um nome que já esteve na tabela entraria sem ninguém ver. Corrigido
+com `test_destino_sem_entrada_orfa`, provado por experimento (reintroduzi a
+entrada, o teste falhou, restaurei).
+
+A lição comum: a catraca do PR #1 protege a arquitetura do CÓDIGO, e não se
+protegia a si mesma. O (b) é a primeira das duas lacunas de auto-proteção dela.
+
+## P6.13. PR #2 não fechou nenhuma violação de dependência, e isso está certo
+
+As 23 arestas continuam 23 depois de mover `Cost` para o kernel. Não é falha do
+PR: é a confirmação empírica do que P6.9 já tinha registrado — a inversão nº 1 é
+problema de LOCALIZAÇÃO, não de dependência. O que o PR #2 encolheu foi a lista
+de `deslocados()`, que é a outra metade da catraca.
+
+Se as duas checagens não estivessem separadas, este PR pareceria não ter feito
+nada — ou, pior, teria sido escrito para "fechar uma violação" mexendo em
+acoplamento que não precisava mudar.
+
+## P6.14. PRs #3 e #4 entram juntos, como o próprio plano previu
+
+O plano separava `WorkItem` (#3) de `Resolution` (#4). Entraram no mesmo commit.
+
+Razão técnica, não de conveniência: `WorkSet.without()` recebe resoluções e
+NUNCA um `ResolverOutput`, e é essa assinatura que torna "proposta não resolve"
+uma coisa que o tipo não sabe expressar (invariante nº 1 do §1.5). Com `WorkSet`
+genérico e `MatchResult` ainda de dois lados, `without` teria de receber ou (a)
+`MatchResult`, e aí o kernel continuaria conhecendo conciliação, ou (b) ids
+crus, e aí qualquer um poderia passar ids de proposta. As duas quebram a
+invariante.
+
+O §27 do plano já antecipava: "#4 completa o par com #3; adiar deixaria o kernel
+meio de-domainizado, que é pior que qualquer um dos dois estados."
+
+Custo se errado: um PR de ~700 linhas em vez de dois de ~350. Mitigado por os
+critérios de aceitação serem binários (golden, 85,3%, FP=0, FN=0) e por eles
+terem sido verificados, não presumidos.
+
+## P6.15. `conciliacao()` recebe o POOL, e não os dois lados já separados
+
+Desvio do desenho do §5.2 do spec, que previa `Resolution` construída
+diretamente pelos resolvers.
+
+O defeito que motivou: com `item_ids` unificado, um resolver que TROCASSE os dois
+lados — id bancário em `ledger_ids` e vice-versa — produziria exatamente a mesma
+`Resolution`. Nenhum teste conseguiria notar, e o teste do revisor que hoje pina
+"o lado vem do pool" perderia a força inteira. Percebido ao migrar
+`test_revisor.py`, não por análise prévia.
+
+Correção: `models.conciliacao(work, item_ids, ...)` deriva o lado de
+`lados(work, ...)`. A troca deixa de ser exprimível, porque o chamador não
+informa lado nenhum.
+
+Dois ganhos que não estavam no plano:
+
+1. **Guarda de id fantasma na CONSTRUÇÃO.** Ids fora do pool levantam ali. O
+   plano agendava essa guarda para o PR #7 (`_validar()` no motor); ela chegou
+   três PRs antes e num lugar melhor — protege o ESTADO, não só a métrica.
+   A guarda de `metrics.evaluate` continua, como defesa em profundidade contra
+   resolver que não use o helper (o teste de taxa > 1.0 agora constrói
+   `Resolution` direto, justamente para continuar exercitando esse caminho).
+2. **A disjunção banco/contábil virou invariante.** `metrics` separa lado
+   intersectando `item_ids` com os ids de cada lado, o que exige que nenhum id
+   se repita entre lados. Era suposição sobre os prefixos `b`/`l` do gerador;
+   agora `WorkSet.__post_init__` recusa id repetido e os dois lados entram no
+   mesmo `WorkSet`. Verificado em 3 sementes antes de depender disso.
+
+Custo se errado: `_casar` dos três matchers passa a receber `WorkSet` em vez das
+duas listas. Assinatura interna, sem chamador de teste.
+
+## P6.16. A catraca achou um acoplamento que estava ESCONDIDO
+
+`eval.assinatura -> models` entrou na baseline neste PR, e não é regressão.
+
+`eval/assinatura.py` chamava `work.as_divergences()`. Como `as_divergences`
+morava DENTRO do `WorkSet`, a dependência de conciliação não aparecia como
+import nenhum — o método era do kernel, e o kernel é quem conhecia o domínio.
+Mover a derivação para `models.divergencias()` revelou a seta que sempre esteve
+lá.
+
+Vale registrar porque é o argumento mais forte a favor do desenho do PR #1: a
+catraca não só barra acoplamento novo, ela acha o que a estrutura antiga
+camuflava. O número de violações subiu de 22 para 23 e depois voltou para 22 —
+duas fechadas, uma revelada.
+
+## P6.17. `ReconcileResult.matches` NÃO foi renomeado, de propósito
+
+`ResolverOutput.matches` virou `resolutions` (tipo do kernel, precisa ser
+genérico). `ReconcileResult.matches` ficou como está.
+
+Razão: `ReconcileResult` é o tipo de saída do conciliador e vai ser substituído
+por `Run` no PR #7. Renomear agora custaria tocar `metrics.py`, `api/app.py`,
+`grill/cli.py` e uma dezena de testes para um campo que deixa de existir em dois
+PRs. O plano (§19.4) manda o alias sumir "no PR que migra o último chamador" —
+aqui, o campo inteiro some.
+
+Custo se errado: por dois PRs, `saida.resolutions` e `resultado.matches`
+convivem, e é preciso saber qual objeto se tem na mão. Mitigado por serem tipos
+diferentes: acessar o campo errado levanta `AttributeError` na hora.
+
+## P6.18. Testes de kernel ganharam diretório próprio, sem payload de domínio
+
+`tests/workflow/test_workset.py` virou `tests/kernel/test_work.py` +
+`tests/kernel/test_cost.py`, e os testes do adaptador foram para
+`tests/test_models.py`.
+
+O ponto não é arrumação: `tests/kernel/test_work.py` usa payloads inventados
+(`str`, `int`) e não importa NADA de `models.py`. É a prova executável de que o
+kernel não conhece conciliação — se um teste de lá precisar do domínio, a
+de-domainização falhou. Um teste de kernel escrito com `BankEntry` provaria
+menos, e provaria errado.
+
+## P6.19. PR #5 — a circularidade quebra por OBRIGATORIEDADE, não por mais um import local
+
+`execute(definition, work)` exige a definição. Não tem default.
+
+A circularidade `engine <-> definition` existia por uma razão só: `reconcile`
+caía para `default_definition()` quando ninguém passava uma, e por isso o motor
+precisava importar o módulo que importava o motor. Os dois imports locais que
+escondiam isso do interpretador eram sintoma, não causa.
+
+Tirar o default do motor resolve na raiz: quem tem um padrão é quem conhece o
+domínio. `conciliacao.reconcile(bank, ledger, definition=None)` continua
+existindo, com a mesma assinatura, e continua sendo a porta que a CLI, a API, o
+grill e o eval usam — só que agora ela mora na camada que pode conhecer os dois
+lados.
+
+Verificado: `grep -rn "seria circular" src/` devolve vazio. Não sobrou nenhum
+import local justificado por circularidade no repositório.
+
+Custo se errado: quem chamar `execute()` direto precisa construir a definição.
+É o comportamento desejado — um motor genérico não tem cascata padrão.
+
+## P6.20. `execute()` devolve `ExecutionResult`, não `ReconcileResult`
+
+Desvio do plano, que só previa mover o motor de lugar.
+
+Ao mover, ficou visível que `ReconcileResult.divergences: list[Divergence]`
+deixava o runtime importando `models` — uma aresta `runtime -> domains` que
+sobreviveria à mudança de diretório. O motor derivava a FORMA de pendência do
+domínio.
+
+`ExecutionResult` devolve `unresolved: WorkSet` — o resto do pool, cru. Quem o
+traduz para `Divergence` é `conciliacao.reconcile()`, que sabe o que isso
+significa. Os nomes dos campos (`resolutions`, `resolved_by_resolver`,
+`resolutions_by_class`) já são os de `Run`, para que o PR #7 acrescente em vez
+de renomear.
+
+Custo se errado: um tipo a mais na cadeia. Ele some no PR #7, quando `Run` o
+substitui.
+
+## P6.21. `ReconcileResult` mantém os nomes antigos dos campos, de propósito
+
+Ele desceu para `conciliacao.py` com `matches`, `matches_by_resolver` e
+`matches_by_class` — palavras de conciliação, num tipo de domínio, o que está
+certo — e sem renomear, o que é uma escolha.
+
+Renomear obrigaria a tocar `metrics.py`, `api/app.py`, `grill/cli.py` e uma
+dezena de testes para um tipo que o PR #7 substitui por `Run`. O §19.4 do plano
+manda o alias sumir "no PR que migra o último chamador"; aqui o tipo inteiro
+some.
+
+Custo se errado: por dois PRs, `saida.resolutions` (ExecutionResult) e
+`resultado.matches` (ReconcileResult) convivem. Mitigado por serem tipos
+diferentes: acessar o campo errado levanta na hora.
+
+## P6.22. O PR #5 fechou 8 arestas e abriu 1, e a que abriu é a mesma de antes
+
+Fechadas: as 6 da CAUSA 2 inteira, mais `matching.engine -> models` e
+`metrics -> matching.engine`.
+
+Aberta: `metrics -> conciliacao`. Não é acoplamento novo — é o mesmo
+`metrics -> matching.engine` com outro nome, porque `ReconcileResult` desceu
+para o domínio junto com o resto. A avaliação continua dependendo do formato de
+saída de quem executou, em vez de ler um `Run` persistido. Continua sendo a
+CAUSA 4 e continua fechando no PR #7.
+
+Registrado porque a leitura ingênua do diff da baseline ("uma nova apareceu")
+sugere regressão, e não é. Foi o mesmo tipo de confusão que P6.16 já registrou
+em sentido inverso.
+
+## P6.23. PR #6 — os esqueletos acharam DOIS defeitos que a análise não tinha visto
+
+O argumento de §1.3 (escrever os outros domínios cedo, não em M5) era teórico
+quando foi escrito. Deixou de ser no primeiro `import` do dominio `swe`:
+
+1. **`Proposal.tipo: DivergenceType`.** A taxonomia de conciliação dentro do
+   tipo que TODO resolver de classe paga devolve. Um domínio novo não conseguia
+   propor nada. Achado na primeira linha de código de domínio.
+2. **`Proposal.divergence_id`.** "Divergência" é vocabulário de conciliação. Um
+   pedido de compra não é uma divergência; uma issue também não.
+
+Nenhum dos dois aparece numa leitura do código — `agent/proposal.py` parece
+genérico até alguém tentar usá-lo de fora. Os dois teriam sido descobertos em
+M5, depois de `Agent`, `Policy`, `Observability` e `Evaluation` terem sido
+construídos em cima deles.
+
+Custo de ter antecipado: dois commits de refactor (~1h). Custo de não ter:
+quatro milestones de retrabalho.
+
+## P6.24. O PR #6 foi partido em três commits para o critério continuar verificável
+
+O critério de aceitação do PR #6 é `git diff --stat src/orchestrator/kernel/`
+VAZIO no commit que adiciona os domínios. Com os dois defeitos acima corrigidos
+no mesmo commit, o critério seria vacuamente falso e não mediria nada.
+
+  6a  Proposal genérica (kernel muda)      — o que o esqueleto exigiu
+  6b  divergence_id -> item_id (kernel muda) — o que o esqueleto exigiu
+  6c  os dois domínios + testes (kernel NÃO muda) — o critério, verificado
+
+O terceiro commit é a medição: depois de dois ajustes, a abstração aguentou o
+segundo E o terceiro domínio sem mais nenhuma mudança de kernel.
+
+## P6.25. O caso degenerado exercitou uma guarda que estava correta e sem teste
+
+`domains/swe` é uma cascata SEM nenhum resolver de classe `REGRA`. Ela produz
+`resolutions_by_class` sem a chave `REGRA`.
+
+`metrics.evaluate` já previa isso — o comentário lá diz que o default de
+`de_regra` é `[]` e não `result.matches` porque "uma cascata sem resolver REGRA
+nenhum legitimamente não tem match determinístico algum". A guarda estava certa
+e nenhum domínio real a produzia. Agora um produz, e há teste.
+
+É o segundo caso da noite em que escrever o segundo domínio verificou uma
+afirmação que só existia como comentário.
+
+## P6.26. `CompradorHumano` existe para provar que HUMANO não é a fila de conciliação
+
+O domínio procurement tem um resolver de classe `HUMANO` que não é o
+`RevisorHumano`. Metade do teste de generalidade está nisso: se "humano" só
+pudesse ser a fila de revisão da conciliação, a classe `HUMANO` seria detalhe
+daquele domínio em vez de um degrau da cascata.
+
+Ele repete de propósito a política de decisão obsoleta (id fora do pool vira
+silêncio, não erro), e há teste — a política é do PADRÃO, não do `revisor.py`.

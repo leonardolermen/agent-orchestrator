@@ -6,9 +6,9 @@ mão em paralelo a eles — ver o teste anti-drift.
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from orchestrator.kernel.definition import Stage, WorkflowDefinition
 from orchestrator.review.decision import Veredito
 from orchestrator.taxonomy import DivergenceType
-from orchestrator.workflow.definition import Stage, WorkflowDefinition
 
 
 class ResolverJSON(BaseModel):

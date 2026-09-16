@@ -3,13 +3,13 @@ import json
 import pytest
 
 from orchestrator.agent.llm import FakeLLMClient, LLMResponse, ToolCall
-from orchestrator.agent.proposal import Cost
 from orchestrator.grill.entrevistador import (
     Entrevistador,
     EntrevistaFalhou,
     Proposta,
     RecusaFinal,
 )
+from orchestrator.kernel.cost import Cost
 
 
 def _chamada(ferramenta: str, cost: Cost | None = None, **args) -> LLMResponse:

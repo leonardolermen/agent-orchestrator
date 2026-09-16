@@ -1,10 +1,9 @@
 import pytest
 
 from orchestrator.agent.llm import FakeLLMClient, LLMResponse
-from orchestrator.agent.proposal import Cost
 from orchestrator.eval.agent_eval import EvalResult, _tabela, avaliar
-from orchestrator.workflow.cost_class import CostClass
-from orchestrator.workflow.resolver import ResolverDescription, ResolverOutput
+from orchestrator.kernel.cost import Cost, CostClass
+from orchestrator.kernel.resolver import ResolverDescription, ResolverOutput
 
 # Valores MEDIDOS com n=100 na semente 1. A amostra de n=40 foi descartada de
 # propósito: ela dava 2 corretas de 2 arriscadas, e 2/2 é 1,0 tanto com a

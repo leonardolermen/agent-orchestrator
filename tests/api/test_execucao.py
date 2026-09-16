@@ -5,6 +5,7 @@ pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient
 
 from orchestrator.api.app import _executar_memoizado, _fabricas, app
+from orchestrator.models import banco, conciliacao, contabil
 
 cliente = TestClient(app)
 
@@ -49,7 +50,7 @@ def test_execucao_nao_chama_o_modelo_de_jeito_nenhum(monkeypatch):
     def _espiao(self, system, messages, tools):
         chamadas.append({"system": system, "messages": messages, "tools": tools})
         from orchestrator.agent.llm import LLMResponse
-        from orchestrator.agent.proposal import Cost
+        from orchestrator.kernel.cost import Cost
 
         return LLMResponse(text="{}", tool_calls=[], cost=Cost.zero())
 
@@ -125,33 +126,32 @@ def test_n_invalido_da_422_em_vez_de_estourar():
 
 
 def test_resolver_com_layer_diferente_do_name_e_reportado_pelo_proprio_nome(monkeypatch):
-    """Pina P3.2 (DECISOES.md): `Resolver.name` é identidade, `MatchResult.layer`
+    """Pina P3.2 (DECISOES.md): `Resolver.name` é identidade, `Resolution.produced_by`
     é proveniência — dois conceitos que hoje coincidem para L1/L2/L3, mas não
     são o mesmo campo. Um resolver com `name` diferente do `layer` que ele
-    estampa nos próprios matches ainda precisa aparecer com a contagem REAL na
+    estampa nas próprias resoluções ainda precisa aparecer com a contagem REAL na
     resposta do endpoint. Se o endpoint voltasse a ler `matches_by_layer`
     (proveniência) chaveado por `name` (identidade), este resolver reportaria
     0% mesmo tendo casado lançamentos de verdade — o defeito de zero silencioso
     que este teste existe para travar.
     """
-    from orchestrator.models import MatchResult
-    from orchestrator.workflow.cost_class import CostClass
-    from orchestrator.workflow.definition import Stage, WorkflowDefinition
-    from orchestrator.workflow.resolver import ResolverDescription, ResolverOutput
+    from orchestrator.kernel.cost import CostClass
+    from orchestrator.kernel.definition import Stage, WorkflowDefinition
+    from orchestrator.kernel.resolver import ResolverDescription, ResolverOutput
 
     class _NomeDiferenteDaProveniencia:
         name = "resolver_x"
         cost_class = CostClass.REGRA
 
         def resolve(self, work):
-            n = min(3, len(work.bank), len(work.ledger))
+            n = min(3, len(banco(work)), len(contabil(work)))
             return ResolverOutput(
-                matches=[
-                    MatchResult(
-                        bank_ids=frozenset({work.bank[i].id}),
-                        ledger_ids=frozenset({work.ledger[i].id}),
+                resolutions=[
+                    conciliacao(
+                        work,
+                        frozenset({banco(work)[i].id, contabil(work)[i].id}),
                         # Proveniência deliberadamente != `name` acima.
-                        layer="proveniencia_y",
+                        produced_by="proveniencia_y",
                         rule="teste",
                     )
                     for i in range(n)

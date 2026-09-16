@@ -9,10 +9,11 @@ from dataclasses import dataclass, field
 from itertools import combinations
 
 from orchestrator.dates import business_days_between
-from orchestrator.models import BankEntry, LedgerEntry, MatchResult
-from orchestrator.workflow.cost_class import CostClass
-from orchestrator.workflow.resolver import ResolverDescription, ResolverOutput
-from orchestrator.workflow.workset import WorkSet
+from orchestrator.kernel.cost import CostClass
+from orchestrator.kernel.resolution import Resolution
+from orchestrator.kernel.resolver import ResolverDescription, ResolverOutput
+from orchestrator.kernel.work import WorkSet
+from orchestrator.models import LedgerEntry, banco, conciliacao, contabil
 
 
 @dataclass
@@ -48,17 +49,16 @@ class GroupingMatcher:
         )
 
     def resolve(self, work: WorkSet) -> ResolverOutput:
-        return ResolverOutput(matches=self._casar(work.bank, work.ledger))
+        return ResolverOutput(resolutions=self._casar(work))
 
-    def _casar(
-        self, bank: list[BankEntry], ledger: list[LedgerEntry]
-    ) -> list[MatchResult]:
+    def _casar(self, work: WorkSet) -> list[Resolution]:
+        bank, ledger = banco(work), contabil(work)
         por_fornecedor: dict[str, list[LedgerEntry]] = {}
         for le in ledger:
             if le.cash_date is not None:
                 por_fornecedor.setdefault(le.supplier, []).append(le)
 
-        resultados: list[MatchResult] = []
+        resultados: list[Resolution] = []
         usados: set[str] = set()
 
         for be in bank:
@@ -98,10 +98,10 @@ class GroupingMatcher:
 
             usados.update(le.id for le in grupo)
             resultados.append(
-                MatchResult(
-                    bank_ids=frozenset({be.id}),
-                    ledger_ids=frozenset(le.id for le in grupo),
-                    layer=self.name,
+                conciliacao(
+                    work,
+                    frozenset({be.id, *(le.id for le in grupo)}),
+                    produced_by=self.name,
                     rule=(
                         f"agrupamento: soma de {len(grupo)} líquidos do mesmo "
                         f"fornecedor iguala o lançamento bancário"

@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 
 from orchestrator.cli import build_benchmark
+from orchestrator.conciliacao import reconcile
 from orchestrator.grill.entrevistador import (
     Entrevistador,
     EntrevistaFalhou,
@@ -29,10 +30,9 @@ from orchestrator.grill.registro import (
     gravar_receita,
     gravar_recusa,
 )
-from orchestrator.matching.engine import reconcile
+from orchestrator.kernel.cost import CostClass
+from orchestrator.kernel.definition import Stage, WorkflowDefinition
 from orchestrator.metrics import evaluate
-from orchestrator.workflow.cost_class import CostClass
-from orchestrator.workflow.definition import Stage, WorkflowDefinition
 
 RESSALVA = "Este número é do NOSSO benchmark sintético, não dos seus dados."
 

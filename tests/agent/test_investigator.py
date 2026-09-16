@@ -4,13 +4,12 @@ import pytest
 
 from orchestrator.agent.investigator import SYSTEM, Investigator
 from orchestrator.agent.llm import FakeLLMClient, LLMResponse, ToolCall
-from orchestrator.agent.proposal import _PRECOS, Confidence, Cost, Proposal, TraceKind
 from orchestrator.agent.tools import TOOL_SCHEMAS, ToolContext
-from orchestrator.models import Divergence
+from orchestrator.kernel.cost import _PRECOS, Cost, CostClass
+from orchestrator.kernel.resolution import Confidence, Proposal, TraceKind
+from orchestrator.models import Divergence, divergencias, pool
 from orchestrator.synth.generator import build_dataset, generate_clean_pairs
 from orchestrator.taxonomy import DivergenceType
-from orchestrator.workflow.cost_class import CostClass
-from orchestrator.workflow.workset import WorkSet
 
 
 def _ctx() -> ToolContext:
@@ -55,11 +54,11 @@ def test_resolve_recebe_o_workset_e_devolve_propostas_sem_matches():
         client=FakeLLMClient(respostas=[RESPOSTA_VALIDA] * 4),
         context=CONTEXTO_DE_TESTE,
     )
-    work = WorkSet(bank=[pares[0].bank], ledger=[])
+    work = pool(bank=[pares[0].bank], ledger=[])
 
     saida = inv.resolve(work)
 
-    assert saida.matches == []
+    assert saida.resolutions == []
     assert len(saida.proposals) == 1
     assert saida.cost.calls >= 1
 
@@ -74,7 +73,7 @@ def test_uma_divergencia_vira_uma_proposta():
 
     assert len(out.proposals) == 1
     assert out.proposals[0].tipo is DivergenceType.RETENCAO_IMPOSTO
-    assert out.proposals[0].divergence_id == "d1"
+    assert out.proposals[0].item_id == "d1"
 
 
 def test_ferramenta_pedida_e_executada_e_devolvida():
@@ -553,7 +552,7 @@ def test_interpretar_proposta_e_funcao_de_modulo_reusavel():
     p = interpretar_proposta("d-1", texto, Cost.zero(), [])
 
     assert p is not None
-    assert p.divergence_id == "d-1"
+    assert p.item_id == "d-1"
     assert p.tipo is DivergenceType.DEFASAGEM_TEMPORAL
     assert p.confianca is Confidence.MEDIA
     assert p.evidencia == ["b1: 2026-01-05"]
@@ -604,16 +603,15 @@ def test_divergencia_ja_proposta_nao_chama_o_modelo_de_novo():
     na fila.
     """
     from orchestrator.review.fila import Fila
-    from orchestrator.workflow.workset import WorkSet
 
     pares = generate_clean_pairs(seed=2, n=1)
-    work = WorkSet(bank=[pares[0].bank], ledger=[])
-    ja_proposta = work.as_divergences()[0]
+    work = pool(bank=[pares[0].bank], ledger=[])
+    ja_proposta = divergencias(work)[0]
 
     fila = Fila.vazia()
     fila.gravar_proposta(
         Proposal(
-            divergence_id=ja_proposta.id,
+            item_id=ja_proposta.id,
             tipo=DivergenceType.DEFASAGEM_TEMPORAL,
             explicacao="da passagem anterior",
             evidencia=["e"],
@@ -649,7 +647,7 @@ def test_divergencia_sem_proposta_na_fila_e_investigada_normalmente():
     fila = Fila.vazia()
     fila.gravar_proposta(
         Proposal(
-            divergence_id="a",
+            item_id="a",
             tipo=DivergenceType.DEFASAGEM_TEMPORAL,
             explicacao="da passagem anterior",
             evidencia=["e"],
@@ -664,7 +662,7 @@ def test_divergencia_sem_proposta_na_fila_e_investigada_normalmente():
     out = inv.investigate([_div("a"), _div("b")])
 
     assert len(out.proposals) == 2
-    por_id = {p.divergence_id: p for p in out.proposals}
+    por_id = {p.item_id: p for p in out.proposals}
     assert por_id["a"].explicacao == "da passagem anterior"
     assert por_id["b"].tipo is DivergenceType.RETENCAO_IMPOSTO
     # só "b" gerou chamada ao modelo
@@ -686,7 +684,7 @@ def test_proposta_guardada_com_custo_historico_nao_entra_na_conta_desta_passagem
     fila = Fila.vazia()
     fila.gravar_proposta(
         Proposal(
-            divergence_id="a",
+            item_id="a",
             tipo=DivergenceType.DEFASAGEM_TEMPORAL,
             explicacao="da passagem anterior",
             evidencia=["e"],

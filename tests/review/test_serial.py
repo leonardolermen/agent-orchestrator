@@ -1,12 +1,7 @@
 from datetime import UTC, datetime
 
-from orchestrator.agent.proposal import (
-    Confidence,
-    Cost,
-    Proposal,
-    TraceEvent,
-    TraceKind,
-)
+from orchestrator.kernel.cost import Cost
+from orchestrator.kernel.resolution import Confidence, Proposal, TraceEvent, TraceKind
 from orchestrator.review.decision import Decision, Veredito
 from orchestrator.review.serial import (
     decisao_de_dict,
@@ -19,7 +14,7 @@ from orchestrator.taxonomy import DivergenceType
 
 def _proposta() -> Proposal:
     return Proposal(
-        divergence_id="d-b-b00003",
+        item_id="d-b-b00003",
         tipo=DivergenceType.DEFASAGEM_TEMPORAL,
         explicacao="liquidou 8 dias úteis depois",
         evidencia=["b00003: data 2026-08-26", "l00003: caixa 2026-08-15"],
@@ -82,3 +77,38 @@ def test_ids_saem_ordenados_para_o_arquivo_ser_diffavel():
     )
 
     assert decisao_para_dict(d)["conciliar_com"] == ["a", "m", "z"]
+
+
+def test_ida_e_volta_coage_o_tipo_ao_enum_do_dominio():
+    """A invariante de P2.6, agora garantida pela FRONTEIRA e não pelo kernel.
+
+    Até o PR #6, `Proposal.__post_init__` coagia `tipo` a `DivergenceType`, o
+    que tornava seguro construir uma proposta a partir de JSON cru. Com
+    `Proposal` genérica, o kernel não pode fazer isso — e a garantia passou a
+    depender de `proposta_de_dict` coagir explicitamente.
+
+    Este teste é o que impede essa coerção de sumir num refactor. Sem ele, um
+    `tipo` voltando como `str` cru passaria batido por toda comparação por
+    identidade do projeto (`p.tipo is DivergenceType.X`, em `metrics.evaluate`),
+    e a precisão do agente seria contada como zero em silêncio.
+    """
+    bruto = {
+        "divergence_id": "d-b-b1",
+        "tipo": "RETENCAO_IMPOSTO",
+        "explicacao": "retenção de ISS",
+        "evidencia": ["l1"],
+        "confianca": "ALTA",
+        "acao_sugerida": "conciliar_com(l1)",
+        "cost": {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cached_tokens": 0,
+            "cache_creation_tokens": 0,
+            "calls": 0,
+        },
+        "trace": [],
+    }
+
+    p = proposta_de_dict(bruto)
+
+    assert p.tipo is DivergenceType.RETENCAO_IMPOSTO

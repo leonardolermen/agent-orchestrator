@@ -1,7 +1,7 @@
 import pytest
 
 from orchestrator.agent.llm import FakeLLMClient, LLMResponse, ToolCall
-from orchestrator.agent.proposal import Cost
+from orchestrator.kernel.cost import Cost
 
 
 def test_fake_devolve_as_respostas_na_ordem():

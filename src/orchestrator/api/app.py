@@ -29,15 +29,15 @@ from orchestrator.api.schemas import (
     workflow_json,
 )
 from orchestrator.cli import build_benchmark
+from orchestrator.conciliacao import default_definition, reconcile
 from orchestrator.grill.receita import Receita, construir
 from orchestrator.grill.registro import listar_receitas
-from orchestrator.matching.engine import reconcile
+from orchestrator.kernel.cost import CostClass
+from orchestrator.kernel.definition import WorkflowDefinition
 from orchestrator.metrics import evaluate
 from orchestrator.review.decision import Decision, Veredito, ids_de_conciliar_com
 from orchestrator.review.fila import Fila, caminho_da_fila, dataset_id
 from orchestrator.taxonomy import DivergenceType
-from orchestrator.workflow.cost_class import CostClass
-from orchestrator.workflow.definition import WorkflowDefinition, default_definition
 
 app = FastAPI(title="Agent Orchestrator — canvas")
 
@@ -292,7 +292,7 @@ def _item(proposta, decisao, por_id) -> ItemFilaJSON:
     ids = ids_de_conciliar_com(proposta.acao_sugerida)
     # O revisor precisa ver extrato e contábil lado a lado — o veredito do
     # agente sozinho não dá para julgar nada.
-    do_item = _ids_da_divergencia(proposta.divergence_id) | ids
+    do_item = _ids_da_divergencia(proposta.item_id) | ids
     lancamentos = []
     for i in sorted(do_item):
         par = por_id.get(i)
@@ -304,7 +304,7 @@ def _item(proposta, decisao, por_id) -> ItemFilaJSON:
         decisao.tipo is not proposta.tipo or decisao.conciliar_com != ids
     )
     return ItemFilaJSON(
-        divergence_id=proposta.divergence_id,
+        divergence_id=proposta.item_id,
         tipo=proposta.tipo.value,
         confianca=proposta.confianca.value,
         explicacao=proposta.explicacao,

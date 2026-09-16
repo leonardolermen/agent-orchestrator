@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from orchestrator.agent.proposal import Proposal
+from orchestrator.kernel.resolution import Proposal
 from orchestrator.review.decision import Decision
 from orchestrator.review.serial import (
     decisao_de_dict,
@@ -73,9 +73,9 @@ class Fila:
             p = proposta_de_dict(registro["dados"])
             # PRIMEIRA vence: o agente não se repete, e uma segunda proposta
             # apagaria o que o revisor já leu.
-            if p.divergence_id not in self._propostas:
-                self._propostas[p.divergence_id] = p
-                self._ordem.append(p.divergence_id)
+            if p.item_id not in self._propostas:
+                self._propostas[p.item_id] = p
+                self._ordem.append(p.item_id)
         else:
             # ÚLTIMA vence: um humano muda de ideia, e o estado é a decisão
             # mais recente. O log guarda todas — é ele a auditoria.
@@ -105,11 +105,11 @@ class Fila:
 
     def gravar_proposta(self, p: Proposal) -> None:
         """Ignora proposta para id que já tem uma — ver `_aplicar`."""
-        if p.divergence_id in self._propostas:
+        if p.item_id in self._propostas:
             return
         self._acrescentar("proposta", proposta_para_dict(p))
-        self._propostas[p.divergence_id] = p
-        self._ordem.append(p.divergence_id)
+        self._propostas[p.item_id] = p
+        self._ordem.append(p.item_id)
 
     def gravar_decisao(self, d: Decision) -> None:
         self._acrescentar("decisao", decisao_para_dict(d))

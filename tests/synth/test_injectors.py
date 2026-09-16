@@ -3,6 +3,7 @@ from random import Random
 import pytest
 
 from orchestrator.dates import business_days_between
+from orchestrator.models import pool
 from orchestrator.synth.generator import generate_clean_pairs
 from orchestrator.synth.injectors import (
     DefasagemTemporal,
@@ -83,14 +84,13 @@ def test_retencao_sobra_para_o_agente():
     # medidos em benchmark antes de alguém notar.
     from orchestrator.matching.exact import ExactMatcher
     from orchestrator.matching.tolerance import ToleranceMatcher
-    from orchestrator.workflow.workset import WorkSet
 
     par = _par()
     r = RetencaoImposto().apply(Random(0), par)
-    work = WorkSet(bank=r.bank, ledger=r.ledger)
+    work = pool(bank=r.bank, ledger=r.ledger)
 
-    assert ExactMatcher().resolve(work).matches == []
-    assert ToleranceMatcher().resolve(work).matches == []
+    assert ExactMatcher().resolve(work).resolutions == []
+    assert ToleranceMatcher().resolve(work).resolutions == []
 
 
 def test_retencao_e_deterministica():
