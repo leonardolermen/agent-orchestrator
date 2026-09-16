@@ -28,15 +28,41 @@ const PEDIDO = {
   taxa_divergencia: parametro("taxa_divergencia", 0.15),
 };
 
+// O id do workflow ativo vem do MESMO `location.search` que `seed`/`n`, com
+// o MESMO tipo de leitura — não uma constante local com default próprio,
+// que foi exatamente o que fez canvas e fila apontarem para dados
+// diferentes numa fatia anterior (ver o aviso no topo deste arquivo).
+const WORKFLOW = QUERY.get("workflow") || "conciliacao";
+
 // O link para a fila carrega o MESMO dataset — é o que permite ao revisor
 // sair do canvas, decidir, e voltar sem perder de vista o que estava vendo.
 document.getElementById("link-fila").href =
   `/fila.html?${new URLSearchParams(PEDIDO)}`;
 
+async function popularSeletor() {
+  const lista = await (await fetch("/api/workflows")).json();
+  const select = document.getElementById("workflow");
+  select.innerHTML = "";
+  for (const w of lista) {
+    const opt = document.createElement("option");
+    opt.value = w.id;
+    // textContent, nunca innerHTML: `nome` vem de uma receita gerada por um
+    // modelo a partir do texto do parceiro. Tratar como dado, não markup.
+    opt.textContent = w.executavel ? w.nome : `${w.nome} (etapa paga)`;
+    opt.disabled = !w.executavel;
+    if (w.id === WORKFLOW) opt.selected = true;
+    select.appendChild(opt);
+  }
+  select.addEventListener("change", () => {
+    QUERY.set("workflow", select.value);
+    location.search = QUERY.toString();
+  });
+}
+
 async function carregar() {
   const [definicao, execucao] = await Promise.all([
-    fetch("/api/workflows/conciliacao").then((r) => r.json()),
-    fetch("/api/workflows/conciliacao/runs", {
+    fetch(`/api/workflows/${WORKFLOW}`).then((r) => r.json()),
+    fetch(`/api/workflows/${WORKFLOW}/runs`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(PEDIDO),
@@ -100,6 +126,10 @@ function lacuna(gap) {
     <span class="taxa">${(gap.rate * 100).toFixed(1)}%</span>`;
   return el;
 }
+
+popularSeletor().catch((erro) => {
+  console.error("falhou ao popular o seletor de workflows", erro);
+});
 
 carregar().catch((erro) => {
   document.getElementById("titulo").textContent = "falhou ao carregar";
