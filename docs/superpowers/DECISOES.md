@@ -1317,3 +1317,102 @@ exatamente o join frágil que P3.2 já custou uma correção, e que o `enum` do
 grill derivado do `CATALOGO` evita pelo mesmo motivo.
 
 Custo se errado: nenhum; o formato passa a ter um dono.
+
+---
+
+# M2 — Agent, Task e Tool
+
+## P6.39. `conciliacao` virou pacote porque `agent/tools.py` estava no lugar errado
+
+`agent/tools.py` guardava `ToolContext` — buscar lançamento contábil, calcular
+retenção de imposto. Ferramenta DE CONCILIAÇÃO dentro do pacote do agente
+genérico, e ocupando exatamente o nome que o `ToolRegistry` precisava.
+
+As duas coisas se resolvem com o mesmo mover: `conciliacao.py` virou
+`conciliacao/workflow.py`, `agent/tools.py` virou
+`conciliacao/ferramentas.py`, e `conciliacao/__init__.py` re-exporta a
+superfície pública para que `from orchestrator.conciliacao import reconcile`
+continue valendo.
+
+A catraca já apontava a seta (`agent.tools -> domains`) desde o PR #1.
+
+Custo se errado: um pacote de dois módulos. Reversível com dois `git mv`.
+
+## P6.40. A unidade de trabalho do agente NÃO é o `WorkItem`
+
+Foi o achado de projeto do M2, e não estava no plano.
+
+Na conciliação, um agente investiga uma `Divergence` — que é DERIVADA do pool,
+agrupa ids e tem prefixo próprio (`d-b-`, `d-l-`). Em `domains/swe`, a unidade é
+a issue direto. Um `Agent` que iterasse `work.items` não conseguiria expressar a
+primeira; um que iterasse divergências não conseguiria expressar a segunda.
+
+`AgentSpec.units: Callable[[WorkSet], list[AgentTask]]` resolve: quem sabe o que
+é uma unidade de investigação é o domínio. `AgentTask(id, prompt)` é o mínimo
+que o laço precisa — o id que vai para `Proposal.item_id` e o texto que o modelo
+lê.
+
+Alternativa rejeitada: fazer o `Agent` iterar `WorkItem` e obrigar o domínio a
+modelar divergência como item. Isso mudaria o `WorkSet` da conciliação e o
+golden junto — trocar um problema de agente por um de motor.
+
+Custo se errado: um `Callable` a mais na spec. Ele é o que torna o agente
+declarável.
+
+## P6.41. Cinco campos de domínio, e nenhum é string mágica
+
+O laço é genérico; o que é do domínio é: (a) o system prompt, (b) as
+ferramentas, (c) como um item vira pergunta, (d) como o texto vira proposta,
+(e) qual é o rótulo de "não sei". Os cinco viram campos de `AgentSpec`.
+
+Nenhum é uma string que o laço precise interpretar — `parse` e `abstain` são
+callables, `units` é callable, ferramentas vêm do registry. Um laço que
+inspecionasse convenções de nome seria o `_construir_definicao` de novo.
+
+Custo se errado: `AgentSpec` tem três callables, e callables não são
+serializáveis. `version` cobre só `(name, system, model, max_turns)` — o
+suficiente para o benchmark comparar prompts, insuficiente para reconstruir a
+spec de um JSON. Quando isso for preciso, os callables viram nomes registrados
+num `AgentRegistry`, que é PR próprio.
+
+## P6.42. `TOOL_SCHEMAS` sobrevive, derivado do registry
+
+`eval/assinatura.py` monta um servidor MCP a partir dos schemas, e não tem um
+`ToolContext` na mão para construir um registry. Em vez de duplicar a lista,
+`TOOL_SCHEMAS = registry_de(ToolContext([], [])).schemas()`.
+
+O contexto vazio é seguro porque o schema NÃO depende do conteúdo do contexto —
+só dos nomes e assinaturas, que são do módulo. Se algum dia depender, a linha
+vira função e o chamador passa o contexto dele.
+
+Custo se errado: uma constante derivada em tempo de import. Barata e verificada
+pelos testes que a consomem.
+
+## P6.43. `Task()` é açúcar, e não um conceito
+
+`Task(name, resolver=x)` devolve um `Stage`. Não há tipo novo.
+
+O spec de composição §1.2 diz textualmente que passo simples e cascata "não são
+dois conceitos; é um". Criar `Task` como entidade separada duplicaria estado,
+duplicaria serialização e criaria a pergunta "uma task tem stages ou um stage
+tem tasks?", que não tem resposta boa.
+
+Existe para que quem chega do CrewAI encontre a palavra que espera. É a única
+concessão de vocabulário do M2, e ela não custa nada ao kernel.
+
+## P6.44. O critério do M2, verificado nos dois sentidos
+
+**Extração não perdeu nada:** as 714 linhas de `tests/agent/test_investigator.py`
+passam contra o `Agent` genérico, sem mudança de asserção. Turnos, orçamento em
+dois níveis, retry de formato, erro de ferramenta voltando ao modelo, abstenção
+— tudo preservado, incluindo as duas capturas de exceção INVERTIDAS (estreita em
+volta de `complete()`, larga na execução de ferramenta) com os comentários que
+explicam a inversão.
+
+**Declarar um agente novo é barato:** `domains/swe` ganhou um agente de verdade
+em ~15 linhas de declaração, num domínio sem relação com conciliação, com custo
+contabilizado pelo mesmo mecanismo. Se isso exigisse mais do que uma
+`AgentSpec`, um `ToolRegistry` e três funções, a extração teria falhado.
+
+Os dois lados importam: o primeiro sozinho provaria que nada quebrou; o segundo
+sozinho provaria que algo novo cabe. Juntos provam que a extração foi extração.

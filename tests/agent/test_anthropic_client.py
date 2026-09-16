@@ -194,7 +194,7 @@ def test_laco_investigador_fala_o_protocolo_de_ferramentas_do_sdk():
     pode checar a forma da mensagem de saída contra o dublê do SDK.
     """
     from orchestrator.agent.investigator import Investigator
-    from orchestrator.agent.tools import ToolContext
+    from orchestrator.conciliacao.ferramentas import ToolContext
     from orchestrator.models import Divergence
     from orchestrator.synth.generator import build_dataset, generate_clean_pairs
 

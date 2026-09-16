@@ -171,3 +171,87 @@ def test_swe_um_kind_so_e_suficiente():
 
     assert {i.kind for i in work.items} == {"issue"}
     assert work.of_kind("issue")
+
+
+# ---------------------------------------------------------------------------
+# M2: um agente DECLARADO num domínio que não é conciliação
+# ---------------------------------------------------------------------------
+
+
+def test_swe_declara_um_agente_de_verdade_sem_escrever_um_laco():
+    """A prova do M2, do outro lado da extração.
+
+    `test_investigator.py` prova que o laço genérico não perdeu nada (714
+    linhas passando contra `Agent`). Este prova o inverso: declarar um agente
+    NOVO, num domínio que não é conciliação, custa uma `AgentSpec`, um
+    `ToolRegistry` e três funções — nenhuma linha de laço.
+
+    Se isto exigisse mais, a extração teria falhado.
+    """
+    from orchestrator.agent.llm import FakeLLMClient, LLMResponse
+    from orchestrator.domains.swe.workflow import definition_com_agente
+    from orchestrator.kernel.cost import Cost
+
+    resposta = LLMResponse(
+        text='{"tipo":"BUG","explicacao":"stack trace","evidencia":["linha 3"],'
+        '"confianca":"ALTA"}',
+        tool_calls=[],
+        cost=Cost(input_tokens=50, output_tokens=20, calls=1),
+    )
+    cliente = FakeLLMClient([resposta])
+
+    run = execute(
+        definition_com_agente(cliente),
+        pool_swe([Issue("i1", "Erro ao salvar", "Traceback...")]),
+    )
+
+    p = run.proposals[0]
+    assert (p.item_id, p.tipo, p.confianca.value) == ("i1", "BUG", "ALTA")
+    # O custo é contabilizado pelo mesmo mecanismo da conciliação.
+    assert run.cost_by_resolver["triador-llm"].microcents("claude-opus-5") > 0
+
+
+def test_o_agente_do_swe_rebaixa_confianca_ALTA_sem_evidencia():
+    """A disciplina não é do `Investigator` — é do parser de cada domínio, e o
+    swe a repete porque ela é certa, não porque foi herdada.
+
+    Afirmar com confiança sem citar nada acontece. Rebaixar é mais útil que
+    descartar: a hipótese ainda ajuda, com o peso certo.
+    """
+    from orchestrator.agent.llm import FakeLLMClient, LLMResponse
+    from orchestrator.domains.swe.workflow import definition_com_agente
+    from orchestrator.kernel.cost import Cost
+
+    resposta = LLMResponse(
+        text='{"tipo":"FEATURE","explicacao":"acho","evidencia":[],"confianca":"ALTA"}',
+        tool_calls=[],
+        cost=Cost(input_tokens=10, output_tokens=5, calls=1),
+    )
+
+    run = execute(
+        definition_com_agente(FakeLLMClient([resposta])),
+        pool_swe([Issue("i1", "Export", "...")]),
+    )
+
+    assert run.proposals[0].confianca.value == "BAIXA"
+
+
+def test_tipo_fora_do_vocabulario_dispara_retry_e_acaba_em_abstencao():
+    """Vocabulário fechado, como na conciliação — e o "não sei" é do DOMÍNIO
+    (`DUVIDA` aqui, `NAO_IDENTIFICADO` lá). O kernel não decide qual."""
+    from orchestrator.agent.llm import FakeLLMClient, LLMResponse
+    from orchestrator.domains.swe.workflow import definition_com_agente
+    from orchestrator.kernel.cost import Cost
+
+    lixo = LLMResponse(
+        text='{"tipo":"INVENTADO","explicacao":"x","evidencia":[],"confianca":"BAIXA"}',
+        tool_calls=[],
+        cost=Cost(input_tokens=10, output_tokens=5, calls=1),
+    )
+
+    run = execute(
+        definition_com_agente(FakeLLMClient([lixo, lixo, lixo])),
+        pool_swe([Issue("i1", "x", "y")]),
+    )
+
+    assert run.proposals[0].tipo == "DUVIDA"

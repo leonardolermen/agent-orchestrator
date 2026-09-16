@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Any
 
 from orchestrator.agent.llm import LLMClient
-from orchestrator.agent.tools import ToolContext
+from orchestrator.conciliacao.ferramentas import ToolContext
 from orchestrator.grill.catalogo import CATALOGO, ClienteAusente
 from orchestrator.kernel.definition import Stage, WorkflowDefinition
 from orchestrator.review.fila import Fila

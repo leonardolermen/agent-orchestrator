@@ -98,16 +98,20 @@ DESTINO: dict[str, str] = {
     "dates": "domains",
     "tax": "domains",
     "taxonomy": "domains",
-    # A cascata padrão e a porta do domínio. Este módulo é o que quebrou a
-    # circularidade `engine <-> definition`: a definição padrão é configuração
-    # de produto, e só a camada `domains` pode conhecer motor E resolvers.
+    # A cascata padrão e a porta do domínio. `conciliacao/workflow.py` é o que
+    # quebrou a circularidade `engine <-> definition`: a definição padrão é
+    # configuração de produto, e só a camada `domains` pode conhecer motor E
+    # resolvers.
+    #
+    # Virou PACOTE no M2: `agent/tools.py` guardava as ferramentas DE
+    # CONCILIAÇÃO dentro do pacote do agente genérico, e ocupava o nome que o
+    # `ToolRegistry` precisava. As duas coisas se resolvem com o mesmo mover.
     "conciliacao": "domains",
+    "conciliacao.workflow": "domains",
+    "conciliacao.ferramentas": "domains",
     "matching.exact": "domains",
     "matching.tolerance": "domains",
     "matching.grouping": "domains",
-    # `ToolContext` busca lançamento contábil e calcula retenção de imposto.
-    # É ferramenta DE CONCILIAÇÃO, não do runtime de agente.
-    "agent.tools": "domains",
     # `build_benchmark` saiu de `cli.py` no PR #9. Nunca foi codigo de CLI: e o
     # gerador do dataset com gabarito, e morava la so porque a CLI foi o
     # primeiro chamador. Era a inversao nº 3 do §2.1 — a camada HTTP importando

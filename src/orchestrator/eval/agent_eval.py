@@ -14,8 +14,8 @@ from pathlib import Path
 
 from orchestrator.agent.investigator import Investigator
 from orchestrator.agent.llm import LLMClient
-from orchestrator.agent.tools import ToolContext
 from orchestrator.conciliacao import default_resolvers, reconcile
+from orchestrator.conciliacao.ferramentas import ToolContext
 from orchestrator.kernel.definition import Stage, WorkflowDefinition
 from orchestrator.kernel.resolution import TraceKind
 from orchestrator.metrics import evaluate

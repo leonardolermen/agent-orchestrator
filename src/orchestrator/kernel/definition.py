@@ -34,6 +34,28 @@ class Stage:
         return sorted(self.cascade, key=lambda r: r.cost_class)
 
 
+def Task(  # noqa: N802 — é um construtor, e o nome é o do conceito
+    name: str,
+    *,
+    resolver: Resolver | None = None,
+    cascade: tuple[Resolver, ...] | list[Resolver] | None = None,
+) -> Stage:
+    """Açúcar: `Task(resolver=x)` é `Stage(cascade=(x,))`.
+
+    NÃO é um conceito novo, e a ausência dele é deliberada. O spec de composição
+    §1.2 diz textualmente que passo simples e cascata "não são dois conceitos; é
+    um" — criar `Task` como entidade separada duplicaria estado, duplicaria
+    serialização e criaria a pergunta "uma task tem stages ou um stage tem
+    tasks?", que não tem resposta boa.
+
+    Existe para que quem chega do CrewAI encontre a palavra que espera, sem que
+    o kernel ganhe um segundo conceito para manter em sincronia.
+    """
+    if (resolver is None) == (cascade is None):
+        raise ValueError("Task exige `resolver` OU `cascade`, exatamente um")
+    return Stage(name=name, cascade=(resolver,) if resolver else tuple(cascade))
+
+
 @dataclass(frozen=True)
 class WorkflowDefinition:
     id: str
