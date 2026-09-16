@@ -1621,3 +1621,104 @@ saída deixaria de ser legível — que é o oposto do que um trace serve.
 O corte sai como `... e mais N itens`. Truncar em silêncio seria a mesma classe
 de defeito que `limite=-3` em `buscar_lancamentos` já custou uma correção:
 devolver menos do que o pedido sem dizer.
+
+---
+
+# M5 — CLI, SDK e DX
+
+## P6.61. TOML e não YAML, ao contrário do que o plano pedia
+
+O §16.4 especificava `orchestrator.yaml`. Entregue como `orchestrator.toml`.
+
+`tomllib` é stdlib desde o Python 3.11, que é EXATAMENTE o piso declarado em
+`requires-python`. YAML custaria `pyyaml` como dependência de RUNTIME num pacote
+que tem uma (`anthropic`), e a superfície mínima de dependência está no §2.4 da
+auditoria como ATIVO, não como acaso — é ela que torna a extração barata.
+
+De brinde, o projeto já fala TOML: `pyproject.toml` está na raiz, e quem edita
+um sabe editar o outro.
+
+Há teste que verifica que `dependencies` continua com um item só.
+
+Custo se errado: TOML não tem âncora nem multi-documento. Nada na configuração
+prevista precisa dos dois.
+
+## P6.62. A regra do despachante é UMA linha, e não uma lista de nomes
+
+"Se o primeiro argumento começa com `-`, é a invocação legada."
+
+A alternativa óbvia — uma lista de subcomandos conhecidos, e tudo que não estiver
+nela vai para o legado — precisaria ser mantida em sincronia com o parser, e
+colidiria no dia em que alguém criasse um subcomando chamado `seed`. A regra do
+prefixo não tem essas duas propriedades.
+
+`--help` é a única exceção, e passa a mostrar os subcomandos: quem roda `--help`
+está procurando o que existe. É melhoria, não quebra.
+
+**O que isso protege:** o job `conciliador` do CI roda
+`orchestrator --seed 1 --n 500` e faz `grep` da linha do percentual. Quebrar
+seria apagar o único check que transforma regressão de qualidade em CI vermelho.
+Verificado com o entry point INSTALADO, não só com `python -m`.
+
+## P6.63. `bench` delega para o `main` antigo em vez de reimprimir
+
+A linha que o CI faz `grep` sai de UM lugar. Duas formatações que precisassem
+concordar seriam o join frágil de sempre — e há teste comparando a saída dos
+dois caminhos byte a byte.
+
+## P6.64. O scaffold é um projeto que RODA, não um esqueleto com `TODO`
+
+`orchestrator init` gera uma cascata completa e executável: regra barata, agente
+(com `FakeLLMClient`, para rodar sem chave), política com teto de gasto, trace
+renderizado e dois testes que passam.
+
+O primeiro feedback que alguém tem do framework é se ele executa. Um scaffold com
+`raise NotImplementedError` transfere para a primeira hora do usuário o trabalho
+de descobrir a forma — e, com a regra dos três usos suspensa (§1.3), feedback de
+quem chega de fora é o substituto que sobrou para validar a abstração.
+
+Os testes rodam o projeto gerado num SUBPROCESSO, de verdade. Um scaffold
+verificado só por `assert arquivo.exists()` é um scaffold que quebra sem ninguém
+ver.
+
+Defeito achado assim: o README dizia `python workflows/triagem.py`, que põe
+`workflows/` no `sys.path[0]` e faz os imports de `dominio` e `regras`
+falharem. Corrigido para `python -m workflows.triagem`.
+
+## P6.65. O scaffold tem uma pasta `dominio/`, e é diferença deliberada do CrewAI
+
+Lá o scaffold é `agents.yaml` + `tasks.yaml`, porque o domínio É o texto do
+prompt. Aqui o domínio é código tipado, e a pasta existe para dizer, na
+ESTRUTURA, que o que é determinístico não mora num YAML de prompt.
+
+`data/` é ignorado pelo git; `avaliacoes/casos/` não. É a decisão de ativo do
+projeto visível na árvore — o §1.1 do spec pai chama o conjunto de avaliação de
+"a coisa que um concorrente não copia", e coisa que não se copia vai para o
+versionamento.
+
+## P6.66. A fachada pública NÃO exporta conciliação, nem o provider
+
+`orchestrator/__init__.py` exporta 46 nomes e nenhum deles é de conciliação.
+Exportá-los faria todo usuário do framework carregar a taxonomia de divergência
+fiscal brasileira.
+
+`AnthropicClient` também fica de fora: importar o framework não pode exigir
+credencial. Quem quer o provider importa `orchestrator.agent.providers`; quem só
+quer declarar um workflow não paga por isso.
+
+`Tool` e `Workflow` são APELIDOS de `ToolSpec` e `WorkflowDefinition`. Os nomes
+longos dizem o que a coisa é; os curtos são o que alguém escreve. Apelido não é
+conceito novo — mesma razão de `Task()` ser açúcar sobre `Stage`.
+
+## P6.67. A fachada precisou de uma camada própria, e de um teste que a catraca não daria
+
+`orchestrator/__init__.py` virou um módulo com conteúdo, e o mapa de camadas
+precisou de um nome para ele — camada `public`, com permissão de borda.
+
+Mas há uma invariante que a catraca sozinha NÃO pega: **nenhum módulo interno
+pode importar a fachada.** Importar `orchestrator` de dentro criaria um ciclo em
+tempo de import (a fachada importa quase tudo) e tornaria a ordem de import
+significativa. A catraca não pegaria porque `orchestrator` não é uma camada — é
+o pacote.
+
+`test_NENHUM_modulo_interno_importa_a_fachada` fecha isso, varrendo a AST.
