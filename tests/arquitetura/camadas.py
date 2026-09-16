@@ -43,6 +43,10 @@ PERMITIDO: dict[str, frozenset[str]] = {
     # Bordas: podem importar tudo. São elas que compõem o produto final.
     "api": _BORDA,
     "cli": _BORDA,
+    # A FACHADA pública (`orchestrator/__init__.py`): o que alguém importa sem
+    # ler o código. Pode alcançar qualquer camada, e NINGUÉM interno pode
+    # importá-la — código interno importa o módulo de verdade. Há teste.
+    "public": _BORDA,
 }
 
 # Onde cada módulo de HOJE deveria morar na arquitetura alvo.
@@ -128,6 +132,8 @@ DESTINO: dict[str, str] = {
     # `authoring` é a camada que pode importar as duas. Saiu de `api/app.py`
     # no PR #8: quais workflows existem não é assunto da camada HTTP, e a CLI
     # precisa da mesma resposta.
+    # A fachada pública.
+    "__init__": "public",
     "workflows": "authoring",
     "grill.catalogo": "authoring",
     "grill.receita": "authoring",
@@ -137,10 +143,9 @@ DESTINO: dict[str, str] = {
     "grill.prompt": "authoring",
     "grill.assinatura": "authoring",
     # --- bordas ---
-    # `cli` é módulo de topo (`cli.py`, não `cli/`), então o diretório não
-    # responde por ele: a entrada é load-bearing. `api.app`/`api.schemas` não
-    # aparecem — `api/` já é o nome da camada.
-    "cli": "cli",
+    # `cli/` virou PACOTE no M5 (despachante de subcomandos), então o diretório
+    # responde por ele. `api.app`/`api.schemas` também não aparecem — `api/` já
+    # é o nome da camada.
     "grill.cli": "cli",
     "eval.agent_eval": "cli",
 }
@@ -185,7 +190,10 @@ def modulos() -> list[str]:
         if relativo.name == "__init__.py":
             if not caminho.read_text(encoding="utf-8").strip():
                 continue
-            partes = relativo.parts[:-1]
+            # O `__init__.py` da RAIZ do pacote não tem parte nenhuma antes
+            # dele, e `".".join(())` daria nome vazio. Ele é a fachada pública,
+            # e precisa de nome para poder ter camada.
+            partes = relativo.parts[:-1] or ("__init__",)
         else:
             partes = (*relativo.parts[:-1], relativo.stem)
         achados.append(".".join(partes))
