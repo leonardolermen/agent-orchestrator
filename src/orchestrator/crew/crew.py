@@ -233,7 +233,7 @@ class Crew:
                 # Foi exatamente assim que este defeito apareceu — não num
                 # teste, mas no relatório de economia da primeira execução ao
                 # vivo da tripulação.
-                trace.extend(p.trace)
+                trace.extend(_sem_entrada(p.trace))
                 trace.append(
                     TraceEvent(
                         kind=TraceKind.OUTCOME,
@@ -320,7 +320,7 @@ class Crew:
             )
         )
         custo = custo + roteamento.cost
-        trace.extend(roteamento.trace)
+        trace.extend(_sem_entrada(roteamento.trace))
         escolhido = self._escolher(roteamento)
         trace.append(
             TraceEvent(
@@ -355,7 +355,7 @@ class Crew:
             confianca=final.confianca,
             acao_sugerida=final.acao_sugerida,
             cost=custo,
-            trace=[*trace, *final.trace],
+            trace=[*trace, *_sem_entrada(final.trace)],
         )
 
     def _escolher(self, roteamento: Proposal) -> Agent:
@@ -523,7 +523,7 @@ class Crew:
             confianca=sintese.confianca,
             acao_sugerida=sintese.acao_sugerida,
             cost=total,
-            trace=[*trace, *sintese.trace],
+            trace=[*trace, *_sem_entrada(sintese.trace)],
         )
 
     def _abster(
@@ -556,6 +556,23 @@ class Crew:
             cost=p.cost,
             trace=p.trace,
         )
+
+
+def _sem_entrada(trace: list[TraceEvent]) -> list[TraceEvent]:
+    """O trace de um agente MENOS o marcador de entrada de item.
+
+    `TraceKind.ENTRADA` é o que o coletor usa para abrir um span de ITEM. Cada
+    agente emite o seu, e o Crew emite o dele — juntar tudo cru faz N+1 spans
+    de ITEM para o mesmo item.
+
+    Medido: com 50 casos e dois agentes, o relatório de economia imprimiu
+    `29/71` — vinte e nove itens de setenta e um, num conjunto de cinquenta.
+    Número impossível, e ele só apareceu porque a saída mostra o denominador.
+    Uma métrica que imprimisse só a porcentagem teria escondido isto.
+
+    Os eventos de LLM e de ferramenta ficam: são eles que atribuem custo.
+    """
+    return [e for e in trace if e.kind is not TraceKind.ENTRADA]
 
 
 _ORDEM_CONFIANCA = {Confidence.BAIXA: 0, Confidence.MEDIA: 1, Confidence.ALTA: 2}

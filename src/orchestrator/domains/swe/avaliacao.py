@@ -45,6 +45,7 @@ from orchestrator.evaluation.waste import EconomiaDeFerramentas
 from orchestrator.kernel.definition import Task, WorkflowDefinition
 from orchestrator.kernel.work import WorkItem
 
+from orchestrator.domains.swe.casos import CASOS
 from orchestrator.domains.swe.workflow import ISSUE, Issue, ferramentas, triador
 
 # A data de curadoria. Fixa, e anterior a qualquer run — a guarda de
@@ -55,75 +56,34 @@ _CURADO_EM = datetime(2026, 9, 16, 0, 0, tzinfo=UTC)
 
 ABSTEM_COM = frozenset({"DUVIDA"})
 
-_CASOS: tuple[tuple[Issue, str], ...] = (
-    (
-        Issue(
-            "I-1",
-            "App crasha ao abrir relatório mensal",
-            "Stack trace: NullPointerException em ReportBuilder.build(), linha 84. "
-            "Acontece toda vez desde a versão 2.3.1.",
-        ),
-        "BUG",
-    ),
-    (
-        Issue(
-            "I-2",
-            "Exportar relatório em CSV",
-            "Hoje só dá para exportar em PDF. Precisamos de CSV para abrir no "
-            "Excel e cruzar com a planilha da controladoria.",
-        ),
-        "FEATURE",
-    ),
-    (
-        Issue(
-            "I-3",
-            "Dúvida sobre o campo 'status'",
-            "Alguém sabe se o campo status considera pedidos cancelados? Não "
-            "achei na documentação.",
-        ),
-        "DUVIDA",
-    ),
-    # O primeiro caso difícil: erro de RESULTADO, não de crash. Nada estoura, e
-    # um classificador que procura "exception" erra este.
-    (
-        Issue(
-            "I-4",
-            "Total do relatório vem 3 centavos menor",
-            "O somatório da coluna Valor fecha em R$ 1.204,97 mas a soma manual "
-            "dá R$ 1.205,00. Reproduzível com o dataset de setembro.",
-        ),
-        "BUG",
-    ),
-    # O segundo: reclamação que é pedido de funcionalidade. Um classificador
-    # que procura tom de insatisfação erra este.
-    (
-        Issue(
-            "I-5",
-            "A busca é inutilizável com muitos registros",
-            "Com 50 mil linhas não dá para achar nada. Não tem filtro por data "
-            "nem por fornecedor, só a caixa de texto.",
-        ),
-        "FEATURE",
-    ),
-)
+def conjunto(dificuldade: str | None = None) -> EvalDataset:
+    """Os casos curados, como `EvalDataset`.
 
-
-def conjunto() -> EvalDataset:
-    """Os casos curados, como `EvalDataset`."""
-    return EvalDataset(
-        id="swe-curado",
-        cases=tuple(
-            EvaluationCase(
-                id=f"swe:{issue.id}",
-                input_snapshot=(WorkItem(id=issue.id, kind=ISSUE, payload=issue),),
-                expected=ExpectedOutcome(kind=esperado),
-                provenance=Provenance.ESPECIALISTA,
-                created_at=_CURADO_EM,
-                tags=frozenset({"curado"}),
-            )
-            for issue, esperado in _CASOS
-        ),
+    `dificuldade` recorta por marca (`facil` / `adversarial`). O recorte é um
+    conjunto DIFERENTE e ganha versão própria — é `EvalDataset.__post_init__`
+    quem garante isso, e é o que impede comparar a precisão sobre os fáceis com
+    a precisão sobre o conjunto inteiro como se fossem a mesma régua.
+    """
+    casos = tuple(
+        EvaluationCase(
+            id=f"swe:{cid}",
+            input_snapshot=(
+                WorkItem(
+                    id=cid,
+                    kind=ISSUE,
+                    payload=Issue(cid, titulo, corpo),
+                ),
+            ),
+            expected=ExpectedOutcome(kind=esperado),
+            provenance=Provenance.ESPECIALISTA,
+            created_at=_CURADO_EM,
+            tags=frozenset({"curado", marca}),
+        )
+        for cid, titulo, corpo, esperado, marca in CASOS
+        if dificuldade is None or marca == dificuldade
     )
+    sufixo = f"-{dificuldade}" if dificuldade else ""
+    return EvalDataset(id=f"swe-curado{sufixo}", cases=casos)
 
 
 def bracos(client: LLMClient) -> tuple[BenchmarkArm, ...]:
@@ -201,8 +161,41 @@ def _triador_sem_ferramenta(client: LLMClient) -> Agent:
     return Agent(spec=completo.spec, client=client, tools=ToolRegistry([]))
 
 
-def render(resultado: BenchmarkResult, economias: dict[str, EconomiaDeFerramentas]) -> str:
+def por_dificuldade(runs, model: str) -> str:
+    """A mesma execução, pontuada contra cada recorte do conjunto.
+
+    Um número agregado de 85% não diz se o agente erra no caso fácil ou no
+    adversarial, e os dois diagnósticos são opostos: errar no fácil é
+    regressão; errar no adversarial é o limite da abordagem. Custa zero
+    chamadas a mais — é o MESMO run medido contra outro recorte.
+    """
+    from orchestrator.evaluation.metrics import medir
+
+    linhas = [
+        f"{'braço':<22} {'estrato':<14} {'n':>4} {'precisão':>9} {'abst.':>7}",
+        "-" * 60,
+    ]
+    for label, run in runs.items():
+        for marca in ("facil", "adversarial"):
+            recorte = conjunto(marca)
+            m = medir(run, recorte, model=model, abstem_com=ABSTEM_COM)
+            linhas.append(
+                f"{label:<22} {marca:<14} {m.items_total:>4} "
+                f"{100 * m.proposal_precision:>8.1f}% "
+                f"{100 * m.abstention_rate:>6.1f}%"
+            )
+    return "\n".join(linhas)
+
+
+def render(
+    resultado: BenchmarkResult,
+    economias: dict[str, EconomiaDeFerramentas],
+    runs=None,
+    model: str = "claude-haiku-4-5",
+) -> str:
     partes = [resultado.render(), ""]
+    if runs:
+        partes += ["--- por dificuldade ---", por_dificuldade(runs, model), ""]
     for label, economia in economias.items():
         partes += [f"--- economia de ferramenta: {label} ---", economia.render(), ""]
     if len(resultado.arms) == 2:

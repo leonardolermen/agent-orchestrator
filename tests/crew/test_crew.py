@@ -379,3 +379,23 @@ def test_o_trace_dos_AGENTES_entra_no_da_proposta():
     llms = [e for e in p.trace if e.kind is TraceKind.LLM]
     assert len(llms) == 2, "um evento de LLM por agente"
     assert p.cost.calls == len(llms), "custo e trace contam as mesmas chamadas"
+
+
+def test_o_trace_do_crew_tem_UM_marcador_de_entrada_por_item():
+    """`TraceKind.ENTRADA` é o que abre um span de ITEM no coletor. Com dois
+    agentes emitindo o seu mais o do Crew, o relatório de economia imprimiu
+    `29/71` itens num conjunto de 50 — número impossível.
+
+    Só apareceu porque a saída mostra o denominador. Métrica que imprimisse só
+    a porcentagem teria escondido.
+    """
+    from orchestrator.kernel.resolution import TraceKind
+
+    time, _ = _crew(["BUG", "BUG"])
+
+    (p,) = time.resolve(POOL).proposals
+
+    entradas = [e for e in p.trace if e.kind is TraceKind.ENTRADA]
+    assert len(entradas) == 1
+    # E os eventos que atribuem custo continuam lá.
+    assert len([e for e in p.trace if e.kind is TraceKind.LLM]) == 2

@@ -173,11 +173,11 @@ def avaliar(args: Namespace) -> int:
         if args.bracos == "tripulacao"
         else avaliacao.bracos
     )
-    resultado, economias = executar(
+    resultado, economias, runs = executar(
         dataset,
         montar(cliente),
         cliente,
         abstem_com=avaliacao.ABSTEM_COM,
     )
-    print(avaliacao.render(resultado, economias))
+    print(avaliacao.render(resultado, economias, runs, model=args.model))
     return 0

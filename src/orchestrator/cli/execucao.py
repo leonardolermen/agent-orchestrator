@@ -20,6 +20,7 @@ from orchestrator.evaluation.benchmark import BenchmarkArm, BenchmarkResult, rod
 from orchestrator.evaluation.case import EvalDataset
 from orchestrator.evaluation.waste import EconomiaDeFerramentas, medir_ferramentas
 from orchestrator.kernel.event import EventBus
+from orchestrator.kernel.run import Run
 from orchestrator.kernel.work import WorkItem, WorkSet
 from orchestrator.observability.collector import SpanCollector
 from orchestrator.runtime.engine import execute
@@ -46,8 +47,14 @@ def avaliar(
     *,
     abstem_com: frozenset[str],
     agora: datetime | None = None,
-) -> tuple[BenchmarkResult, dict[str, EconomiaDeFerramentas]]:
+) -> tuple[BenchmarkResult, dict[str, EconomiaDeFerramentas], dict[str, "Run"]]:
     """Roda cada braço com trace e devolve as métricas e a economia por braço.
+
+    Devolve também os `Run` por braço. Não é vazamento de detalhe: pontuar o
+    MESMO run contra um recorte do conjunto (só os casos fáceis, só os
+    adversariais) é a única forma barata de saber ONDE o agente erra, e `medir`
+    aceita qualquer `EvalDataset`. Sem os runs, cada estrato custaria uma
+    execução paga a mais.
 
     Um barramento e um coletor NOVOS por braço. Reaproveitar produziria um
     trace com os spans dos dois misturados, e a economia de ferramenta de um
@@ -55,6 +62,7 @@ def avaliar(
     `sem-ferramenta` reportar uso de ferramenta.
     """
     economias: dict[str, EconomiaDeFerramentas] = {}
+    runs: dict[str, Run] = {}
 
     def executor(arm: BenchmarkArm, ds: EvalDataset):
         barramento = EventBus()
@@ -75,6 +83,7 @@ def avaliar(
                 p.item_id for p in run.proposals if p.tipo in abstem_com
             ),
         )
+        runs[arm.label] = run
         return run, trace
 
     resultado = rodar(
@@ -85,4 +94,4 @@ def avaliar(
         abstem_com=abstem_com,
         agora=agora or datetime.now(UTC),
     )
-    return resultado, economias
+    return resultado, economias, runs

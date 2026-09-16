@@ -2030,3 +2030,96 @@ ressalva sobre tamanho de amostra. Ausência de ressalva lê-se como ausência d
 ressalva, no experimento mais fácil de sobreinterpretar.
 
 Agora é genérico em qualquer par de braços, e tem teste.
+
+## 5 → 50 casos: o que mudou quando o ruído saiu
+
+### P6.84. REVOGA P6.81 — a tripulação SE PAGA, e a conclusão anterior era ruído
+
+Com cinco casos (P6.81): tripulação 2,1x mais cara, MESMA precisão. Conclusão
+registrada: "não se paga neste domínio".
+
+Com cinquenta:
+
+    braço                 precisão   abst.   US$/acerto
+    agente-sozinho          91,2%    32,0%     0,004629
+    tripulacao-2           100,0%    44,0%     0,007165
+
+    por dificuldade         n   precisão   abst.
+    agente-sozinho  facil   30    100,0%   33,3%
+    agente-sozinho  advers. 20     78,6%   30,0%
+    tripulacao-2    facil   30    100,0%   33,3%
+    tripulacao-2    advers. 20    100,0%   60,0%
+
+**1,5x por acerto, nove pontos de precisão a mais, e todo o ganho no estrato
+adversarial.** O agente sozinho erra 21% dos casos difíceis; a tripulação erra
+zero — abstendo em 60% deles.
+
+Ou seja: ela não acerta mais, ela ERRA MENOS, convertendo caso difícil em
+escalada. É exatamente a política de desacordo (P6.80) fazendo o que foi
+desenhada para fazer, e o efeito é invisível num conjunto onde os casos
+difíceis não estão representados.
+
+**Se isso vale depende do preço de um erro contra o preço de uma revisão
+humana**, e esse número é do domínio, não nosso. Numa conciliação auditada, um
+falso positivo custa muito mais que um item na fila.
+
+**O que eu aprendi, e é a lição do PR inteiro:** P6.81 não estava "impreciso",
+estava INVERTIDO. Com n=5 a diferença entre 2,1x-sem-ganho e 1,5x-com-ganho é
+ruído. A ressalva impressa (*"indica direção, não decide"*) estava certa e foi
+lida por mim mesmo como se fosse mais fraca do que era.
+
+### P6.85. REFORÇA P6.76 — a ferramenta não só custa 3x, ela PIORA
+
+    braço                  precisão   abst.   US$/acerto
+    com-ferramenta            90,9%   34,0%     0,004738
+    sem-ferramenta           100,0%   32,0%     0,001495
+
+    por dificuldade          n   precisão
+    com-ferramenta  advers. 20     76,9%
+    sem-ferramenta  advers. 20    100,0%
+
+Com cinco casos, a ferramenta era "3x mais cara pela mesma precisão". Com
+cinquenta, ela é 3,2x mais cara E nove pontos PIOR — e toda a perda está no
+estrato adversarial. `contar_palavras` foi chamada em 46 de 50 itens.
+
+Hipótese (não medida): gastar um turno contando palavras desloca a atenção do
+modelo do conteúdo para o tamanho, e nos casos em que a superfície engana isso
+é justamente o pior lugar para olhar. Testável com um terceiro braço.
+
+### P6.86. LIMITAÇÃO MEDIDA — 32% do conjunto não é pontuado (o P6.77 tem preço)
+
+O P6.77 anotou que no `swe` "não sei" e "é uma dúvida" são a mesma palavra.
+Agora dá para dizer quanto custa: dos 50 casos, **16 (32%) têm `DUVIDA` como
+tipo esperado**, e como `DUVIDA` é também o rótulo de abstenção, esses 16 **não
+entram no denominador da precisão**.
+
+As taxas de abstenção medidas — 32% e 34% — são praticamente a fatia de DUVIDA
+do conjunto. Não é coincidência: é a colisão de vocabulário aparecendo no
+número.
+
+Consequências, e nenhuma é cosmética:
+- a precisão publicada é sobre ~34 casos, não 50;
+- a taxa de abstenção não mede abstenção neste domínio;
+- 6 dos 20 casos adversariais são DUVIDA, então o estrato mais informativo é o
+  mais afetado.
+
+A comparação ENTRE braços continua válida (os dois carregam o mesmo defeito), e
+é por isso que P6.84 e P6.85 valem. O número absoluto não vale.
+
+**Correção:** separar o rótulo de abstenção do vocabulário de tipos no `swe` —
+`NAO_SEI` para "não consegui classificar", `DUVIDA` para "esta issue é uma
+pergunta". É mudança de domínio, fica para PR próprio, e o número de hoje é a
+linha de base dela.
+
+### P6.87. ACHADO — o Crew duplicava spans de ITEM, e o denominador denunciou
+
+O relatório de economia da tripulação imprimiu `29/71` itens num conjunto de
+**50**. Causa: a correção do P6.82 passou a juntar o trace dos agentes ao do
+Crew, incluindo o `TraceKind.ENTRADA` de cada um — e é ele que abre um span de
+ITEM no coletor. N agentes, N+1 spans por item.
+
+Uma correção que criou um defeito. O que o pegou foi a decisão de imprimir
+`46/50` em vez de `92%`: **um denominador impossível se vê; uma porcentagem
+errada, não.**
+
+Quarto defeito deste projeto achado por execução, e não pela suíte.
