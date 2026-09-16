@@ -108,3 +108,52 @@ def test_a_ordem_dos_schemas_e_estavel():
 
     assert [s["name"] for s in r.schemas()] == ["a", "b", "c"]
     assert [s["name"] for s in r.schemas()] == [s["name"] for s in r.schemas()]
+
+
+def test_palavra_de_schema_que_a_API_recusa_e_barrada_no_REGISTRO():
+    """O defeito que custou uma avaliação inteira, agora barrado de graça.
+
+    `"minimum": 1` num campo `integer` fez a Messages API recusar a requisição
+    com `tools.0.custom: For 'integer' type, property 'minimum' is not
+    supported` — e como a recusa é da requisição INTEIRA, uma ferramenta
+    malformada derruba todas as outras junto.
+    """
+    spec = ToolSpec(
+        name="somar",
+        description="soma",
+        input_schema=tool_schema(
+            "somar", "", {"a": {"type": "integer", "minimum": 1}}, ["a"]
+        ),
+        fn=lambda a: a,
+    )
+
+    with pytest.raises(ValueError, match="minimum"):
+        ToolRegistry([spec])
+
+
+def test_a_recusa_diz_ONDE_a_palavra_esta():
+    """Um registro com cinco ferramentas e schemas aninhados precisa apontar o
+    campo, não só o nome da ferramenta."""
+    spec = ToolSpec(
+        name="somar",
+        description="soma",
+        input_schema=tool_schema(
+            "somar", "", {"faixa": {"type": "object", "properties":
+                {"topo": {"type": "integer", "maximum": 9}}}}, ["faixa"]
+        ),
+        fn=lambda faixa: faixa,
+    )
+
+    with pytest.raises(ValueError, match=r"properties\.faixa\.properties\.topo"):
+        ToolRegistry([spec])
+
+
+def test_as_ferramentas_REAIS_passam_pela_guarda():
+    """Regressão do caminho que quebrou: as cinco da conciliação, como o
+    modelo as vê. Um teste sobre um schema inventado não teria pego o
+    `minimum` que estava em produção."""
+    from orchestrator.conciliacao.ferramentas import ToolContext, registry_de
+
+    registry = registry_de(ToolContext(bank=(), ledger=()))
+
+    assert len(registry.names()) == 5

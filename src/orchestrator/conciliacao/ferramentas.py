@@ -159,9 +159,13 @@ _FERRAMENTAS: list[tuple[str, str, dict[str, Any], list[str]]] = [
             "valor": {"type": ["integer", "null"], "description": "valor líquido em centavos"},
             "fornecedor": {"type": ["string", "null"]},
             "documento": {"type": ["string", "null"]},
+            # Sem `minimum`: a Messages API recusa a requisição inteira com
+            # `tools.0.custom: For 'integer' type, property 'minimum' is not
+            # supported`. A invariante não se perdeu — quem a garante é
+            # `buscar_lancamentos`, que levanta em `limite < 1` e tem o
+            # comentário de medição. O schema só a ANUNCIA, em prosa.
             "limite": {
                 "type": ["integer", "null"],
-                "minimum": 1,
                 "description": "máximo de resultados; pelo menos 1",
             },
         },

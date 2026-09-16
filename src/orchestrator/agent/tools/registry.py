@@ -82,6 +82,46 @@ class ToolResult:
         return {"erro": self.error} if self.error else self.value
 
 
+# As palavras de JSON Schema que a Messages API aceita dentro de um
+# `input_schema` de ferramenta. LISTA BRANCA, e a escolha é deliberada.
+#
+# Medido em 2026-09-16: `"minimum": 1` num campo `integer` fez a API recusar a
+# requisição INTEIRA com `tools.0.custom: For 'integer' type, property
+# 'minimum' is not supported`. Nenhum dos 620 testes viu — o `FakeLLMClient`
+# não valida schema, então a primeira notícia foi uma avaliação inteira
+# falhando 2/2 com dinheiro real na mesa.
+#
+# Lista NEGRA envelheceria: teria de adivinhar todas as palavras recusadas e
+# ficaria desatualizada a cada mudança da API, em silêncio, que é exatamente o
+# modo de falha de agora. A branca falha alto no sentido seguro — palavra nova
+# é recusada até alguém conferir contra a API e adicioná-la aqui.
+_PALAVRAS_DE_SCHEMA = frozenset(
+    {"type", "description", "properties", "required", "additionalProperties",
+     "items", "enum"}
+)
+
+
+def _validar_palavras(ferramenta: str, schema: Mapping[str, Any], onde: str) -> None:
+    """Recusa palavra de schema que a API não aceita, recursivamente."""
+    desconhecidas = sorted(set(schema) - _PALAVRAS_DE_SCHEMA)
+    if desconhecidas:
+        raise ValueError(
+            f"{ferramenta!r}: {onde} usa {desconhecidas} — palavra de JSON "
+            f"Schema fora da lista branca. A Messages API recusa a requisição "
+            f"inteira por causa de uma ferramenta malformada, e o erro só "
+            f"aparece gastando dinheiro. Se a API aceita, some a "
+            f"`_PALAVRAS_DE_SCHEMA` com a evidência"
+        )
+    # As CHAVES de `properties` são nomes de campo, não palavras-chave; quem é
+    # schema são os valores.
+    for campo, sub in (schema.get("properties") or {}).items():
+        if isinstance(sub, Mapping):
+            _validar_palavras(ferramenta, sub, f"{onde}.properties.{campo}")
+    itens = schema.get("items")
+    if isinstance(itens, Mapping):
+        _validar_palavras(ferramenta, itens, f"{onde}.items")
+
+
 class ToolRegistry:
     """As ferramentas de um agente. Uma fonte para schema e despacho."""
 
@@ -112,6 +152,7 @@ class ToolRegistry:
             raise ValueError(
                 f"timeout de {spec.name!r} precisa ser positivo: {spec.timeout_s}"
             )
+        _validar_palavras(spec.name, spec.input_schema, "input_schema")
         self._por_nome[spec.name] = spec
 
     def __contains__(self, nome: str) -> bool:
