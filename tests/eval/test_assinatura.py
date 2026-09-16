@@ -10,7 +10,7 @@ import subprocess
 import sys
 import textwrap
 
-from orchestrator.agent.tools import ToolContext
+from orchestrator.conciliacao.ferramentas import ToolContext
 from orchestrator.kernel.cost import CostClass
 from orchestrator.synth.generator import generate_clean_pairs
 

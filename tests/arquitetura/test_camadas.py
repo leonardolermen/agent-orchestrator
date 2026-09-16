@@ -64,8 +64,8 @@ VIOLACOES_CONHECIDAS: frozenset[tuple[str, str]] = frozenset(
         # ---------------------------------------------------------------
         ("agent.investigator", "models"),
         ("agent.investigator", "taxonomy"),
-        ("agent.investigator", "agent.tools"),
-        ("eval.assinatura", "agent.tools"),
+        ("agent.investigator", "conciliacao.ferramentas"),
+        ("eval.assinatura", "conciliacao.ferramentas"),
         # ENTROU no PR #3, e não é regressão — é um acoplamento que já existia
         # e estava ESCONDIDO. `eval/assinatura.py` chamava
         # `work.as_divergences()`, e como `as_divergences` morava dentro do
@@ -114,6 +114,7 @@ VIOLACOES_CONHECIDAS: frozenset[tuple[str, str]] = frozenset(
         # saída de quem executou, em vez de ler um `Run` persistido.
         # ---------------------------------------------------------------
         ("metrics", "conciliacao"),
+
         # ---------------------------------------------------------------
         # CAUSA 5 — o agente usa a fila humana como cache de idempotência.
         # É o bug latente do §6.4, não só uma seta errada: o cache é permanente
@@ -163,7 +164,7 @@ def test_extrator_enxerga_import_local_e_type_checking():
     extrator ingênuo não veria, e os dois são usados aqui como fixture porque
     são fatos verificáveis do código de hoje:
 
-      - `conciliacao -> review.revisor` existe só DENTRO de
+      - `conciliacao.workflow -> review.revisor` existe só DENTRO de
         `default_definition()`. Depois do PR #5 o import local não esconde mais
         circularidade nenhuma (`domains` pode importar `human`), mas continua
         sendo um import que só um extrator que percorre a árvore inteira vê.
@@ -176,7 +177,7 @@ def test_extrator_enxerga_import_local_e_type_checking():
     não pode é o extrator voltar a ler só o cabeçalho.
     """
     arestas = {(d.de, d.para) for d in dependencias()}
-    assert ("conciliacao", "review.revisor") in arestas, (
+    assert ("conciliacao.workflow", "review.revisor") in arestas, (
         "o extrator perdeu um import DENTRO de função — foi exatamente onde a "
         "circularidade `engine <-> definition` se escondia até o PR #5"
     )

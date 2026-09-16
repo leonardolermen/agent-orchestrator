@@ -15,11 +15,20 @@ O que ele exercita e nenhum outro domínio exercita:
   - `WorkSet` de um `kind` só, onde a assimetria da conciliação não existe.
 """
 
+import json
 from dataclasses import dataclass, field
 
+from orchestrator.agent.agent import Agent, AgentSpec, AgentTask
+from orchestrator.agent.llm import LLMClient
+from orchestrator.agent.tools.registry import ToolRegistry, ToolSpec, tool_schema
 from orchestrator.kernel.cost import Cost, CostClass
-from orchestrator.kernel.definition import Stage, WorkflowDefinition
-from orchestrator.kernel.resolution import Confidence, Proposal
+from orchestrator.kernel.definition import Stage, Task, WorkflowDefinition
+from orchestrator.kernel.resolution import (
+    Confidence,
+    Proposal,
+    TraceEvent,
+    TraceKind,
+)
 from orchestrator.kernel.resolver import ResolverDescription, ResolverOutput
 from orchestrator.kernel.work import WorkItem, WorkSet
 
@@ -77,4 +86,116 @@ def definition() -> WorkflowDefinition:
         id="swe",
         name="Triagem de issue",
         stages=(Stage(name="que mudança esta issue pede?", cascade=(Triador(),)),),
+    )
+
+
+# ---------------------------------------------------------------------------
+# O agente DECLARADO — a prova do M2.
+#
+# O `Triador` acima é um esqueleto: ele não chama modelo nenhum. O que segue é
+# um agente de verdade, declarado inteiramente em dados, sem uma linha de laço.
+# Se isto precisasse de mais do que uma `AgentSpec`, um `ToolRegistry` e três
+# funções de domínio, a extração do `Investigator` teria falhado.
+# ---------------------------------------------------------------------------
+
+PROMPT = """Você classifica issues de um repositório de software.
+
+Responda APENAS com um objeto JSON:
+{"tipo": "BUG"|"FEATURE"|"DUVIDA", "explicacao": <texto curto>,
+ "evidencia": [<strings>], "confianca": "ALTA"|"MEDIA"|"BAIXA"}
+
+Use `contar_palavras` se precisar medir o tamanho do corpo. Não saber é
+resposta válida: responda DUVIDA com confiança BAIXA."""
+
+TIPOS = ("BUG", "FEATURE", "DUVIDA")
+
+
+def _parse(item_id, texto, cost, trace):
+    """O JSON do modelo vira `Proposal`, ou `None` para disparar o retry.
+
+    Mesma disciplina de `interpretar_proposta` na conciliação: vocabulário
+    fechado, e confiança ALTA sem evidência é rebaixada em vez de descartada —
+    a hipótese ainda ajuda, com o peso certo.
+    """
+    try:
+        limpo = texto.strip()
+        for cerca in ("```json", "```"):
+            limpo = limpo.removeprefix(cerca)
+        dados = json.loads(limpo.removesuffix("```").strip())
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(dados, dict) or dados.get("tipo") not in TIPOS:
+        return None
+    evidencia = dados.get("evidencia", [])
+    if not isinstance(evidencia, list):
+        return None
+    confianca = Confidence(dados.get("confianca", "BAIXA"))
+    if confianca is Confidence.ALTA and not evidencia:
+        confianca = Confidence.BAIXA
+    return Proposal(
+        item_id=item_id,
+        tipo=dados["tipo"],
+        explicacao=str(dados.get("explicacao", "")),
+        evidencia=[str(e) for e in evidencia],
+        confianca=confianca,
+        acao_sugerida="revisar_manual",
+        cost=cost,
+        trace=[
+            *trace,
+            TraceEvent(kind=TraceKind.OUTCOME, detail={"tipo": dados["tipo"]}),
+        ],
+    )
+
+
+def _abstain(item_id, motivo, cost=None, trace=None):
+    """O "não sei" do domínio. Aqui é `DUVIDA`; na conciliação é
+    `NAO_IDENTIFICADO`. O kernel não decide qual."""
+    return Proposal.abstencao(item_id, "DUVIDA", motivo, cost, trace)
+
+
+def ferramentas() -> ToolRegistry:
+    return ToolRegistry(
+        [
+            ToolSpec(
+                name="contar_palavras",
+                description="Conta palavras de um texto.",
+                input_schema=tool_schema(
+                    "contar_palavras", "", {"texto": {"type": "string"}}, ["texto"]
+                ),
+                fn=lambda texto: {"palavras": len(texto.split())},
+            )
+        ]
+    )
+
+
+def triador(client: LLMClient) -> Agent:
+    """Um agente de verdade em ~15 linhas de declaração."""
+    return Agent(
+        spec=AgentSpec(
+            name="triador-llm",
+            system=PROMPT,
+            model=client.model,
+            units=lambda work: [
+                AgentTask(
+                    id=i.id,
+                    prompt=f"{i.payload.titulo}\n\n{i.payload.corpo}",
+                )
+                for i in work.of_kind(ISSUE)
+            ],
+            parse=_parse,
+            abstain=_abstain,
+            max_turns=3,
+        ),
+        client=client,
+        tools=ferramentas(),
+    )
+
+
+def definition_com_agente(client: LLMClient) -> WorkflowDefinition:
+    """A mesma cascata degenerada, com um agente de verdade no lugar do
+    esqueleto. Continua sem nenhum resolver de classe REGRA."""
+    return WorkflowDefinition(
+        id="swe",
+        name="Triagem de issue",
+        stages=(Task("que mudança esta issue pede?", resolver=triador(client)),),
     )

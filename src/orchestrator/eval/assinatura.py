@@ -26,7 +26,7 @@ from orchestrator.agent.investigator import (
     descrever_divergencia,
     interpretar_proposta,
 )
-from orchestrator.agent.tools import TOOL_SCHEMAS, ToolContext
+from orchestrator.conciliacao.ferramentas import TOOL_SCHEMAS, ToolContext
 from orchestrator.kernel.cost import Cost, CostClass
 from orchestrator.kernel.resolution import Proposal, TraceEvent, TraceKind
 from orchestrator.kernel.resolver import ResolverDescription, ResolverOutput

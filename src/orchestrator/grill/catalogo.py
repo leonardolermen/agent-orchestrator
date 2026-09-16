@@ -14,7 +14,7 @@ from typing import Any
 
 from orchestrator.agent.investigator import Investigator
 from orchestrator.agent.llm import LLMClient, LLMResponse
-from orchestrator.agent.tools import ToolContext
+from orchestrator.conciliacao.ferramentas import ToolContext
 from orchestrator.kernel.cost import CostClass
 from orchestrator.kernel.resolver import Resolver
 from orchestrator.matching.exact import ExactMatcher

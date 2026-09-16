@@ -2,7 +2,7 @@ import inspect
 
 import pytest
 
-from orchestrator.agent.tools import TOOL_SCHEMAS, ToolContext
+from orchestrator.conciliacao.ferramentas import TOOL_SCHEMAS, ToolContext
 from orchestrator.synth.generator import build_dataset, generate_clean_pairs
 
 
