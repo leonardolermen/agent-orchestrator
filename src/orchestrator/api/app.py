@@ -8,7 +8,6 @@ modelo. Ver o §5 do spec desta fatia e o teste em `tests/api/test_execucao.py`.
 import inspect
 import sys
 from datetime import UTC, datetime
-from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
@@ -24,6 +23,7 @@ from orchestrator.api.schemas import (
     ResolverRunJSON,
     RunJSON,
     RunRequest,
+    RunResumoJSON,
     WorkflowJSON,
     WorkflowResumoJSON,
     workflow_json,
@@ -32,11 +32,13 @@ from orchestrator.cli import build_benchmark
 from orchestrator.conciliacao import default_definition, reconcile
 from orchestrator.grill.receita import Receita, construir
 from orchestrator.grill.registro import listar_receitas
-from orchestrator.kernel.cost import CostClass
+from orchestrator.kernel.cost import Cost, CostClass
 from orchestrator.kernel.definition import WorkflowDefinition
+from orchestrator.kernel.run import RunState
 from orchestrator.metrics import evaluate
 from orchestrator.review.decision import Decision, Veredito, ids_de_conciliar_com
 from orchestrator.review.fila import Fila, caminho_da_fila, dataset_id
+from orchestrator.storage.jsonl.run_store import JsonlRunStore
 from orchestrator.taxonomy import DivergenceType
 
 app = FastAPI(title="Agent Orchestrator — canvas")
@@ -56,7 +58,7 @@ def fabrica_de(receita: Receita):
     Ver `tests/grill/test_fabrica.py`.
 
     Cliente e contexto ficam nos DEFAULTS INERTES de propósito: como `/runs`
-    responde 409 para qualquer cascata com classe AGENTE (ver `_executar_memoizado`),
+    responde 409 para qualquer cascata com classe AGENTE (ver `_executar`),
     nenhum workflow com agente chega a executar por um endpoint — então não
     existe caminho em que a API precise de um agente funcional, e portanto não
     existe código aqui que o construa.
@@ -122,7 +124,7 @@ def obter_workflow(workflow_id: str) -> WorkflowJSON:
     fabrica = _fabricas().get(workflow_id)
     if fabrica is None:
         raise HTTPException(status_code=404, detail=f"workflow desconhecido: {workflow_id}")
-    # Mesma construção de `_executar_memoizado`, nunca uma segunda via direto
+    # Mesma construção de `_executar`, nunca uma segunda via direto
     # por `fabrica()`: `definition.py` declara que não existe "definição
     # servida" separada da "definição executada", e duas chamadas para o
     # mesmo objeto são exatamente o jeito de esse invariante parar de ser
@@ -136,10 +138,10 @@ def executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
     fabrica = _fabricas().get(workflow_id)
     if fabrica is None:
         # 404 antes do cache, de propósito: um id desconhecido nunca deve
-        # entrar em `_executar_memoizado`, nem para ficar registrado como
-        # "chave inválida" numa memoização que não sabe o que fazer com isso.
+        # entrar em `_executar`, nem para virar um run persistido de um
+        # workflow que não existe.
         raise HTTPException(status_code=404, detail=f"workflow desconhecido: {workflow_id}")
-    return _executar_memoizado(workflow_id, pedido.seed, pedido.n, pedido.taxa_divergencia)
+    return _executar(workflow_id, pedido.seed, pedido.n, pedido.taxa_divergencia)
 
 
 def _construir_definicao(fabrica, fila: Fila) -> WorkflowDefinition:
@@ -168,29 +170,31 @@ def _construir_definicao(fabrica, fila: Fila) -> WorkflowDefinition:
     )
 
 
-@lru_cache(maxsize=64)
-def _executar_memoizado(workflow_id: str, seed: int, n: int, taxa: float) -> RunJSON:
-    """Cacheável por construção — mas não mais pura só dos três parâmetros.
+def _executar(workflow_id: str, seed: int, n: int, taxa: float) -> RunJSON:
+    """Executa e PERSISTE o run. Sem cache.
+
+    Era `@lru_cache(maxsize=64)`, e o docstring de então já admitia o problema:
+    a função tinha deixado de ser pura nos três parâmetros (ela lê a fila em
+    disco), e por isso o POST de decisão precisava chamar `cache_clear()` ou
+    uma aprovação recente ficaria invisível.
+
+    Um cache que precisa ser invalidado à mão por outro endpoint não é cache —
+    é um store com o nome errado. O `RunStore` do PR #7 é o store de verdade, e
+    não invalida errado porque não finge ser cache. A execução voltou a rodar a
+    cada chamada: para uma cascata só de regras sobre n=300 isso é dezenas de
+    milissegundos, e ADR-14 registra o gatilho para revisitar.
 
     A definição servida aqui não tem agente: a execução não faz rede e não
     gasta em tokens. É isso que torna seguro um endpoint que qualquer F5
-    dispara. A chave do cache inclui `workflow_id` além dos três parâmetros do
-    benchmark — dois workflows diferentes com os mesmos parâmetros não podem
-    colidir na mesma entrada.
-
-    Ela agora também lê a fila em disco (via `_RAIZ_FILA`) para que o revisor
-    humano aplique as decisões já tomadas. Isso quebra a pureza formal da
-    função nos três parâmetros — por isso o POST de decisão precisa chamar
-    `cache_clear()` depois de gravar, ou uma aprovação recente ficaria
-    invisível para quem recarrega o canvas.
+    dispara.
     """
     dataset = build_benchmark(seed=seed, n=n, taxa_divergencia=taxa)
     fila, _ = _abrir_fila(workflow_id, seed, n, taxa)
     definicao = _construir_definicao(_fabricas()[workflow_id], fila)
 
     # A regra deste módulo — nenhum endpoint gasta dinheiro — aplicada a
-    # cascatas que a API não escreveu. `lru_cache` NÃO memoiza exceções, então
-    # levantar aqui dentro é seguro: a chave nunca recebe valor.
+    # cascatas que a API não escreveu. Levantar aqui é seguro e agora é
+    # trivialmente seguro: sem cache, não há entrada para envenenar.
     #
     # Esta é a porta educada. A tranca é `ClienteAusente`, que `construir`
     # injeta por default e que levanta se alguém chegar ao modelo por aqui.
@@ -204,7 +208,16 @@ def _executar_memoizado(workflow_id: str, seed: int, n: int, taxa: float) -> Run
             ),
         )
 
-    resultado = reconcile(dataset.bank, dataset.ledger, definition=definicao)
+    resultado = reconcile(
+        dataset.bank,
+        dataset.ledger,
+        definition=definicao,
+        input_ref=f"synth:{dataset_id(seed, n, taxa)}",
+    )
+    # O run vai para o store ANTES de qualquer projeção para JSON: o que a tela
+    # mostra é derivado, o que o store guarda é o fato.
+    if resultado.run is not None:
+        _run_store().save(resultado.run)
     m = evaluate(dataset, resultado)
 
     total = m.bank_total
@@ -254,6 +267,17 @@ def _executar_memoizado(workflow_id: str, seed: int, n: int, taxa: float) -> Run
 # Raiz da fila em disco. É atributo de módulo para o teste poder trocá-la por
 # um tmp_path sem escrever no repositório.
 _RAIZ_FILA: Path | None = None
+
+
+def _run_store() -> JsonlRunStore:
+    """O store de runs, sob a MESMA raiz isolada da fila.
+
+    Sem isso, `conftest.py` isolaria a fila e não os runs, e a suíte passaria a
+    escrever em `data/runs.jsonl` do desenvolvedor — exatamente o defeito que a
+    fixture autouse de `conftest` existe para impedir, e que o docstring dela
+    descreve.
+    """
+    return JsonlRunStore((_RAIZ_FILA or Path("data")) / "runs.jsonl")
 
 
 def _abrir_fila(workflow_id: str, seed: int, n: int, taxa: float) -> tuple[Fila, str]:
@@ -440,13 +464,68 @@ def decidir(
             quando=datetime.now(UTC), motivo=pedido.motivo,
         )
     )
-    # A execução memoizada deixou de ser função só de (workflow, seed, n,
-    # taxa): ela agora depende do conteúdo da fila. Sem limpar, aprovar uma
-    # proposta e recarregar o canvas mostraria o estado anterior, e o revisor
-    # concluiria que a aprovação não funcionou.
-    _executar_memoizado.cache_clear()
+    # Não há cache para invalidar desde o PR #7. Aprovar uma proposta e
+    # recarregar o canvas mostra o estado novo porque a execução roda de novo,
+    # não porque alguém lembrou de limpar uma memoização.
 
     return _item(proposta, fila.decisao(divergence_id), por_id)
+
+
+def _resumo_json(s) -> RunResumoJSON:
+    return RunResumoJSON(
+        id=s.id,
+        workflow_id=s.workflow_id,
+        workflow_version=s.workflow_version,
+        state=s.state.value,
+        started_at=s.started_at.isoformat(),
+        finished_at=s.finished_at.isoformat() if s.finished_at else None,
+        duration_ms=s.duration_ms,
+        input_ref=s.input_ref,
+        resolved=s.resolved,
+        proposed=s.proposed,
+        unresolved=s.unresolved,
+        # Um resolver que não gastou token nenhum converte para zero em
+        # qualquer modelo — a mesma guarda de `metrics.evaluate`, para que uma
+        # cascata só de regras não exija um `model` válido para ler zero.
+        microcents=sum(
+            c.microcents("claude-opus-5") if c != Cost.zero() else 0
+            for c in s.cost_by_resolver.values()
+        ),
+    )
+
+
+@app.get("/api/runs", response_model=list[RunResumoJSON])
+def listar_runs(
+    workflow_id: str | None = None,
+    state: str | None = None,
+    limit: int = Query(50, ge=1, le=500),
+) -> list[RunResumoJSON]:
+    """O histórico de execuções. Mais recentes primeiro.
+
+    Antes do PR #7 isto era impossível: a "execução" era uma entrada num
+    `lru_cache` de 64 posições, sem id, sem timestamp e sem estado. "O que
+    aconteceu no fechamento de agosto" não tinha resposta.
+    """
+    try:
+        estado = RunState(state) if state else None
+    except ValueError:
+        raise HTTPException(
+            status_code=422,
+            detail=f"estado desconhecido: {state!r}; use um de "
+            f"{[e.value for e in RunState]}",
+        ) from None
+    return [
+        _resumo_json(s)
+        for s in _run_store().list(workflow_id=workflow_id, state=estado, limit=limit)
+    ]
+
+
+@app.get("/api/runs/{run_id}", response_model=RunResumoJSON)
+def obter_run(run_id: str) -> RunResumoJSON:
+    achado = _run_store().get(run_id)
+    if achado is None:
+        raise HTTPException(status_code=404, detail=f"run desconhecido: {run_id}")
+    return _resumo_json(achado)
 
 
 # De `src/orchestrator/api/app.py`: parents[0] é `api`, [1] é `orchestrator`,

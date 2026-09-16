@@ -73,6 +73,27 @@ class RunJSON(BaseModel):
     gap: GapJSON
 
 
+class RunResumoJSON(BaseModel):
+    """Um run no histórico. O que a tela de runs (M11) precisa.
+
+    Não carrega o pool pendente — só a contagem. Ver `storage/stored.py`: o
+    `WorkSet` guarda payloads do domínio, que o storage não sabe serializar.
+    """
+
+    id: str
+    workflow_id: str
+    workflow_version: str
+    state: str
+    started_at: str
+    finished_at: str | None
+    duration_ms: int | None
+    input_ref: str
+    resolved: int
+    proposed: int
+    unresolved: int
+    microcents: int
+
+
 class LancamentoJSON(BaseModel):
     id: str
     lado: str  # "banco" ou "contabil"

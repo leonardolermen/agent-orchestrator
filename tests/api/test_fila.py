@@ -24,9 +24,7 @@ def _fila_isolada(tmp_path, monkeypatch):
     import orchestrator.api.app as modulo
 
     monkeypatch.setattr(modulo, "_RAIZ_FILA", tmp_path)
-    modulo._executar_memoizado.cache_clear()
     yield
-    modulo._executar_memoizado.cache_clear()
 
 
 def _grava_proposta(divergence_id: str, **overrides) -> None:

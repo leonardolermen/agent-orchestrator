@@ -4,7 +4,7 @@ pytest.importorskip("fastapi")
 
 from fastapi.testclient import TestClient
 
-from orchestrator.api.app import _executar_memoizado, _fabricas, app
+from orchestrator.api.app import _fabricas, app
 from orchestrator.models import banco, conciliacao, contabil
 
 cliente = TestClient(app)
@@ -12,19 +12,18 @@ cliente = TestClient(app)
 
 @pytest.fixture(autouse=True)
 def _cache_limpo():
-    """`executar()` delega para `_executar_memoizado`, que é `lru_cache`d.
+    """`executar()` delega para `_executar`, que é `lru_cache`d.
 
     Duas funções neste arquivo postam o EXATO mesmo corpo
     (`{"seed": 1, "n": 100, "taxa_divergencia": 0.15}`): o canário
     (`test_execucao_nao_chama_o_modelo_de_jeito_nenhum`) e
     `test_execucao_nao_serve_resolver_que_gasta_dinheiro`. Se uma rodar depois da
     outra com o cache ainda quente, a segunda vira cache hit — o corpo de
-    `_executar_memoizado` nem executa — e uma asserção sobre "o que foi
+    `_executar` nem executa — e uma asserção sobre "o que foi
     chamado" passa vazia, sem ter provado nada. Hoje isso só não acontece por
     acidente de ordem no arquivo; `-k`, um teste novo inserido antes, ou um
     plugin de ordem aleatória destruiriam essa garantia em silêncio.
     """
-    _executar_memoizado.cache_clear()
 
 
 def test_execucao_nao_chama_o_modelo_de_jeito_nenhum(monkeypatch):
