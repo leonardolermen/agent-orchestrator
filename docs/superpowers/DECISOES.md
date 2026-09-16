@@ -1722,3 +1722,97 @@ significativa. A catraca não pegaria porque `orchestrator` não é uma camada �
 o pacote.
 
 `test_NENHUM_modulo_interno_importa_a_fachada` fecha isso, varrendo a AST.
+
+---
+
+# Verificação ponta a ponta (2026-09-16)
+
+## P6.68. O agente rodou de verdade, e o produto fecha o loop
+
+Pelo caminho da ASSINATURA (`--via assinatura`), porque a conta de API continua
+sem crédito — o erro é literal: *"Your credit balance is too low"*. O README já
+afirmava isso dois dias antes; agora está verificado.
+
+O que rodou, com modelo real, sobre `seed=1 n=40`:
+
+  - 2 divergências investigadas
+  - **100% de precisão** na única que arriscou um tipo
+  - 50% de abstenção — e a abstenção foi CORRETA: o agente usou cinco
+    ferramentas, não achou contrapartida e disse isso
+  - custo **não medido**, e o relatório disse "não medido" em vez de imprimir
+    US$ 0,0000 (a guarda de `custo_medido` fazendo o trabalho dela)
+
+A proposta que ele produziu para `d-b-b00003` citou seis evidências, cada uma
+com o retorno de uma ferramenta real, e a ação saiu bem formada
+(`conciliar_com(b00003, l00003)`). Levada à fila e aceita por um humano pela
+API, virou `MatchResult` do revisor na execução seguinte e a lacuna foi de 1
+para 0.
+
+**A tese inteira, com modelo real, ponta a ponta.**
+
+Uma confirmação bonita de passagem: os dois ids que o agente produziu —
+`d-b-b00003` e `d-l-l00003` — são EXATAMENTE os que o comentário de
+`revisor.py` cita como "o caso do fantasma" ao explicar por que `consumidos`
+existe. A guarda foi escrita para um caso observado, e o agente real o
+reproduziu.
+
+## P6.69. ACHADO — 21% do custo do agente é o mesmo par investigado duas vezes
+
+`models.divergencias()` cria uma divergência por lançamento órfão, cada lado
+separado: `d-b-{id}` e `d-l-{id}`. Quando um par fica órfão dos DOIS lados, o
+agente investiga a mesma situação duas vezes e paga duas vezes.
+
+Medido:
+
+    n=40   2 divergências   1 par em dobro   50% do custo
+    n=120  12               6                50%
+    n=300  62               13               21%
+    n=500  116              24               21%
+
+E não é hipótese: na execução real acima, o lado bancário achou a contrapartida
+e propôs conciliar; o lado contábil viu `lancamentos_bancarios: []` e absteve.
+Uma das duas chamadas era estruturalmente incapaz de concluir.
+
+**Não é defeito introduzido pela migração** — está em `as_divergences()` desde o
+plano 1, e ninguém tinha medido. Achado rodando, não lendo.
+
+Duas saídas, nenhuma para agora: o domínio pareia órfãos por documento/valor
+antes de derivar divergências, ou a política pula o segundo lado (regra 6,
+`skip_when`). A segunda é mais barata e cabe no M3 que já existe.
+
+## P6.70. DEFEITO MEU — o docstring da fachada citava um módulo que não existe
+
+`orchestrator/__init__.py` e `tests/test_api_publica.py` diziam que quem quer o
+provider importa `orchestrator.agent.providers`. **Esse módulo não existe** — o
+provider é `orchestrator.agent.anthropic_client`.
+
+Achado ao tentar rodar o agente de verdade, não por leitura: o `import` estourou
+`ModuleNotFoundError` num comando de diagnóstico.
+
+O teste agora IMPORTA o módulo em vez de citá-lo numa prosa. Documentação que
+nomeia um módulo é documentação que pode mentir, e a única defesa é o import.
+
+## P6.71. Verificação ponta a ponta: o que foi coberto, e o que continua sem prova
+
+Coberto nesta passada:
+
+  - os **seis PRs da pilha, cada um isolado**: 489/530/542/566/588/620 testes,
+    ruff limpo, `85.3%`, golden intacto em TODOS
+  - API sobre HTTP real (uvicorn, não `TestClient`): canvas, fila e `canvas.js`
+    respondendo 200; `POST /runs`; `GET /runs`; 409 para cascata paga
+  - fluxo humano completo: proposta do agente real → fila → decisão → match
+  - `orchestrator-trace` contra um run persistido de verdade
+  - determinismo: duas execuções sobre a mesma entrada, resoluções e
+    divergências idênticas, `run.id` diferente (identidade, não resultado)
+  - pureza: `reconcile()` num diretório vazio não criou arquivo nenhum
+
+**O que continua sem prova, e é a lacuna que mais importa:** o laço genérico
+`Agent` extraído no M2 nunca falou com um modelo de verdade. O caminho da
+assinatura exercita o PROMPT, as FERRAMENTAS e o PARSER — mas tem laço próprio
+(`InvestigadorAssinatura`), e por isso não prova o laço novo. O caminho pago
+exercitaria os dois e exige crédito.
+
+`grill/assinatura.py` já registrava por que não existe um `LLMClient` movido a
+assinatura (P5.1): construí-lo exigiria acoplar ao formato de transcript INTERNO
+do SDK, que o próprio pacote declara não-versionado. Continua valendo — e
+continua sendo a razão de a prova do M2 depender de crédito.

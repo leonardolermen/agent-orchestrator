@@ -22,7 +22,7 @@ decide, por item, até onde subir — e registra por quê.
             parse=minha_leitura_do_json,
             abstain=meu_nao_sei,
         ),
-        client=AnthropicClient(model="claude-sonnet-5"),
+        client=AnthropicClient(model="claude-sonnet-5"),  # agent.anthropic_client
         tools=ToolRegistry([buscar]),
     )
 

@@ -78,7 +78,15 @@ def test_a_fachada_nao_puxa_o_SDK_da_anthropic_no_import():
 
     `AnthropicClient` constrói o cliente real na PRIMEIRA CHAMADA, e é por isso
     que ele não está na fachada: quem quer o provider importa
-    `orchestrator.agent.providers`, e quem só quer declarar um workflow não
-    paga por isso.
+    `orchestrator.agent.anthropic_client`, e quem só quer declarar um workflow
+    não paga por isso.
+
+    O caminho é verificado, não afirmado: um docstring meu citava
+    `orchestrator.agent.providers`, que NÃO EXISTE — achado ao rodar o agente
+    de verdade, não por leitura. Documentação que nomeia um módulo é
+    documentação que pode mentir.
     """
+    import importlib
+
     assert not hasattr(orchestrator, "AnthropicClient")
+    assert importlib.import_module("orchestrator.agent.anthropic_client")
