@@ -1,7 +1,14 @@
 import inspect
 from datetime import UTC, datetime
 
-from orchestrator.api.app import fabrica_de
+import pytest
+
+# `fabrica_de` mora em `orchestrator.api.app`, que importa fastapi — extra
+# opcional. Sem a guarda, este arquivo derruba a COLETA da suíte inteira numa
+# instalação `[dev]`, mesmo não sendo um teste de API.
+pytest.importorskip("fastapi")
+
+from orchestrator.api.app import fabrica_de  # noqa: E402
 from orchestrator.grill.receita import Receita, ResolverReceita
 from orchestrator.review.fila import Fila
 
