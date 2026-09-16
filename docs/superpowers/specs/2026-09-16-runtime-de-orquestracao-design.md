@@ -3940,6 +3940,32 @@ agent-orchestrator/
 > que a decisão de §1.3 exige, porque o que estava barrando a plataforma era o
 > produto, e o que passa a barrar é a validação da abstração.
 
+### Status em 2026-09-16
+
+| PR | Estado | Onde |
+|---|---|---|
+| #1 catraca de camadas | ✅ | PR #6 (M0) |
+| #2 `kernel/cost.py` | ✅ | PR #6 (M0) |
+| #3 `WorkItem` / `WorkSet` | ✅ | PR #6 (M0) — junto com #4 |
+| #4 `Resolution` | ✅ | PR #6 (M0) |
+| #5 `runtime/engine.execute()` | ✅ | PR #6 (M0) |
+| #6 dois domínios esqueleto | ✅ | PR #6 (M0) — em 3 commits, ver P6.24 |
+| #7 `Run` + `EventBus` + `RunStore` | ✅ | PR #7 (M1) |
+| #8 `RuntimeContext` | ⬜ | próximo |
+| #9 `Source` + `input_ref` | ⬜ | `input_ref` já existe como campo |
+| #10 `ExecutionPolicy` | ⬜ | |
+
+**Medido ao fim do PR #7:** 516 testes (eram 449), 14 arestas ilegais (eram 23),
+26 módulos deslocados (eram 30), `85.3% / FP=0 / FN=0` intactos, golden idêntico.
+
+**Duas descobertas que mudaram o plano** (as duas em §27 PR #6): `Proposal` não
+era genérica (`tipo: DivergenceType`) e `Proposal.divergence_id` era vocabulário
+de conciliação. Nenhuma das duas aparece numa leitura do código — foi preciso
+escrever o segundo domínio. É o argumento inteiro de por que os esqueletos
+entram em M0.
+
+---
+
 Cada um é pequeno, entra verde, e não exige que dois conceitos mudem juntos.
 
 ---
