@@ -1816,3 +1816,61 @@ exercitaria os dois e exige crédito.
 assinatura (P5.1): construí-lo exigiria acoplar ao formato de transcript INTERNO
 do SDK, que o próprio pacote declara não-versionado. Continua valendo — e
 continua sendo a razão de a prova do M2 depender de crédito.
+
+## P6.72. SONDADO — a assinatura pode provar o LAÇO, mas nunca pode medir CUSTO
+
+Pergunta do dono: dá para usar o plano Max enquanto testamos, em vez de crédito
+de API?
+
+**Em parte, e já estamos.** `--via assinatura` roda no Claude Code local, ou
+seja, no plano do dono, e provou prompt, ferramentas, parser e abstenção contra
+um modelo de verdade (P6.68). Isso é real e é de graça.
+
+**A pergunta de fundo era outra:** dá para a assinatura mover o laço `Agent`
+extraído no M2 — que é a lacuna que sobrou? Sondado por EXECUÇÃO, não por
+leitura de assinatura (a mesma disciplina que fez a sonda do P5.1 achar que
+`bypassPermissions` desliga `can_use_tool` em silêncio).
+
+**Achado 1 — o mecanismo de deferimento FUNCIONA.** Hook `PreToolUse` devolvendo
+`permissionDecision: "defer"` para o turno sem executar a ferramenta, e a
+chamada volta em `ResultMessage.deferred_tool_use` com `stop_reason:
+tool_deferred`. É exatamente o primitivo que um `complete()` precisa: um turno,
+a ferramenta pedida mas não executada, controle de volta para o nosso laço.
+
+**Achado 2 — a ferramenta MCP chega atrás de `ToolSearch`.** A chamada deferida
+não foi `mcp__sonda__somar`: foi `ToolSearch(query="select:mcp__sonda__somar")`.
+Este build do Claude Code carrega schema de MCP sob demanda. O laço genérico
+receberia um nome que não está no `ToolRegistry` dele e devolveria "ferramenta
+inexistente" para sempre.
+
+**Achado 3, e é o que decide — o custo medido NÃO é o nosso.** Um prompt de
+cinco palavras ("Responda: OK") reportou:
+
+    input_tokens: 2    cache_creation: 28.542    costUSD: 0,28553
+
+Dois tokens nossos; 28 mil do harness do Claude Code (system prompt, skills,
+ferramentas, contexto). Uma segunda chamada com system 1.200 tokens maior
+reportou `input_tokens: 2` de novo e o delta foi todo para cache. E o modelo
+sai como `claude-opus-5[1m]`, que nem está na tabela de preços do projeto.
+
+Uma investigação que a nossa contabilidade precifica em US$ 0,0024 aparece como
+US$ 0,2855 — **duas ordens de grandeza**.
+
+**Por que o achado 3 é disqualificante e o 2 não seria.** A metade do laço que
+ainda não tem prova é justamente o orçamento em DOIS NÍVEIS — o teto por item e
+o teto por execução, ambos comparando `Cost.microcents(model)` contra um limiar.
+Pela assinatura, essa comparação seria alimentada com o consumo do harness.
+Provaríamos o laço provando nada sobre a coisa que o laço existe para controlar.
+
+**Atualiza P5.1 com um motivo melhor.** Lá a razão para não construir um
+`LLMClient` de assinatura era acoplamento ao formato de transcript interno —
+argumento sobre superfície de API. Este é sobre VALIDADE DE MEDIÇÃO, e é mais
+forte: mesmo que o acoplamento fosse aceitável, o número sairia errado.
+
+**Conclusão operacional.** A assinatura fica onde está: ferramenta de avaliação
+do domínio (`--via assinatura`), com `custo_medido=False` — que agora tem uma
+segunda justificativa medida, além de "não tem preço por chamada". Fechar a
+lacuna do M2 continua custando ~1,5 centavo de crédito de API, e continua sendo
+a forma mais barata de fechá-la.
+
+Sondas reprodutíveis no scratchpad da sessão (`sonda_llmclient.py`, `sonda2.py`).
