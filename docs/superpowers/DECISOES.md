@@ -2462,3 +2462,62 @@ Fica registrado porque a tentação foi defender o JS com `(e.ferramentas || [])
 e isso teria sido pior — mascararia drift real entre API e tela, que é
 exatamente o que um `undefined` gritando denuncia. O código continua estrito; o
 que mudou foi eu reiniciar o servidor.
+
+### P6.104. O canvas vira React + React Flow, e a ressalva que eu tinha inventado
+
+Pedido do dono: *"vamos usar algum framework por favor kkk, ta muito feio"*.
+
+**Antes de discutir, uma correção.** O `compor.js` vanilla tinha um comentário
+meu dizendo *"a decisão de não ter build step é do projeto, não desta tela"*.
+**Eu inventei.** Grepei o repositório inteiro e não existe decisão dessas em
+lugar nenhum — nem no `DECISOES.md`, nem nos specs, nem em comentário. O que
+existe é a regra de UMA dependência de RUNTIME em Python (P: `tomllib` em vez de
+`pyyaml`), que não fala de front-end.
+
+Escrever uma justificativa de projeto que não existe é pior que não justificar:
+a próxima pessoa a ler teria tratado como restrição herdada e não teria nem
+perguntado.
+
+**Escolha: Vite + React + TypeScript + React Flow + Tailwind.** React Flow é a
+biblioteca por trás de canvas como o da referência que o dono mandou — ela dá
+pan, zoom, minimapa, handles e arestas roteadas, que é exatamente a distância
+entre o que eu tinha feito e o que ele pediu.
+
+**O preço, e como ele é cobrado.** O pacote é Python e `pip install` não roda
+npm, então o bundle de `web/compor/` é **commitado**. Isso pode divergir da
+fonte — alguém edita `web-app/src`, esquece de buildar, e os testes continuam
+verdes contra um bundle velho.
+
+O job `canvas` do CI é quem cobra: `npm ci` fixa as versões pelo lockfile,
+rebuilda, e exige `git diff` vazio em `web/compor`. Também roda `tsc --noEmit`,
+porque o Vite transpila com esbuild e **não checa tipos** — sem esse passo, um
+erro de tipo vira um bundle que builda e quebra na tela.
+
+### P6.105. ACHADO — eu estava brigando com o modelo de estado do React Flow
+
+A primeira versão em React guardava as posições num dicionário próprio,
+recriava os objetos de nó a cada render e **descartava o retorno de
+`applyNodeChanges`**. Arrastar funcionava. O minimapa desenhava **zero**
+retângulos.
+
+Causa: as dimensões medidas (`node.measured`) vivem no objeto do nó, e recriá-lo
+a cada render as apagava. O minimapa precisa delas para saber o tamanho do
+retângulo, e sem elas não desenha nada.
+
+Corrigido invertendo a fonte da verdade: os NÓS são o estado, `applyNodeChanges`
+é quem os move, e o resto é derivado deles. O auto-layout passou a somar
+`n.measured?.height` — que é o que faz o nó do agente (314px medidos) não cair
+por cima do vizinho.
+
+Nono defeito achado por execução. E o mais específico até agora: não era lógica
+errada, era eu impondo um modelo de estado a uma biblioteca que já tem o dela.
+
+### P6.106. O que o React Flow NÃO ganha de configuração
+
+`nodesConnectable={false}` e `isConnectable={false}` em cada `Handle`.
+
+Os handles existem só para as arestas derivadas terem onde ancorar. Deixá-los
+conectáveis daria à pessoa uma ferramenta que não faz nada — e uma ferramenta
+que não faz nada é pior que ausência: ela promete.
+
+Não há `onConnect`. Não existe caminho de código que crie uma aresta.

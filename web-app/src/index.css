@@ -1,0 +1,16 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* O React Flow desenha os controles e o minimapa com o próprio CSS; estes
+   ajustes só alinham a paleta dele com a do resto do produto. */
+.react-flow__controls-button {
+  border-color: #d8d4cd;
+  fill: #6b6660;
+}
+.react-flow__minimap {
+  border-radius: 6px;
+}
+.react-flow__edge-text {
+  font-family: Inter, system-ui, sans-serif;
+}

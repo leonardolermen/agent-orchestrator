@@ -193,36 +193,42 @@ def test_cascata_com_AGENTE_e_marcada_como_nao_executavel_pela_API():
 
 
 def test_a_pagina_do_compositor_e_servida():
-    r = cliente.get("/compor.html")
+    """A tela virou um app React (Vite + React Flow), buildado para
+    `web/compor/`. O `StaticFiles(html=True)` serve o `index.html` de lá.
+
+    O teste ancora no que o BUILD garante — a raiz onde o React monta e um
+    módulo carregado — e não em marcação escrita à mão, que agora é gerada e
+    muda de nome de arquivo a cada build (hash no asset).
+    """
+    r = cliente.get("/compor/")
 
     assert r.status_code == 200
-    # Os três pontos de montagem em que `compor.js` escreve. Sem qualquer um
-    # deles a página carrega e não desenha nada.
-    for ancora in ('id="catalogo"', 'id="nos"', 'id="arestas"'):
-        assert ancora in r.text
-    assert "compor.js" in r.text
+    assert 'id="raiz"' in r.text
+    assert "<script" in r.text and "module" in r.text
 
 
 def test_a_pagina_DIZ_que_as_SETAS_nao_sao_do_autor():
     """A restrição mais importante da tela precisa estar escrita NELA.
 
-    Num canvas de nós, a expectativa que o usuário traz de outras ferramentas é
-    que ele desenha as arestas. Aqui elas são derivadas, e quem abre precisa
+    Num canvas de nós, a expectativa que a pessoa traz de outras ferramentas é
+    que ela desenha as arestas. Aqui elas são derivadas, e quem abre precisa
     entender isso em dez segundos — ou vai passar a sessão tentando arrastar
     uma seta que não existe.
+
+    O texto vive no bundle JS (é JSX), então é lá que se procura. Se o build
+    sumir, este teste fica vermelho junto com o de cima — que é o que se quer:
+    build ausente é tela ausente.
     """
-    texto = cliente.get("/compor.html").text.lower()
+    from pathlib import Path
 
-    assert "setas" in texto
-    assert "classe de custo" in texto
+    import orchestrator.api.app as mod
 
+    bundles = list((Path(mod.__file__).parents[3] / "web" / "compor" / "assets").glob("*.js"))
+    assert bundles, "o app do compositor não foi buildado (npm --prefix web-app run build)"
+    fonte = "\n".join(b.read_text(encoding="utf-8") for b in bundles)
 
-def test_a_pagina_tem_o_marcador_de_SETA_do_svg():
-    """As arestas são `<path marker-end="url(#seta)">`. Sem o `<marker>` no
-    `<defs>`, elas desenham como linha sem ponta — e uma linha sem ponta não
-    diz em que sentido a cascata corre, que é a única coisa que ela precisa
-    dizer."""
-    assert 'id="seta"' in cliente.get("/compor.html").text
+    assert "setas" in fonte
+    assert "classe de custo" in fonte
 
 
 # -- o nó do agente: modelo e ferramentas ----------------------------------
@@ -271,7 +277,16 @@ def test_resolver_DETERMINISTICO_nao_tem_modelo_nem_ferramenta():
 
 
 def test_a_pagina_tem_o_botao_RUN():
-    assert 'id="rodar"' in cliente.get("/compor.html").text
+    from pathlib import Path
+
+    import orchestrator.api.app as mod
+
+    bundles = list((Path(mod.__file__).parents[3] / "web" / "compor" / "assets").glob("*.js"))
+    fonte = "\n".join(b.read_text(encoding="utf-8") for b in bundles)
+
+    assert "Run" in fonte
+    # E a mensagem que explica por que ele fica desabilitado numa cascata paga.
+    assert "etapa paga" in fonte
 
 
 def test_cascata_GRATIS_composta_pela_tela_RODA_de_verdade():
