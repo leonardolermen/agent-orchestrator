@@ -354,7 +354,10 @@ E emitir o evento, logo após o laço que emite `ITEM_RESOLVIDO`:
                     EventKind.ITEM_PRODUZIDO,
                     resolver=resolver.name,
                     item=novo.id,
-                    kind=novo.kind,
+                    # `item_kind`, não `kind`: `emitir()` já usa `kind` para o
+                    # tipo do evento, e um payload `kind=` colidiria com esse
+                    # parâmetro (`TypeError: got multiple values for 'kind'`).
+                    item_kind=novo.kind,
                 )
 ```
 
