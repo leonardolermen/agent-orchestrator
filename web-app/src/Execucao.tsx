@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   api,
+  type FontePedido,
   type LinhaDeRun,
   type Run,
   type WorkflowConstruido,
@@ -24,15 +25,25 @@ import { BotaoDeTema, usarTema } from "./tema";
  * Apagar esta vista quebraria esse fluxo em silêncio.
  *
  * **Nenhum número é escrito aqui.** Se a API não mediu, a tela diz "não
- * medido" em vez de inventar.
+ * medido" em vez de inventar — e quando a fonte não tem gabarito, ela diz
+ * isso mesmo, no lugar da taxa.
+ *
+ * **A execução GASTA quando a cascata tem agente.** Por isso ela não é mais
+ * automática: a pessoa escolhe a fonte, diz o teto ANTES, e só então clica em
+ * "rodar". `definicao` (a cascata desenhada) continua carregando sozinha —
+ * ela não gasta nada.
  */
 
 const NAO_MEDIDO = "não medido";
 
 /** Sempre USD: `microcents` nunca é reais, nem quando o valor é zero. */
+function formatarUSD(microcents: number): string {
+  return microcents === 0 ? "US$ 0" : `US$ ${(microcents / 1e8).toFixed(6)}`;
+}
+
 function formatarCusto(m: LinhaDeRun | undefined): string {
   if (!m) return NAO_MEDIDO;
-  return m.microcents === 0 ? "US$ 0" : `US$ ${(m.microcents / 1e8).toFixed(6)}`;
+  return formatarUSD(m.microcents);
 }
 
 function formatarTaxa(m: LinhaDeRun | undefined): string {
@@ -47,6 +58,24 @@ export function Execucao() {
   const [run, setRun] = useState<Run | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [erroDaLista, setErroDaLista] = useState<string | null>(null);
+  const [rodando, setRodando] = useState(false);
+
+  // A fonte. Sintética por default — o mesmo comportamento de antes desta
+  // fatia — mas agora é uma ESCOLHA visível, não a única opção.
+  const [fonteTipo, setFonteTipo] = useState<"sintetica" | "arquivo">("sintetica");
+  const [seed, setSeed] = useState(dataset.seed);
+  const [n, setN] = useState(dataset.n);
+  const [taxaDivergencia, setTaxaDivergencia] = useState(dataset.taxa_divergencia);
+  const [caminho, setCaminho] = useState("");
+  const [kind, setKind] = useState("");
+  const [campoId, setCampoId] = useState("");
+
+  // O teto, "dito antes". Texto cru e não número: um campo vazio precisa
+  // virar `null`, nunca `0` nem `NaN` — um default inventado no cliente é
+  // exatamente o que a guarda do servidor existe para recusar.
+  const [tetoTexto, setTetoTexto] = useState("");
+  const tetoMicrocents = tetoTexto.trim() === "" ? null : Number(tetoTexto);
+  const tetoValido = tetoTexto.trim() === "" || Number.isFinite(tetoMicrocents);
 
   useEffect(() => {
     // O seletor falha SOZINHO, e é deliberado: uma falha ao listar não pode
@@ -60,31 +89,26 @@ export function Execucao() {
   }, []);
 
   useEffect(() => {
+    // SÓ a definição — ela não gasta nada. A execução é um clique à parte
+    // (ver `rodar` abaixo): a cascata pode ter agente, e carregar a tela não
+    // pode ser o que dispara a cobrança.
     let vivo = true;
-    // A definição e a execução, em paralelo — e as DUAS precisam ter dado
-    // certo. `pedir` levanta em `!ok`, então um 409 (cascata com etapa paga)
-    // ou um 404 (id que não existe) chega aqui como erro em vez de virar uma
-    // cascata desenhada a partir do corpo de um erro.
-    Promise.all([api.workflow(workflow), api.rodar(workflow, dataset)])
-      .then(([d, r]) => {
+    api
+      .workflow(workflow)
+      .then((d) => {
         if (!vivo) return;
         setDefinicao(d);
-        setRun(r);
         setErro(null);
       })
       .catch((e) => {
         if (!vivo) return;
         setDefinicao(null);
-        setRun(null);
-        // `detail` é texto do servidor, mas carrega o id do workflow —
-        // escolhido por quem gerou a receita a partir da prosa do parceiro.
-        // Em JSX ele é escapado por construção.
         setErro(e instanceof Error ? e.message : String(e));
       });
     return () => {
       vivo = false;
     };
-  }, [workflow, dataset]);
+  }, [workflow]);
 
   const trocar = (id: string) => {
     const q = new URLSearchParams(location.search);
@@ -100,7 +124,50 @@ export function Execucao() {
     workflow,
   });
 
-  const porNome = new Map((run?.by_resolver ?? []).map((r) => [r.name, r]));
+  const escolhido = lista.find((w) => w.id === workflow);
+  // Falso quando o servidor não tem `ANTHROPIC_API_KEY` OU quando a lista
+  // ainda não carregou — o botão fica desabilitado até se PROVAR executável,
+  // nunca o contrário.
+  const executavel = escolhido?.executavel ?? false;
+  const pago = escolhido?.classes.includes("AGENTE") ?? false;
+  const podeRodar =
+    !rodando && executavel && tetoValido && (!pago || tetoMicrocents !== null);
+
+  async function rodar() {
+    setRodando(true);
+    setErro(null);
+    try {
+      const fonte: FontePedido =
+        fonteTipo === "sintetica"
+          ? { tipo: "sintetica", seed, n, taxa_divergencia: taxaDivergencia }
+          : { tipo: "arquivo", caminho, kind, campo_id: campoId };
+      const r = await api.rodar(workflow, fonte, tetoMicrocents);
+      setRun(r);
+    } catch (e) {
+      setRun(null);
+      setErro(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRodando(false);
+    }
+  }
+
+  const porNome = new Map((run?.por_resolver ?? []).map((r) => [r.name, r]));
+
+  // Estados que não são "terminou bem". `ESTADOS_CONHECIDOS` só existe para a
+  // tela ter um TEXTO amigável — o valor renderizado é sempre o do servidor;
+  // um estado que a tela não conhece cai no `default` e mostra o string cru.
+  const ESTADOS_CONHECIDOS: Record<string, string> = {
+    concluido: "concluído",
+    limite_de_custo: "parou no teto — o pedido proibiu de continuar gastando",
+    limite_de_rondas: "parou no limite de rondas, sem convergir",
+    aguardando_humano: "aguardando decisão humana",
+    pendente: "pendente",
+    executando: "executando",
+    falhou: "falhou",
+    cancelado: "cancelado",
+  };
+  const naoConcluido = !!run && run.estado !== "concluido";
+  const textoEstado = run ? (ESTADOS_CONHECIDOS[run.estado] ?? run.estado) : "";
 
   return (
     <div className="min-h-screen bg-papel text-tinta dark:bg-noite-fundo dark:text-noite-tinta">
@@ -112,9 +179,29 @@ export function Execucao() {
           <p className="text-[12px] text-neutral-500 dark:text-noite-fraca">
             {erro ??
               (run
-                ? `medido em ${run.bank_total} lançamentos sintéticos (semente ${run.seed}, n=${run.n})`
+                ? run.contra_gabarito
+                  ? `contra gabarito: ${(run.contra_gabarito.deterministic_rate * 100).toFixed(1)}% determinístico, medido em ${run.contra_gabarito.bank_total} lançamentos sintéticos (semente ${run.contra_gabarito.seed}, n=${run.contra_gabarito.n})`
+                  : "sem gabarito: não há com o que comparar"
                 : "")}
           </p>
+          {run && (
+            <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[12px]">
+              <span className="tabular-nums text-neutral-600 dark:text-noite-fraca">
+                custo desta execução: {formatarUSD(run.custo_microcents)}
+              </span>
+              {naoConcluido && (
+                <span className="font-medium text-lacuna dark:text-noite-crew">
+                  {textoEstado}
+                  {run.teto_atingido && " (teto desta execução atingido)"}
+                </span>
+              )}
+              {run.falhas > 0 && (
+                <span className="font-medium text-lacuna dark:text-noite-crew">
+                  {run.falhas} chamada(s) de API falharam
+                </span>
+              )}
+            </p>
+          )}
         </div>
 
         <label className="ml-auto flex items-center gap-1.5 text-[12px] text-neutral-500 dark:text-noite-fraca">
@@ -127,11 +214,12 @@ export function Execucao() {
             {erroDaLista && <option disabled>falha ao listar workflows</option>}
             {lista.map((w) => (
               // Uma opção desabilitada é o que impede escolher, pelo dropdown,
-              // uma cascata com etapa paga e colher um 409. Protege só quem
-              // troca PELO seletor — quem chega pelo link do grill é protegido
-              // pelo servidor, e a mensagem dele aparece no cabeçalho.
+              // uma cascata que este servidor não consegue rodar (sem chave,
+              // se ela tiver etapa paga). Protege só quem troca PELO seletor —
+              // quem chega pelo link do grill é protegido pelo servidor, e a
+              // mensagem dele aparece no cabeçalho.
               <option key={w.id} value={w.id} disabled={!w.executavel}>
-                {w.executavel ? w.nome : `${w.nome} (etapa paga)`}
+                {w.executavel ? w.nome : `${w.nome} (não executável aqui)`}
               </option>
             ))}
           </select>
@@ -153,6 +241,77 @@ export function Execucao() {
       </header>
 
       <main className="mx-auto grid max-w-3xl gap-4 px-4 pb-8">
+        {/* A fonte e o teto — DITOS ANTES do botão de rodar. Rodar uma cascata
+            paga sem teto declarado herdaria em silêncio o do agente; a tela
+            não inventa um número, manda `null` e deixa o servidor recusar. */}
+        <section className="rounded-lg border border-borda bg-white p-3 dark:border-noite-borda dark:bg-noite-cartao">
+          <div className="mb-3 flex flex-wrap items-center gap-4 text-[12px]">
+            <label className="flex items-center gap-1.5">
+              fonte
+              <select
+                value={fonteTipo}
+                onChange={(e) => setFonteTipo(e.target.value as "sintetica" | "arquivo")}
+                className="rounded border border-borda bg-white px-2 py-1 text-tinta dark:border-noite-borda dark:bg-noite-fundo dark:text-noite-tinta"
+              >
+                <option value="sintetica">sintética (com gabarito)</option>
+                <option value="arquivo">arquivo (sem gabarito)</option>
+              </select>
+            </label>
+
+            {fonteTipo === "sintetica" ? (
+              <>
+                <CampoNumero rotulo="seed" valor={seed} definir={setSeed} />
+                <CampoNumero rotulo="n" valor={n} definir={setN} />
+                <CampoNumero
+                  rotulo="taxa de divergência"
+                  valor={taxaDivergencia}
+                  definir={setTaxaDivergencia}
+                  passo="0.01"
+                />
+              </>
+            ) : (
+              <>
+                <CampoTexto rotulo="caminho" valor={caminho} definir={setCaminho} />
+                <CampoTexto rotulo="kind" valor={kind} definir={setKind} />
+                <CampoTexto rotulo="campo id" valor={campoId} definir={setCampoId} />
+              </>
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3 text-[12px]">
+            <label className="flex items-center gap-1.5">
+              teto desta execução (µ¢)
+              <input
+                type="text"
+                inputMode="numeric"
+                placeholder={pago ? "obrigatório" : "opcional"}
+                value={tetoTexto}
+                onChange={(e) => setTetoTexto(e.target.value)}
+                className="w-32 rounded border border-borda bg-white px-2 py-1 text-tinta tabular-nums dark:border-noite-borda dark:bg-noite-fundo dark:text-noite-tinta"
+              />
+            </label>
+            <span className="text-neutral-500 dark:text-noite-fraca">
+              {tetoMicrocents !== null && tetoValido
+                ? `= ${formatarUSD(tetoMicrocents)}`
+                : "limita só esta requisição — não é orçamento agregado"}
+            </span>
+
+            <button
+              type="button"
+              onClick={rodar}
+              disabled={!podeRodar}
+              className="ml-auto rounded bg-humano px-3 py-1 font-medium text-white disabled:cursor-not-allowed disabled:opacity-40 dark:bg-noite-humano"
+            >
+              {rodando ? "rodando…" : "rodar"}
+            </button>
+          </div>
+          {pago && !executavel && (
+            <p className="mt-2 text-[12px] text-lacuna dark:text-noite-crew">
+              {erro ?? "esta cascata tem etapa paga e não é executável neste servidor"}
+            </p>
+          )}
+        </section>
+
         {definicao?.stages.map((stage) => (
           <section
             key={stage.name}
@@ -188,6 +347,53 @@ export function Execucao() {
         ))}
       </main>
     </div>
+  );
+}
+
+function CampoNumero({
+  rotulo,
+  valor,
+  definir,
+  passo,
+}: {
+  rotulo: string;
+  valor: number;
+  definir: (v: number) => void;
+  passo?: string;
+}) {
+  return (
+    <label className="flex items-center gap-1.5">
+      {rotulo}
+      <input
+        type="number"
+        step={passo}
+        value={valor}
+        onChange={(e) => definir(Number(e.target.value))}
+        className="w-20 rounded border border-borda bg-white px-2 py-1 text-tinta tabular-nums dark:border-noite-borda dark:bg-noite-fundo dark:text-noite-tinta"
+      />
+    </label>
+  );
+}
+
+function CampoTexto({
+  rotulo,
+  valor,
+  definir,
+}: {
+  rotulo: string;
+  valor: string;
+  definir: (v: string) => void;
+}) {
+  return (
+    <label className="flex items-center gap-1.5">
+      {rotulo}
+      <input
+        type="text"
+        value={valor}
+        onChange={(e) => definir(e.target.value)}
+        className="w-40 rounded border border-borda bg-white px-2 py-1 text-tinta dark:border-noite-borda dark:bg-noite-fundo dark:text-noite-tinta"
+      />
+    </label>
   );
 }
 

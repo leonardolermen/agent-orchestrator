@@ -257,7 +257,23 @@ export default function App() {
     setErro(null);
     setRodando(true);
     try {
-      setRun(await api.rodar(construido.id, ambiente));
+      setRun(
+        await api.rodar(
+          construido.id,
+          {
+            tipo: "sintetica",
+            seed: ambiente.seed,
+            n: ambiente.n,
+            taxa_divergencia: ambiente.taxa_divergencia,
+          },
+          // Este canvas é de AUTORIA, não de execução com teto: mantém o
+          // comportamento de antes desta fatia — sem teto declarado, uma
+          // cascata com agente é recusada pelo servidor com 422, que `erro`
+          // já exibe abaixo. Inventar um default aqui é o fallback silencioso
+          // que a guarda do servidor existe para recusar.
+          null,
+        ),
+      );
     } catch (e) {
       setErro((e as ErroDaApi).message);
     } finally {

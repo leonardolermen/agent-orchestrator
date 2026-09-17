@@ -430,3 +430,74 @@ def test_cascata_PAGA_composta_pela_tela_e_recusada_SEM_CHAVE(monkeypatch):
     assert r.status_code == 409
     assert "etapa paga" in r.json()["detail"]
     assert "ANTHROPIC_API_KEY" in r.json()["detail"]
+
+
+# -- a tela de execução: `estado`, `teto_atingido`, `falhas`, sem gabarito --
+#
+# `teto_atingido: true` e `falhas > 0` só saem de uma execução que GASTA de
+# verdade — o gate do navegador (Task 5, §4) não pode produzi-los sem chave,
+# sob pena de queimar dinheiro do dono da máquina. A prova de que a tela os
+# RENDERIZA é sobre o bundle, no mesmo padrão que
+# `test_a_pagina_DIZ_que_as_SETAS_nao_sao_do_autor` já usa acima: não há
+# runner de componente neste repo (`web-app/package.json` não tem
+# vitest/jest), e não é desta fatia instalar um.
+
+
+def _bundle():
+    from pathlib import Path
+
+    import orchestrator.api.app as mod
+
+    bundles = list((Path(mod.__file__).parents[3] / "web" / "assets").glob("*.js"))
+    assert bundles, "o app não foi buildado (npm --prefix web-app run build)"
+    return "\n".join(b.read_text(encoding="utf-8") for b in bundles)
+
+
+def test_a_tela_de_execucao_renderiza_teto_atingido_e_falhas():
+    """Os dois campos que a Task 4 acrescentou para não recolapsar 'não achei
+    nada', 'parei no teto' e 'a API falhou' num único desfecho. Se o bundle
+    não citar `teto_atingido`/`falhas`, a tela nunca leu esses campos da
+    resposta — e os três desfechos voltam a ser indistinguíveis na tela,
+    mesmo a API já dizendo a diferença."""
+    fonte = _bundle()
+
+    assert "teto_atingido" in fonte
+    assert "falhas" in fonte
+    # O texto que aparece perto do custo quando o teto parou o trabalho —
+    # não pode ficar indistinguível de um `concluido` vazio.
+    assert "teto desta execução atingido" in fonte
+    assert "falharam" in fonte
+
+
+def test_a_tela_de_execucao_trata_estado_NAO_CONCLUIDO_como_nao_terminado():
+    """`limite_de_custo` (e os outros estados que não são `concluido`) saem com
+    a MESMA proeminência de um run que não terminou — nunca um `concluido`
+    com nota de rodapé. A tela lê o string cru do enum do servidor; não
+    inventa estados no cliente."""
+    fonte = _bundle()
+
+    assert "limite_de_custo" in fonte
+    assert "parou no teto" in fonte
+    # O estado bruto continua acessível: um valor que a tela não conhece cai
+    # no texto cru do próprio `estado`, nunca num default silencioso tipo
+    # "ok".
+    assert "run.estado" in fonte or "estado" in fonte
+
+
+def test_a_tela_de_execucao_diz_SEM_GABARITO_em_vez_de_desenhar_zero():
+    """A frase exata do §1 da task: fonte sem gabarito não vira barra vazia
+    nem `0%` — vira texto dizendo por quê."""
+    fonte = _bundle()
+
+    assert "sem gabarito: não há com o que comparar" in fonte
+
+
+def test_a_tela_de_execucao_pede_o_teto_ANTES_do_botao_de_rodar():
+    """'Gasta com teto, e o teto é dito antes' — a guarda do próprio servidor
+    (`api/app.py::_executar`). A tela não inventa um default: manda `null`
+    quando o campo está vazio e deixa o 422 do servidor falar."""
+    fonte = _bundle()
+
+    assert "teto_microcents" in fonte
+    # A rotulagem que evita a tela sugerir um teto agregado que não existe.
+    assert "teto desta execução" in fonte
