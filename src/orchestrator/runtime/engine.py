@@ -153,20 +153,15 @@ def execute(
             comeco = time.perf_counter()
             saida = resolver.resolve(elegiveis)
             duracao_ms = int((time.perf_counter() - comeco) * 1000)
-            # `produz` vazio = sem restrição declarada, o espelho exato do que
-            # `consome` vazio já significa para o lado do consumo. A guarda só
-            # entra quando o stage DECLAROU um `produz`: é o que mantém as 9
-            # definições existentes — que nunca declararam nada — reproduzindo
-            # a semântica de hoje, e reserva o erro para quem prometeu um
-            # conjunto e entregou outro.
-            if stage.produz:
-                for novo in saida.produced:
-                    if novo.kind not in stage.produz:
-                        raise ValueError(
-                            f"{resolver.name!r} produziu kind não declarado: "
-                            f"{novo.kind!r} não está em produz="
-                            f"{sorted(stage.produz)} do stage {stage.name!r}"
-                        )
+            # `produz` vazio significa "não produz nada", e um resolver que
+            # produz mesmo assim é exatamente o caso que esta guarda pega.
+            for novo in saida.produced:
+                if novo.kind not in stage.produz:
+                    raise ValueError(
+                        f"{resolver.name!r} produziu kind não declarado: "
+                        f"{novo.kind!r} não está em produz={sorted(stage.produz)} "
+                        f"do stage {stage.name!r}"
+                    )
             todos.extend(saida.resolutions)
             propostas.extend(saida.proposals)
             # Uma entrada por resolver que RODOU, mesmo que o custo seja

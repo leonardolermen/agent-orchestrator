@@ -66,8 +66,16 @@ def test_o_stage_seguinte_ve_o_que_o_anterior_produziu():
         id="pipeline",
         name="dois passos",
         stages=(
-            Stage(name="um", cascade=(Transformador("um", "a", "b"),)),
-            Stage(name="dois", cascade=(Transformador("dois", "b", "c"),)),
+            Stage(
+                name="um",
+                cascade=(Transformador("um", "a", "b"),),
+                produz=frozenset({"b"}),
+            ),
+            Stage(
+                name="dois",
+                cascade=(Transformador("dois", "b", "c"),),
+                produz=frozenset({"c"}),
+            ),
         ),
     )
     pool = WorkSet(items=(WorkItem(id="i", kind="a", payload="x"),))
@@ -88,7 +96,13 @@ def test_producao_nao_apaga_a_resolucao_que_a_acompanha():
     d = WorkflowDefinition(
         id="um",
         name="um passo",
-        stages=(Stage(name="um", cascade=(Transformador("um", "a", "b"),)),),
+        stages=(
+            Stage(
+                name="um",
+                cascade=(Transformador("um", "a", "b"),),
+                produz=frozenset({"b"}),
+            ),
+        ),
     )
     pool = WorkSet(items=(WorkItem(id="i", kind="a", payload="x"),))
 
@@ -159,7 +173,17 @@ def test_consome_vazio_continua_vendo_o_pool_inteiro():
     d = WorkflowDefinition(
         id="tudo",
         name="tudo",
-        stages=(Stage(name="um", cascade=(Transformador("um", "a", "b"),)),),
+        stages=(
+            Stage(
+                name="um",
+                cascade=(Transformador("um", "a", "b"),),
+                # `consome` FICA vazio de propósito — é o que este teste
+                # prova. `produz`, ao contrário, é sempre exigido: a guarda
+                # de `produz` é incondicional, então até um teste sobre
+                # `consome` precisa declarar o que produz.
+                produz=frozenset({"b"}),
+            ),
+        ),
     )
     pool = WorkSet(
         items=(
