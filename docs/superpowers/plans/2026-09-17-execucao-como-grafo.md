@@ -1114,6 +1114,23 @@ Em `src/orchestrator/runtime/engine.py`, envolver o `for stage in definicao.stag
         estado_por_teto = definicao.max_rondas > 1
 ```
 
+**E acumular, em vez de sobrescrever.** Com o laço externo, o MESMO resolver
+roda em mais de uma ronda, e `custos[resolver.name] = saida.cost` descarta o
+valor da ronda anterior. Isso não é só relatório errado: `_somar(custos)`
+alimenta `pctx.spent`, que é o teto de orçamento da política — custo
+sub-contado deixa um laço descontrolado furar exatamente o teto que existe
+para contê-lo. Troque as duas atribuições por acumulações:
+
+```python
+            custos[resolver.name] = custos.get(resolver.name, Cost.zero()) + saida.cost
+            matches_por_resolver[resolver.name] = (
+                matches_por_resolver.get(resolver.name, 0) + len(saida.resolutions)
+            )
+```
+
+A ausência da chave continua sendo o sinal de "não rodou" — `.get()` com
+default só cria a chave quando o resolver roda de verdade.
+
 Inicializar `estado_por_teto = False` antes do laço, e trocar o cálculo de `estado`:
 
 ```python
