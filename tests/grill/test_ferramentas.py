@@ -3,12 +3,12 @@ import json
 import pytest
 
 from orchestrator.agent.llm import ToolCall
-from orchestrator.grill.catalogo import CATALOGO
 from orchestrator.grill.ferramentas import (
     NOMES,
     Pergunta,
     PropostaBruta,
     Recusa,
+    _nomes_disponiveis,
     esquemas,
     interpretar,
 )
@@ -24,16 +24,15 @@ def test_enum_de_resolver_vem_do_catalogo():
     # sabendo de um resolver novo.
     proposta = next(e for e in esquemas() if e["name"] == "propor_workflow")
     item = proposta["input_schema"]["properties"]["resolvers"]["items"]
-    assert item["properties"]["nome"]["enum"] == sorted(CATALOGO)
+    assert item["properties"]["nome"]["enum"] == _nomes_disponiveis()
 
 
-def test_o_nome_da_entrada_bate_com_a_chave_do_catalogo():
-    # `_catalogo_em_texto` usa `entrada.nome` na DESCRIÇÃO da ferramenta,
-    # enquanto o `enum` vem das CHAVES do dict. São dois ecos do mesmo fato sem
-    # nada amarrando um ao outro: se divergirem, a descrição nomeia um resolver
-    # que o `enum` não aceita — e o modelo obedece a descrição, porque é ela que
-    # ele lê como instrução.
-    assert all(chave == entrada.nome for chave, entrada in CATALOGO.items())
+# `test_o_nome_da_entrada_bate_com_a_chave_do_catalogo` não migra: ela travava
+# uma classe de defeito específica do `CATALOGO` do grill — um `dict[str,
+# EntradaCatalogo]` cuja CHAVE podia divergir do `.nome` do valor. O catálogo
+# PLANO (`Catalogo.bloco`, Task 1) não tem essa segunda fonte de verdade: ele
+# procura `r.nome`/`a.name` diretamente nas tuplas `regras`/`agentes`, então a
+# divergência que este teste travava deixou de ser uma forma possível de errar.
 
 
 def test_propor_workflow_nao_aceita_id():

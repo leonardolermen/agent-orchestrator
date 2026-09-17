@@ -72,7 +72,11 @@ def test_workflow_gerado_executa_e_fecha_a_lacuna(tmp_path):
 
 
 def test_workflow_com_agente_e_listado_como_nao_executavel(tmp_path):
-    _gravar(tmp_path, "pago", "L1", "agente")
+    # "investigador", não "agente": o catálogo plano (Task 3) nomeia o bloco
+    # AGENTE da conciliação pelo `Resolver.name` que ele sempre teve — o
+    # cardápio do grill é que usava a chave "agente" só para propor este
+    # mesmo bloco.
+    _gravar(tmp_path, "pago", "L1", "investigador")
     cliente = TestClient(app_mod.app)
 
     dados = cliente.get("/api/workflows").json()

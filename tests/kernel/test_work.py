@@ -106,3 +106,49 @@ def test_items_e_tupla_nao_lista():
     pool por baixo do motor.
     """
     assert isinstance(_pool("a").items, tuple)
+
+
+def test_com_acrescenta_preservando_ordem():
+    """A ordem é contrato, não estética: o golden de 12 sementes depende dela.
+
+    Item produzido entra no FIM. Entrar no começo faria um item novo ser visto
+    antes de itens que já estavam esperando, e a ordem de saída mudaria por
+    causa de quem produziu, não de quem chegou.
+    """
+    pool = _pool("a", "b")
+
+    novo = pool.com([WorkItem(id="c", kind="coisa", payload="c", origem="escritor")])
+
+    assert [i.id for i in novo.items] == ["a", "b", "c"]
+    # O pool original não muda: `WorkSet` é imutável de verdade.
+    assert [i.id for i in pool.items] == ["a", "b"]
+
+
+def test_com_vazio_devolve_o_mesmo_pool():
+    """Simetria com `without()`, que já devolve `self` quando nada foi
+    consumido. Sem isso, uma ronda sem produção alocaria um pool novo por
+    stage, e o laço da Task 5 chama isto por stage por ronda."""
+    pool = _pool("a")
+
+    assert pool.com([]) is pool
+
+
+def test_com_recusa_id_que_ja_existe():
+    """A guarda de id repetido de `__post_init__` vale para produção também.
+
+    Um resolver que produz um id já presente faria `without()` remover os dois
+    ao resolver um — exatamente o defeito que `test_pool_recusa_id_repetido`
+    previne na construção.
+    """
+    pool = _pool("a")
+
+    with pytest.raises(ValueError, match="id repetido"):
+        pool.com([WorkItem(id="a", kind="coisa", payload="outro")])
+
+
+def test_origem_default_e_vazia():
+    """Item que veio da fonte não tem origem — ninguém o produziu. String
+    vazia, não `None`: o campo é sempre legível, e serializar `None` num
+    trace obrigaria todo consumidor a tratar dois casos."""
+    assert WorkItem(id="a", kind="coisa", payload=1).origem == ""
+    assert WorkItem(id="b", kind="coisa", payload=1, origem="x").origem == "x"

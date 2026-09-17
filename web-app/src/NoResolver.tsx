@@ -127,7 +127,17 @@ function CorpoAgente({ d }: { d: DadosAgente }) {
     <>
       <div className={LINHA} title="que tipo de item este agente trabalha">
         <span className="text-[11px] text-neutral-300 dark:text-noite-fraca">◇</span>
-        <span className="font-mono text-[11px] text-tinta dark:text-noite-tinta">{a.kind}</span>
+        {/* Um `kind` vazio é DITO, como "sem instrução ainda" acima. Ele nasce
+            vazio desde que a paleta deixou de ser por domínio — não há mais de
+            onde adivinhá-lo —, e um espaço em branco aqui seria o campo que
+            falta escondido no lugar mais visível da tela. */}
+        <span
+          className={`font-mono text-[11px] ${
+            a.kind ? "text-tinta dark:text-noite-tinta" : "text-lacuna dark:text-noite-crew"
+          }`}
+        >
+          {a.kind || "sem kind ainda"}
+        </span>
         <span className="ml-auto text-[9.5px] uppercase tracking-wide text-neutral-400 dark:text-noite-fraca">
           kind
         </span>

@@ -3,7 +3,7 @@ import {
   CORES,
   type Ambiente,
   type AgenteDeclarado,
-  type DominioInfo,
+  type Catalogo,
   type Regra,
   type Run,
   type WorkflowConstruido,
@@ -18,7 +18,7 @@ export interface NoEscolhido {
 }
 
 interface Props {
-  dominio: DominioInfo | null;
+  catalogo: Catalogo | null;
   escolhidos: NoEscolhido[];
   selecionado: NoEscolhido | null;
   erro: string | null;
@@ -56,23 +56,23 @@ export function Painel(p: Props) {
           regra é código com parâmetros expostos — você escolhe QUAL entra;
           agente é dado — você CRIA um. */}
       <Secao
-        titulo="Regras do domínio"
+        titulo="Regras"
         ajuda={
-          p.dominio?.regras.length
+          p.catalogo?.regras.length
             ? "Determinísticas e grátis. Rodam antes de qualquer modelo."
             : undefined
         }
       >
-        {p.dominio && p.dominio.regras.length === 0 ? (
-          // A lacuna DECLARADA. Um domínio sem regra é uma cascata que começa
+        {p.catalogo && p.catalogo.regras.length === 0 ? (
+          // A lacuna DECLARADA. Um catálogo sem regra é uma cascata que começa
           // direto no modelo — caro por construção, e é exatamente onde há
           // mais a ganhar promovendo trabalho para baixo.
           <p className="rounded-md bg-lacuna-fundo px-2.5 py-2 text-[11px] leading-snug text-lacuna dark:bg-noite-lacuna-fundo dark:text-noite-crew">
-            Este domínio não declara regra nenhuma: 100% do trabalho passa pelo modelo.
+            O catálogo não declara regra nenhuma: 100% do trabalho passa pelo modelo.
           </p>
         ) : (
           <ul className="grid gap-1.5">
-            {p.dominio?.regras.map((r) => (
+            {p.catalogo?.regras.map((r) => (
               <li key={r.nome}>
                 <BotaoDePaleta
                   nome={r.nome}
@@ -92,7 +92,7 @@ export function Painel(p: Props) {
         ajuda="Um agente é DADO: prompt, vocabulário e ferramentas são campos. Crie um."
       >
         <ul className="mb-2 grid gap-1.5">
-          {p.dominio?.agentes.map((a) => (
+          {p.catalogo?.agentes.map((a) => (
             <li key={a.name}>
               <BotaoDePaleta
                 nome={a.name}
@@ -106,7 +106,7 @@ export function Painel(p: Props) {
         </ul>
         <button
           type="button"
-          disabled={!p.dominio}
+          disabled={!p.catalogo}
           onClick={p.onNovoAgente}
           className="w-full rounded-md border border-dashed border-borda px-2.5 py-2 text-[12px] text-neutral-500 transition hover:bg-neutral-50 disabled:opacity-40 dark:border-noite-borda dark:text-noite-fraca dark:hover:bg-noite-cartao"
         >
@@ -160,11 +160,11 @@ export function Painel(p: Props) {
         </Secao>
       )}
 
-      {p.selecionado?.data.tipo === "agente" && p.dominio && (
+      {p.selecionado?.data.tipo === "agente" && p.catalogo && (
         <EditorDeAgente
           key={p.selecionado.id}
           no={{ id: p.selecionado.id, data: p.selecionado.data }}
-          dominio={p.dominio}
+          catalogo={p.catalogo}
           onMudar={p.onMudarAgente}
           onRemover={p.onRemover}
         />
@@ -424,12 +424,12 @@ function BotaoDePaleta({
  */
 function EditorDeAgente({
   no,
-  dominio,
+  catalogo,
   onMudar,
   onRemover,
 }: {
   no: { id: string; data: DadosAgente };
-  dominio: DominioInfo;
+  catalogo: Catalogo;
   onMudar: (id: string, patch: Partial<AgenteDeclarado>) => void;
   onRemover: (id: string) => void;
 }) {
@@ -447,18 +447,36 @@ function EditorDeAgente({
         <input value={a.name} onChange={(e) => mudar({ name: e.target.value })} className={CAMPO} />
       </Campo>
 
-      <Campo rotulo="kind" dica="que tipo de item este agente trabalha">
-        <select
+      {/* O `kind` é DIGITADO, não escolhido numa lista.
+          Era um `<select>` sobre `Dominio.kinds`, e um agente em branco já
+          nascia com o primeiro kind do domínio — a tela decidia sobre que tipo
+          de item ele trabalha, e a pessoa nunca via a decisão. Num quadro em
+          branco não há lista de onde tirar: é por `kind` que `Stage.consome`/
+          `produz` liga um degrau ao outro, então quem monta precisa dizer qual
+          é. O `<datalist>` oferece os que já existem sem fechar a lista — um
+          kind NOVO é o caso normal aqui, não a exceção. */}
+      <Campo
+        rotulo="kind"
+        dica="que tipo de item este agente trabalha; é por ele que o grafo liga os degraus"
+        alerta={
+          a.kind.trim()
+            ? null
+            : "em branco: diga que tipo de item este agente consome, senão não há como ligá-lo a degrau nenhum"
+        }
+      >
+        <input
           value={a.kind}
           onChange={(e) => mudar({ kind: e.target.value })}
-          className={CAMPO}
-        >
-          {dominio.kinds.map((k) => (
-            <option key={k} value={k}>
-              {k}
-            </option>
+          list="kinds-conhecidos"
+          placeholder="lancamento, issue… ou um kind novo"
+          spellCheck={false}
+          className={`${CAMPO} font-mono text-[11px]`}
+        />
+        <datalist id="kinds-conhecidos">
+          {[...new Set(catalogo.agentes.map((x) => x.kind))].sort().map((k) => (
+            <option key={k} value={k} />
           ))}
-        </select>
+        </datalist>
       </Campo>
 
       <Campo rotulo="system" dica="a instrução permanente; é o que vai marcado para cache">
@@ -525,13 +543,13 @@ function EditorDeAgente({
       <Campo
         rotulo="ferramentas"
         dica={
-          dominio.ferramentas.length
-            ? "o agente recebe as que DECLARA, não as que existem no domínio"
-            : "este domínio ainda não publica ferramenta nenhuma"
+          catalogo.ferramentas.length
+            ? "o agente recebe as que DECLARA, não as que existem no catálogo"
+            : "o catálogo ainda não publica ferramenta nenhuma"
         }
       >
         <div className="grid gap-1">
-          {dominio.ferramentas.map((f) => (
+          {catalogo.ferramentas.map((f) => (
             <label key={f.nome} className="flex items-start gap-2 text-[11.5px]" title={f.descricao}>
               <input
                 type="checkbox"

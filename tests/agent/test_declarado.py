@@ -13,7 +13,6 @@ import pytest
 
 from orchestrator.agent.declarado import (
     AgenteDeclarado,
-    Dominio,
     construir_agente,
 )
 from orchestrator.agent.llm import FakeLLMClient, LLMResponse, ToolCall
@@ -264,36 +263,7 @@ def test_agente_sem_KIND_e_recusado():
         _decl(kind="  ")
 
 
-# -- o domínio --------------------------------------------------------------
-
-
-def test_o_dominio_VALIDA_os_agentes_dele_na_construcao():
-    """"Validar é construir": um domínio que carrega um agente cuja declaração
-    não constrói é um domínio que quebra na primeira execução."""
-    with pytest.raises(ValueError, match="ferramenta inexistente"):
-        Dominio(
-            id="swe",
-            nome="Engenharia de software",
-            kinds=("issue",),
-            ferramentas=_contar_palavras(),
-            agentes=(_decl(ferramentas=("fantasma",)),),
-        )
-
-
-def test_agente_de_KIND_ESTRANHO_ao_dominio_e_recusado():
-    """É a guarda contra misturar domínios, no lugar mais barato."""
-    with pytest.raises(ValueError, match="não é do domínio"):
-        Dominio(
-            id="swe",
-            nome="SWE",
-            kinds=("issue",),
-            agentes=(_decl(kind="requisicao"),),
-        )
-
-
-def test_dominio_SEM_kinds_e_recusado():
-    with pytest.raises(ValueError, match="sem `kinds`"):
-        Dominio(id="x", nome="X", kinds=())
+# -- o cliente de validação e o registro ------------------------------------
 
 
 def test_o_cliente_de_validacao_se_recusa_a_FALAR_com_modelo():
@@ -327,7 +297,7 @@ def test_o_agente_construido_HERDA_o_registro_LIGADO_do_dominio():
 
 def test_o_agente_construido_sobre_um_CATALOGO_continua_desligado():
     """O outro sentido: construir para VALIDAR não pode ligar nada a dados que
-    não existem. É o que `Dominio.__post_init__` faz na importação."""
+    não existem. É o que `Catalogo.__post_init__` faz na importação."""
     agente = construir_agente(
         _decl(ferramentas=("contar_palavras",)), FakeLLMClient([]), _contar_palavras()
     )

@@ -1,16 +1,21 @@
-# Decisões tomadas durante a execução do plano
+# Decisões tomadas durante a execução dos planos
 
-**Data:** 2026-09-14
-**Plano:** [`2026-09-14-nucleo-deterministico.md`](plans/2026-09-14-nucleo-deterministico.md)
-**Spec:** [`2026-09-14-agent-orchestrator-design.md`](specs/2026-09-14-agent-orchestrator-design.md)
+**Início:** 2026-09-14 · **Última entrada:** 2026-09-17
+**Specs:** [`specs/`](specs/)
 
-A execução deste plano foi delegada a subagentes, com revisão independente por
-tarefa. Ao longo dela foram tomadas **26 decisões sem consulta prévia**: conflitos
-entre o plano e o que a revisão encontrou, ambiguidades que teriam parado o
-trabalho, e defeitos descobertos no próprio plano.
+Registro cumulativo, append-only, de toda fatia executada até aqui — do núcleo
+determinístico à execução como grafo. Cada fatia foi delegada a subagentes, com
+revisão independente por tarefa, e as decisões abaixo são as que foram tomadas
+**sem consulta prévia**: conflitos entre o plano e o que a revisão encontrou,
+ambiguidades que teriam parado o trabalho, e defeitos descobertos nos próprios
+planos.
 
-Cada uma traz a alternativa rejeitada e o custo de estar errada, para que possam
-ser revistas individualmente. Nenhuma foi omitida.
+Cada uma traz a alternativa rejeitada e **o custo de estar errada**, para que
+possam ser revistas individualmente. Nenhuma foi omitida.
+
+Os planos de implementação que originaram estas decisões foram removidos depois
+de executados — eram andaime passo-a-passo cuja saída é o código. O git os
+guarda; o que sobrevive aqui é o POR QUÊ, que o código não registra sozinho.
 
 ---
 
@@ -2935,6 +2940,174 @@ Duas lacunas irmãs, registradas aqui para não se perderem:
 - **A etapa HUMANO não tem bloco em domínio nenhum.** `Dominio` declara regras e
   agentes; `revisor` é classe `HUMANO` e não cabe em nenhum dos dois. O chat do
   grill pode propor `revisor`, e o canvas então DIZ que não soube desenhá-lo em
-  vez de descartar em silêncio.
+  vez de descartar em silêncio. **[EMENDADO pela fatia do quadro em branco —
+  ver P8.1.]** Esta última frase deixou de descrever o que acontece: o catálogo
+  plano publica o `revisor`, o canvas o desenha e `construir_composicao` o
+  compõe. O aviso de "não soube desenhar" continua existindo, mas só para um
+  nome que não esteja nem nas regras nem nos agentes do catálogo. A lacuna que
+  a entrada registra — o degrau HUMANO sem bloco — está FECHADA; o resto de
+  P6.125 (executar uma composição não tem caminho) continua aberto.
 - **`Crew` não tem bloco.** Existe como resolver de classe `CREW` desde o M8 e
   não aparece na composição.
+
+## Execução como grafo
+
+### P7.1. `redacao` (Task 8) — sem atrito no kernel; o atrito é um degrau acima, no catálogo
+
+O quarto domínio do teste de generalidade, e o primeiro que é um pool que
+TRANSFORMA em vez de encolher (`topico → achados → rascunho → texto_final`,
+três degraus `Tarefa`, um por `kind` produzido). Escrevê-lo mediu duas coisas
+separadas.
+
+**O kernel de execução (Tasks 1–7): zero atrito.** `Stage.consome`/`produz`,
+`WorkflowDefinition.entrega`, `WorkItem.origem` e `Tarefa`/`TarefaSpec`
+bastaram sem alteração nenhuma — os três testes de
+`tests/domains/test_redacao.py` passaram na primeira implementação depois do
+RED esperado (`ModuleNotFoundError`). É o terceiro domínio seguido (depois de
+`procurement` e `swe`) que não pede mudança no kernel, e para um domínio cuja
+FORMA (transforma, não julga) é estruturalmente diferente dos outros três —
+evidência de que a peça certa (produzir `kind` novo por degrau) já estava no
+lugar certo desde a Task 3/4.
+
+**O catálogo declarativo (`agent/declarado.py` + `domains/registro.py`): um
+atrito real, e deliberadamente não corrigido aqui.** `Dominio.agentes` só
+aceita `AgenteDeclarado`, que descreve um resolver que julga UM item e devolve
+`Proposal` sobre ele mesmo — não existe campo para "que `kind` este degrau
+produz". Catalogar `redacao` ali exigiria uma de duas coisas ruins: mentir
+sobre o domínio (declará-lo como `AgenteDeclarado` que não transforma nada) ou
+registrá-lo com `agentes=()` e `regras=()`, um item de catálogo sem conteúdo —
+que `tests/domains/test_registro.py::test_os_TRES_dominios_se_declaram`
+(fixo em exatamente três domínios, e este plano não edita testes
+pré-existentes) recusa, corretamente: um catálogo maior só por contagem não é
+o mesmo que uma plataforma mais geral se o item novo não compõe nada de
+verdade.
+
+**Decisão:** `redacao` roda de verdade (`domains/redacao/workflow.py`,
+`definition(cliente)` + `pool(...)`, três testes verdes) e simplesmente NÃO
+entra em `DOMINIOS` — a nota em `domains/registro.py`, ao lado de onde a
+entrada iria, explica por quê. Alternativa rejeitada: estender
+`AgenteDeclarado` com um campo `produz` agora, para fechar o catálogo. O
+próprio plano de execução-como-grafo já reserva essa extensão para depois
+deste domínio existir (X7/X8 — `AgenteDeclarado.produz`, `Composicao.etapas`,
+o entrevistador e o canvas com arestas derivadas), porque o formato certo da
+extensão só fica claro depois de ver o atrito — e agora ele está visto e
+registrado, em vez de resolvido às pressas dentro de uma tarefa que não é a
+dele. Custo se errado: `redacao` fica invisível para quem compõe pela tela até
+o X7/X8 rodar; zero custo de execução, porque quem chama
+`domains.redacao.workflow.definition()` direto (como o teste faz) nunca passa
+por `DOMINIOS`.
+
+## Quadro em branco
+
+A fatia que removeu o conceito de DOMÍNIO da autoria (B1–B6) e a onda de
+correções da revisão de branch que veio depois dela.
+
+### P8.1. O `revisor` RECUSA construir com fila vazia, e os dois compositores ramificam por CLASSE
+
+`RegraDisponivel.construir` tem assinatura uniforme `(parametros) -> Resolver`,
+de propósito — assinatura variável exigiria introspecção para saber o que
+passar, e é esse padrão que já deu um defeito silencioso neste repositório. Só
+que o `revisor` precisa da FILA de decisões já tomadas, e ela não é parâmetro.
+
+A entrada do catálogo poderia ter sido `lambda p: RevisorHumano(fila=Fila.vazia())`
+— era literalmente o que o plano da Task 1 escrevia. Ela CONSTRUIRIA: a cascata
+ficaria desenhável, o teste passaria, e nenhuma decisão aprovada chegaria à
+execução. O fallback silencioso que o spec proíbe, só que plausível. Em vez
+disso, `_revisor_precisa_da_fila` LEVANTA, e quem compõe é obrigado a
+reconhecer `cost_class is CostClass.HUMANO` e montar o resolver com a fila de
+verdade.
+
+O preço dessa escolha apareceu na revisão de branch: `grill.receita.construir`
+ramificava, `authoring.composicao.construir_composicao` não — então o `revisor`
+estava na paleta do canvas e era o único bloco que "Compor e validar" recusava,
+com a mensagem escrita para quem implementa vazando para quem usa. Corrigido
+na onda de correções, com a `fila` entrando pela MESMA palavra-chave que
+`grill.receita.construir` usa. **Alternativa rejeitada:** deixar a entrada
+construir com fila vazia e resolver o problema no ponto de execução. Custo se
+errado: a obrigação de ramificar é um degrau a mais para todo consumidor novo
+de `RegraDisponivel`, e um consumidor que esqueça dele falha com 422 na cara
+do usuário em vez de silenciosamente — o que é o lado certo para errar, mas é
+erro. Reversível em um commit, com o custo de voltar a ser silencioso.
+
+### P8.2. Nome legado de bloco é migrado na LEITURA do disco, avisando
+
+A Task 3 trocou o nome do bloco AGENTE da conciliação: o cardápio do grill o
+propunha como `"agente"`, o catálogo plano o publica pelo `Resolver.name` que
+ele sempre teve, `"investigador"`. Um arquivo já gravado em `data/workflows/`
+fala o vocabulário de quando foi salvo.
+
+Achado real, não hipótese: `data/workflows/pago.json` do dono, salvo com
+`"agente"`, passou a derrubar `GET /api/workflows/pago` e
+`POST /api/workflows/pago/runs` com 500 — trabalho do dono quebrando, e nenhum
+teste olhando. `_NOMES_LEGADOS` traduz na leitura e IMPRIME o que traduziu.
+
+**Isto não é o shim de compatibilidade que o plano da Task 3 proibiu.** Aquela
+proibição era sobre duas fontes de verdade para o mesmo bloco VIVO na API — o
+`"agente"` do grill e o `"investigador"` do catálogo propostos ao mesmo tempo.
+Isto é migração de DADO gravado: o disco é o único lugar onde o nome antigo
+ainda existe, e ele precisa de tradução exatamente uma vez, na leitura.
+**Alternativa rejeitada:** reescrever os arquivos no disco. Custo se errado: o
+mapa vira um dicionário de compatibilidade permanente que ninguém poda, e o
+sintoma seria um nome morto continuar funcionando anos depois. Mitigado pelo
+comentário ao lado — ele cresce só quando um rename de verdade acontecer.
+
+### P8.3. `ComposicaoRequest.dominio` ganhou um default de UMA fatia, e o andaime saiu junto com o campo
+
+A Task 4 tirou o `dominio` do corpo que o front envia; o campo continuava
+obrigatório no schema até a Task 5. Entre as duas, todo "Compor e validar"
+morreria num `422 Field required` — uma tela quebrada no meio da execução do
+plano, que a ordem segura do plano ("nada é removido antes de o substituto
+existir") existe justamente para evitar.
+
+O campo recebeu `dominio: str = "conciliacao"` na Task 4, marcado no código
+como andaime de uma fatia, e a Task 5 removeu campo e andaime juntos.
+**Alternativa rejeitada:** inverter a ordem das tasks, removendo o campo do
+schema antes da tela. Isso quebraria a tela ANTIGA (que ainda enviava o campo)
+por um passo — o mesmo problema, do outro lado. Custo se errado: um default
+esquecido no schema faria o servidor aceitar e ignorar um campo morto, que é a
+classe de defeito que esta fatia inteira existe para remover. Coberto por
+`test_o_que_vai_para_o_DISCO_nao_carrega_dominio` e pelo
+`test_o_conceito_de_DOMINIO_nao_existe_mais`.
+
+### P8.4. Cada teste de `Dominio` foi ENCAIXADO antes de ser apagado
+
+A Task 5 exigia que cada teste que exercitava `Dominio` caísse em um de três
+baldes: a garantia MIGROU (apagar, o substituto já existe), a garantia virou
+ESTRUTURAL (apagar, e dizer no commit quem a substituiu), ou a garantia
+continua VIVA E SEM DONO (defeito da fatia — parar e reportar).
+
+A contabilidade: `test_os_TRES_dominios_se_declaram` → estrutural, contar
+domínios deixou de significar algo, herdado por
+`test_o_catalogo_e_PLANO_e_traz_tudo_junto`;
+`test_cada_dominio_tem_KIND_proprio_e_e_por_isso_que_nao_se_misturam` →
+estrutural, substituído por `Stage.consome`/`produz`; nome repetido e "validar
+é construir" → migraram para `Catalogo.__post_init__`, com teste próprio desde
+a Task 1.
+
+**A revisão de branch achou um quarto caso que o balde certo teria pego:** o
+`_param` do grill recusava campo inexistente com
+`f"{cls.__name__} não tem campo {nome!r}"` e um teste travava esse texto. O
+`_param` que o substituiu fazia `campos[nome]` cru, e o teste foi apagado sem
+substituto — garantia viva e sem dono, que é exatamente o caso que mandava
+PARAR. Restaurado na onda de correções. Custo de errar a contabilidade: uma
+garantia some com o conceito que a hospedava, e ninguém descobre até o dia em
+que ela era necessária.
+
+### P8.5. A lacuna de ENTRADA foi ESCRITA, não fechada
+
+`_executar` é cravado em `SyntheticSource` + `reconcile(dataset.bank,
+dataset.ledger, ...)`. Com o chat compondo do catálogo inteiro, um workflow de
+compras roda, devolve 200, e reporta `deterministic_rate: 0.0` com lacuna de
+100% — medido, não suposto. É a falha que este repositório nomeia como a pior:
+"não achei nada" indistinguível de "não procurei".
+
+**Alternativa rejeitada:** barrar `/runs` com 409 quando os `kinds` da cascata
+não batem com os do dataset. Rejeitada porque fazer isso CERTO exige saber que
+`kinds` um benchmark produz, e essa noção não existe em lugar nenhum — seria
+desenho novo dentro de uma onda de correção. A lacuna foi escrita no README ao
+lado das outras duas e no **Estado** do spec, com o que a fecha nomeado (uma
+`Source` que case com os kinds do workflow, §8 do spec da plataforma geral).
+Custo se errado: alguém lê um 0% como medição e conclui que a cascata não
+serve, quando o que não serve é a entrada. É o custo de uma lacuna escrita em
+vez de fechada, e a mitigação é que ela está escrita nos dois lugares onde se
+procura.

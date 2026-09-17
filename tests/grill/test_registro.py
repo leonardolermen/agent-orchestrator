@@ -112,3 +112,50 @@ def test_caminho_da_receita_nao_cria_nada(tmp_path):
     # cria é quem escreve. Mesma divisão de `caminho_da_fila` e `Fila._append`.
     caminho_da_receita("acme", raiz=tmp_path)
     assert not (tmp_path / "workflows").exists()
+
+
+def test_ler_receita_MIGRA_nome_legado_e_AVISA(tmp_path, capsys):
+    """`data/workflows/pago.json` (achado revisando a Task 3) tinha um bloco
+    chamado "agente" — nome do cardápio antigo do grill, que o catálogo plano
+    renomeou para "investigador". Sem tradução, `ler_receita` devolvia a
+    receita intacta e `grill.receita.construir` recusava com "resolver
+    desconhecido: 'agente'" — o trabalho do dono quebrando com 500 em
+    `GET /api/workflows/pago`, sem aviso nenhum de que o nome tinha migrado.
+    """
+    gravar_receita(
+        Receita(
+            id="pago",
+            nome="Com agente",
+            justificativa="j",
+            gerado_em=datetime(2026, 9, 15, tzinfo=UTC),
+            resolvers=(ResolverReceita("L1", {}), ResolverReceita("agente", {})),
+        ),
+        raiz=tmp_path,
+    )
+
+    receita = ler_receita("pago", raiz=tmp_path)
+
+    assert [x.nome for x in receita.resolvers] == ["L1", "investigador"]
+    saida = capsys.readouterr().err
+    assert "pago" in saida and "agente" in saida and "investigador" in saida
+
+
+def test_listar_receitas_MIGRA_nome_legado_de_TODAS_as_receitas(tmp_path, capsys):
+    gravar_receita(
+        Receita(
+            id="pago",
+            nome="Com agente",
+            justificativa="j",
+            gerado_em=datetime(2026, 9, 15, tzinfo=UTC),
+            resolvers=(ResolverReceita("agente", {}),),
+        ),
+        raiz=tmp_path,
+    )
+    gravar_receita(_r("acme"), raiz=tmp_path)
+
+    achadas = {r.id: r for r in listar_receitas(raiz=tmp_path)}
+
+    assert [x.nome for x in achadas["pago"].resolvers] == ["investigador"]
+    # A receita sem nome legado não gera aviso nenhum — migração é silenciosa
+    # só quando não há nada para migrar.
+    assert "acme" not in capsys.readouterr().err

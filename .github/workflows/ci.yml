@@ -96,7 +96,7 @@ jobs:
         working-directory: web-app
         run: npx tsc --noEmit
 
-      # O bundle de `web/compor/` é COMMITADO, porque o pacote é Python e a
+      # O bundle de `web/` é COMMITADO, porque o pacote é Python e a
       # instalação por pip não roda npm. O preço disso é poder divergir da
       # fonte: alguém edita `web-app/src`, esquece de buildar, e os testes
       # continuam verdes contra um bundle velho.
@@ -110,9 +110,9 @@ jobs:
 
       - name: O diff tem de ser vazio
         run: |
-          if ! git diff --exit-code --stat web/compor; then
-            echo "::error::o bundle em web/compor/ não bate com web-app/src."
-            echo "::error::rode: npm --prefix web-app run build && git add web/compor"
+          if ! git diff --exit-code --stat web; then
+            echo "::error::o bundle em web/ não bate com web-app/src."
+            echo "::error::rode: npm --prefix web-app run build && git add web"
             exit 1
           fi
 

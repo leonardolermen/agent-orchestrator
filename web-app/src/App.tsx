@@ -21,7 +21,7 @@ import {
   type Ambiente,
   type AgenteDeclarado,
   type BlocoPedido,
-  type DominioInfo,
+  type Catalogo,
   type Receita,
   type Regra,
   type Run,
@@ -30,26 +30,7 @@ import {
 import { Chat } from "./Chat";
 import { NoResolver, classeDo, nomeDo, type DadosDoNo } from "./NoResolver";
 import { Painel } from "./Painel";
-
-function usarTema(): [boolean, () => void] {
-  const [escuro, setEscuro] = useState(
-    () => document.documentElement.classList.contains("dark"),
-  );
-  const alternar = () => {
-    const novo = !escuro;
-    setEscuro(novo);
-    document.documentElement.classList.toggle("dark", novo);
-    // `localStorage` pode levantar (janela privada, site data bloqueado). A
-    // preferência é conveniência por visitante — perdê-la volta ao default
-    // escuro, que é o comportamento certo.
-    try {
-      localStorage.setItem("tema", novo ? "dark" : "light");
-    } catch {
-      /* sem problema: o default volta a valer */
-    }
-  };
-  return [escuro, alternar];
-}
+import { BotaoDeTema, usarTema } from "./tema";
 
 const TIPOS_DE_NO = { resolver: NoResolver };
 
@@ -61,20 +42,13 @@ const ALTURA_CHUTE = 150;
 
 type NoDoCanvas = Node<DadosDoNo>;
 
-const SEM_NOS: NoDoCanvas[] = [];
-
 export default function App() {
-  const [dominios, setDominios] = useState<DominioInfo[]>([]);
-  const [dominioId, setDominioId] = useState("");
+  const [catalogo, setCatalogo] = useState<Catalogo | null>(null);
 
-  // Os nós POR DOMÍNIO. Um dicionário e não uma lista só porque uma composição
-  // é de um domínio só — blocos de domínios diferentes trabalham `WorkItem.kind`
-  // diferentes, e a cascata misturada não é ruim, é vazia de sentido.
-  //
-  // Guardar por domínio em vez de limpar ao trocar é o que impede a troca de
-  // descartar trabalho em silêncio: voltar ao domínio anterior devolve a
-  // cascata que estava lá.
-  const [nosPorDominio, setNosPorDominio] = useState<Record<string, NoDoCanvas[]>>({});
+  // Os nós do canvas ÚNICO. Eram um dicionário indexado pelo domínio, porque
+  // trocar de domínio trocava de cascata e limpar a lista teria descartado
+  // trabalho em silêncio. Sem domínio não há troca: existe um quadro só.
+  const [nos, setNos] = useState<NoDoCanvas[]>([]);
   const [erro, setErro] = useState<string | null>(null);
   const [aviso, setAviso] = useState<string | null>(null);
   const [construido, setConstruido] = useState<WorkflowConstruido | null>(null);
@@ -88,25 +62,13 @@ export default function App() {
   // medidas no meio da digitação.
   const proximoId = useRef(1);
 
-  const nos = nosPorDominio[dominioId] ?? SEM_NOS;
-  const dominio = dominios.find((d) => d.id === dominioId) ?? null;
-
   useEffect(() => {
-    api
-      .dominios()
-      .then((ds) => {
-        setDominios(ds);
-        setDominioId((atual) => atual || ds[0]?.id || "");
-      })
-      .catch((e: ErroDaApi) => setErro(e.message));
+    api.catalogo().then(setCatalogo).catch((e: ErroDaApi) => setErro(e.message));
     api.ambiente().then(setAmbiente).catch((e: ErroDaApi) => setErro(e.message));
   }, []);
 
-  const mudarNos = useCallback(
-    (f: (atuais: NoDoCanvas[]) => NoDoCanvas[]) =>
-      setNosPorDominio((m) => ({ ...m, [dominioId]: f(m[dominioId] ?? []) })),
-    [dominioId],
-  );
+  // Havia aqui um `mudarNos` que aplicava a função ao balde do domínio atual.
+  // Sem domínio não há balde: quem muda os nós chama `setNos` direto.
 
   // Os NÓS são o estado, e `applyNodeChanges` é quem os move.
   //
@@ -117,8 +79,8 @@ export default function App() {
   // O minimapa desenhava zero retângulos — visto na tela, não em teste.
   const aoMudarNos = useCallback(
     (mudancas: NodeChange<NoDoCanvas>[]) =>
-      mudarNos((atuais) => applyNodeChanges(mudancas, atuais)),
-    [mudarNos],
+      setNos((atuais) => applyNodeChanges(mudancas, atuais)),
+    [],
   );
 
   const emOrdem = useMemo(
@@ -182,7 +144,7 @@ export default function App() {
   // com "o arranjo é decoração, a ordem é derivada".
   const chaveDeLayout = nos.map((n) => `${n.id}:${n.measured?.height ?? 0}`).join("|");
   useEffect(() => {
-    mudarNos((atuais) => {
+    setNos((atuais) => {
       if (!atuais.length) return atuais;
       const alvo = new Map<string, number>();
       let y = 0;
@@ -199,11 +161,11 @@ export default function App() {
       }
       return atuais.map((n) => ({ ...n, position: { x: 0, y: alvo.get(n.id) ?? 0 } }));
     });
-  }, [chaveDeLayout, mudarNos]);
+  }, [chaveDeLayout]);
 
   const acrescentar = (dados: DadosDoNo) => {
     const id = `n${proximoId.current++}`;
-    mudarNos((atuais) => [
+    setNos((atuais) => [
       ...atuais.map((n) => ({ ...n, selected: false })),
       // A posição é provisória: o efeito acima reempilha assim que o React Flow
       // mede o cartão novo.
@@ -224,21 +186,25 @@ export default function App() {
   // "Acrescente um agente", que é o que tira a tela de cardápio. O nome nasce
   // livre: `construir_composicao` recusa bloco repetido, e um `agente` chocando
   // com outro `agente` seria uma recusa por acidente de nomenclatura.
+  //
+  // O `kind` nasce VAZIO, e não no primeiro kind de um domínio: é a pessoa que
+  // diz sobre que tipo de item o agente trabalha, porque é por `kind` que o
+  // grafo liga um degrau ao outro. O painel mostra o campo vazio como o que
+  // falta preencher.
   const novoAgente = () => {
-    if (!dominio) return;
     const usados = new Set(nos.map((n) => nomeDo(n.data)));
     let nome = "agente";
     for (let i = 2; usados.has(nome); i++) nome = `agente-${i}`;
-    acrescentarAgente(agenteEmBranco(nome, dominio.kinds[0] ?? ""));
+    acrescentarAgente(agenteEmBranco(nome));
   };
 
   const remover = (id: string) => {
-    mudarNos((atuais) => atuais.filter((n) => n.id !== id));
+    setNos((atuais) => atuais.filter((n) => n.id !== id));
     invalidar();
   };
 
   const mudarParametro = (id: string, param: string, valor: number) =>
-    mudarNos((atuais) =>
+    setNos((atuais) =>
       atuais.map((n) =>
         n.id === id && n.data.tipo === "regra"
           ? { ...n, data: { ...n.data, parametros: { ...n.data.parametros, [param]: valor } } }
@@ -250,7 +216,7 @@ export default function App() {
   // edita seis campos de naturezas diferentes, e seis callbacks seriam seis
   // lugares para esquecer de invalidar a composição construída.
   const mudarAgente = (id: string, patch: Partial<AgenteDeclarado>) => {
-    mudarNos((atuais) =>
+    setNos((atuais) =>
       atuais.map((n) =>
         n.id === id && n.data.tipo === "agente"
           ? { ...n, data: { ...n.data, declaracao: { ...n.data.declaracao, ...patch } } }
@@ -269,7 +235,6 @@ export default function App() {
         await api.criarComposicao({
           id,
           nome: nome || id,
-          dominio: dominioId,
           justificativa: "",
           // A posição no canvas NÃO vai junto: é arranjo visual, não definição.
           // Uma composição que carregasse coordenadas mudaria de versão só
@@ -301,23 +266,29 @@ export default function App() {
   };
 
   // O chat propôs. Ele conduz o `Entrevistador` do grill, que compõe RECEITAS —
-  // nomes do catálogo da conciliação. Por isso a proposta pousa no domínio
-  // `conciliacao` e não em qualquer um.
+  // nomes do catálogo. A proposta pousa no canvas único: não há mais um domínio
+  // para escolher antes, que era o que fazia a proposta cair sempre na
+  // conciliação independentemente do que se tinha pedido.
   //
-  // O que ele propõe e o canvas não sabe desenhar é DITO, não descartado em
-  // silêncio: `revisor` é classe HUMANO, e o modelo de domínio de hoje só tem
-  // regras e agentes. É uma lacuna real — a etapa humana não tem representação
-  // em `Dominio` —, e esconder o descarte a tornaria invisível.
+  // O que ele propõe e o canvas não sabe desenhar continua sendo DITO, não
+  // descartado em silêncio. O caso que motivou o aviso era o `revisor`, que o
+  // canvas não achava em `Dominio` nenhum; o catálogo plano publica o revisor,
+  // então ele POUSA aqui E COMPÕE — o segundo não era verdade até
+  // `construir_composicao` ganhar o ramo `CostClass.HUMANO`, e até lá "Compor
+  // e validar" com um revisor no canvas devolvia 422. Um nome que não esteja
+  // nem nas regras nem nos agentes ainda sai, e sair sem dizer seria a cascata
+  // mentindo sobre o que foi proposto.
   const aceitarProposta = (receita: Receita) => {
-    const alvo = dominios.find((d) => d.id === "conciliacao");
-    if (!alvo) return;
-    setDominioId(alvo.id);
+    if (!catalogo) {
+      setAviso("o catálogo ainda não carregou; a proposta do chat não pôde pousar");
+      return;
+    }
 
     const novos: NoDoCanvas[] = [];
     const naoColocados: string[] = [];
     for (const r of receita.resolvers) {
-      const regra = alvo.regras.find((x) => x.nome === r.nome);
-      const agente = alvo.agentes.find((x) => x.name === r.nome);
+      const regra = catalogo.regras.find((x) => x.nome === r.nome);
+      const agente = catalogo.agentes.find((x) => x.name === r.nome);
       let dados: DadosDoNo | null = null;
       if (regra) {
         const parametros: Record<string, number> = {};
@@ -339,11 +310,11 @@ export default function App() {
         data: dados,
       });
     }
-    setNosPorDominio((m) => ({ ...m, [alvo.id]: novos }));
+    setNos(novos);
     setAviso(
       naoColocados.length
-        ? `o chat propôs ${naoColocados.join(", ")}, que o canvas ainda não sabe ` +
-          `desenhar: a etapa humana não tem bloco em nenhum domínio`
+        ? `o chat propôs ${naoColocados.join(", ")}, que o canvas não sabe ` +
+          `desenhar: não há bloco com esse nome no catálogo`
         : null,
     );
     invalidar();
@@ -363,38 +334,28 @@ export default function App() {
           </p>
         </div>
 
-        {/* A PRIMEIRA pergunta da tela: que trabalho você quer orquestrar. A
-            paleta segue desta resposta. Antes ela não existia, e por isso o
-            canvas só oferecia blocos de conciliação. */}
-        <label className="flex items-center gap-2 text-[11.5px]">
-          <span className="text-neutral-500 dark:text-noite-fraca">domínio</span>
-          <select
-            value={dominioId}
-            onChange={(e) => {
-              setDominioId(e.target.value);
-              setAviso(null);
-              invalidar();
-            }}
-            className="rounded border border-borda bg-papel px-2 py-1 text-[12px] dark:border-noite-borda dark:bg-noite-fundo dark:text-noite-tinta"
-          >
-            {dominios.map((d) => (
-              <option key={d.id} value={d.id}>
-                {d.nome}
-              </option>
-            ))}
-          </select>
-        </label>
+        {/* Não há pergunta antes do quadro. Havia um `<select>` de domínio
+            aqui, e era ele que decidia a paleta: quem quisesse triar issues
+            escolhia entre três domínios prontos e recebia blocos bancários. A
+            paleta agora é o catálogo inteiro, e a única pergunta é o que você
+            monta. */}
 
-        <button
-          type="button"
-          onClick={alternarTema}
-          title={escuro ? "mudar para claro" : "mudar para escuro"}
-          className="ml-auto rounded border border-borda px-2 py-1 text-[12px] text-neutral-500 transition hover:bg-neutral-50 dark:border-noite-borda dark:text-noite-fraca dark:hover:bg-noite-cartao"
-        >
-          {escuro ? "☀" : "☾"}
-        </button>
+        <span className="ml-auto">
+          <BotaoDeTema escuro={escuro} alternar={alternarTema} />
+        </span>
+        {/* As outras DUAS VISTAS da mesma aplicação, não outras páginas.
+            Enquanto eram `index.html` e `fila.html` separados, estes links
+            precisavam carregar a query string inteira para as três telas
+            concordarem sobre qual dataset estavam olhando — e o P4.14 do
+            DECISOES registra que essa promessa já quebrou. */}
         <a href="/" className="text-[12px] text-humano hover:underline dark:text-noite-humano">
           ← cascata em execução
+        </a>
+        <a
+          href="/?vista=fila"
+          className="text-[12px] text-humano hover:underline dark:text-noite-humano"
+        >
+          fila →
         </a>
       </header>
 
@@ -442,8 +403,8 @@ export default function App() {
                 Canvas vazio. Acrescente um bloco pela paleta →
               </p>
               <p className="mt-1 text-[12px] text-neutral-300 dark:text-noite-fraca/70">
-                {dominio && dominio.regras.length === 0
-                  ? "Este domínio não tem regra nenhuma: tudo passa pelo modelo."
+                {catalogo && catalogo.regras.length === 0
+                  ? "O catálogo não tem regra nenhuma: tudo passa pelo modelo."
                   : "Uma cascata sem bloco não resolve nada."}
               </p>
             </div>
@@ -463,7 +424,7 @@ export default function App() {
         </div>
 
         <Painel
-          dominio={dominio}
+          catalogo={catalogo}
           escolhidos={emOrdem}
           selecionado={selecionado}
           erro={erro}

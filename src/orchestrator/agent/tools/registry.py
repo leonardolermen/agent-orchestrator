@@ -53,8 +53,9 @@ class ToolSpec:
     #
     # Assinatura UNIFORME, mesmo nas que ignoram o contexto: variável exigiria
     # introspecção para saber o que passar, e é esse padrão que já deu um
-    # defeito silencioso no `_construir_definicao` da API (ver `EntradaCatalogo`
-    # no grill, que tomou a mesma decisão pela mesma razão).
+    # defeito silencioso no `_construir_definicao` da API (ver
+    # `agent.declarado.RegraDisponivel.construir` e `workflows.WorkflowFactory`,
+    # que tomaram a mesma decisão pela mesma razão).
     fn: Callable[..., Any]
     permission: ToolPermission = ToolPermission.READ_ONLY
     timeout_s: float = 10.0

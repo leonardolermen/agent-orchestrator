@@ -27,16 +27,16 @@ from typing import Literal
 from fastapi import FastAPI, HTTPException, Query, WebSocket
 from fastapi.staticfiles import StaticFiles
 
-from orchestrator.agent.declarado import AgenteDeclarado
+from orchestrator.agent.declarado import AgenteDeclarado, RegraDisponivel
+from orchestrator.agent.tools.registry import ToolRegistry
 from orchestrator.api.entrevista import conduzir
 from orchestrator.api.schemas import (
     AgenteDeclaradoJSON,
     AmbienteJSON,
+    CatalogoJSON,
     ComposicaoRequest,
     ComposicaoResumoJSON,
     DecisaoRequest,
-    DominioJSON,
-    EntradaCatalogoJSON,
     FerramentaJSON,
     FilaJSON,
     GapJSON,
@@ -63,8 +63,8 @@ from orchestrator.authoring.composicao import (
     listar,
 )
 from orchestrator.conciliacao import reconcile
-from orchestrator.domains.registro import DOMINIOS
-from orchestrator.grill.catalogo import CATALOGO, MODELO_INERTE
+from orchestrator.domains.registro import CATALOGO
+from orchestrator.grill.catalogo import MODELO_INERTE
 from orchestrator.grill.receita import Receita, ResolverReceita, construir
 from orchestrator.grill.registro import gravar_receita, listar_receitas
 from orchestrator.kernel.cost import Cost, CostClass
@@ -120,83 +120,71 @@ def listar_workflows() -> list[WorkflowResumoJSON]:
     return resumos
 
 
-@app.get("/api/catalogo", response_model=list[EntradaCatalogoJSON])
-def catalogo() -> list[EntradaCatalogoJSON]:
-    """O que dá para compor. Derivado do `CATALOGO`, nunca escrito à mão.
+def _ferramenta_json(ferramentas: ToolRegistry, nome: str) -> FerramentaJSON:
+    """A descrição vem do `ToolSpec`. Nunca escrita à mão nesta camada."""
+    return FerramentaJSON(nome=nome, descricao=ferramentas.spec(nome).description)
 
-    Ordenado por classe de custo e depois por nome: é a ordem em que a cascata
-    VAI RODAR, então é a ordem em que a tela deve oferecer. Uma paleta em ordem
-    alfabética sugeriria que o autor escolhe a sequência — e ele não escolhe.
+
+def _regra_json(r: RegraDisponivel) -> RegraJSON:
+    """Todo campo é lido da `RegraDisponivel`. Nenhum digitado aqui.
+
+    Existiam duas rotas servindo isto (`/api/catalogo` e `/api/dominios`), e a
+    extração era o que impedia as duas de divergirem. Sobrou uma — e a regra
+    continua valendo pelo motivo maior: um valor escrito à mão na camada HTTP
+    faria a tela oferecer um parâmetro que `construir` recusa.
     """
-    return [
-        EntradaCatalogoJSON(
-            nome=e.nome,
-            cost_class=e.cost_class.name,
-            resumo=e.resumo,
-            parametros=[
-                ParametroJSON(nome=p.nome, default=p.default, descricao=p.descricao)
-                for p in e.parametros
-            ],
-            ferramentas=list(e.ferramentas),
-            modelo_padrao=e.modelo_padrao,
-        )
-        for e in sorted(CATALOGO.values(), key=lambda e: (e.cost_class, e.nome))
-    ]
+    return RegraJSON(
+        nome=r.nome,
+        cost_class=r.cost_class.name,
+        resumo=r.resumo,
+        parametros=[
+            ParametroJSON(nome=p.nome, default=p.default, descricao=p.descricao)
+            for p in r.parametros
+        ],
+    )
 
 
-@app.get("/api/dominios", response_model=list[DominioJSON])
-def dominios() -> list[DominioJSON]:
-    """O que a plataforma sabe orquestrar, e com que blocos.
+def _agente_json(a: AgenteDeclarado) -> AgenteDeclaradoJSON:
+    """Projeção do `AgenteDeclarado`, campo a campo — nada inventado aqui.
 
-    É a primeira pergunta da tela de composição. Antes ela não existia: a
-    paleta era o `CATALOGO` do grill, que é o cardápio da CONCILIAÇÃO, e por
-    isso o canvas só oferecia blocos de conciliação por seis meses de
-    desenvolvimento sem ninguém notar.
-
-    As ferramentas saem do CATÁLOGO do domínio — sem dados. Um registro ligado
-    a um `ToolContext` vazio listaria igual e executaria devolvendo nada, que é
-    a falha silenciosa que `ToolRegistry.ligado` agora torna impossível.
+    O que a tela edita é o que o catálogo declara: um default escrito nesta
+    camada viraria um agente que o canvas mostra e `construir_agente` recusa.
     """
-    return [
-        DominioJSON(
-            id=d.id,
-            nome=d.nome,
-            kinds=list(d.kinds),
-            ferramentas=[
-                FerramentaJSON(nome=n, descricao=d.ferramentas.spec(n).description)
-                for n in d.ferramentas.names()
-            ],
-            regras=[
-                RegraJSON(
-                    nome=r.nome,
-                    cost_class=r.cost_class.name,
-                    resumo=r.resumo,
-                    parametros=[
-                        ParametroJSON(
-                            nome=p.nome, default=p.default, descricao=p.descricao
-                        )
-                        for p in r.parametros
-                    ],
-                )
-                for r in d.regras
-            ],
-            agentes=[
-                AgenteDeclaradoJSON(
-                    name=a.name,
-                    system=a.system,
-                    kind=a.kind,
-                    prompt=a.prompt,
-                    tipos=list(a.tipos),
-                    abstem_com=a.abstem_com,
-                    ferramentas=list(a.ferramentas),
-                    max_turns=a.max_turns,
-                    budget_microcents=a.budget_microcents,
-                )
-                for a in d.agentes
-            ],
-        )
-        for d in DOMINIOS.values()
-    ]
+    return AgenteDeclaradoJSON(
+        name=a.name,
+        system=a.system,
+        kind=a.kind,
+        prompt=a.prompt,
+        tipos=list(a.tipos),
+        abstem_com=a.abstem_com,
+        ferramentas=list(a.ferramentas),
+        max_turns=a.max_turns,
+        budget_microcents=a.budget_microcents,
+    )
+
+
+@app.get("/api/catalogo", response_model=CatalogoJSON)
+def catalogo() -> CatalogoJSON:
+    """Tudo que dá para compor. Derivado do `CATALOGO`, nunca escrito à mão.
+
+    As regras saem ordenadas por classe de custo e depois por nome: é a ordem
+    em que a cascata VAI RODAR, então é a ordem em que a tela deve oferecer.
+    Uma paleta em ordem alfabética sugeriria que o autor escolhe a sequência —
+    e ele não escolhe.
+
+    Esta rota SUBSTITUIU o cardápio do grill, que era só de conciliação. Foi
+    ele que fez o chat propor `L1`/`L2`/`L3` para triagem de issues.
+    """
+    return CatalogoJSON(
+        ferramentas=[
+            _ferramenta_json(CATALOGO.ferramentas, n) for n in CATALOGO.ferramentas.names()
+        ],
+        regras=[
+            _regra_json(r)
+            for r in sorted(CATALOGO.regras, key=lambda r: (r.cost_class, r.nome))
+        ],
+        agentes=[_agente_json(a) for a in CATALOGO.agentes],
+    )
 
 
 @app.get("/api/ambiente", response_model=AmbienteJSON)
@@ -271,16 +259,16 @@ def criar_receita(pedido: ReceitaRequest) -> WorkflowJSON:
 
 @app.post("/api/composicoes", response_model=WorkflowJSON, status_code=201)
 def criar_composicao(pedido: ComposicaoRequest) -> WorkflowJSON:
-    """Compõe uma cascata de QUALQUER domínio. VALIDA CONSTRUINDO.
+    """Compõe uma cascata a partir do catálogo. VALIDA CONSTRUINDO.
 
     É o irmão de `/api/receitas` para o formato geral. A diferença que importa
     está no corpo: uma receita é uma lista de nomes do catálogo; uma composição
     carrega o agente INTEIRO — prompt, vocabulário, ferramentas, orçamento —
     porque esse agente não existe em catálogo nenhum até a pessoa criá-lo.
 
-    **Não passa `contexto`.** Compor não executa, e sem dados o registro do
-    domínio segue sendo catálogo: se alguém executasse esta definição, as
-    ferramentas recusariam com texto em vez de estourar sobre dados ausentes.
+    **Não passa `contexto`.** Compor não executa, e sem dados o registro segue
+    sendo catálogo: se alguém executasse esta definição, as ferramentas
+    recusariam com texto em vez de estourar sobre dados ausentes.
 
     **Não passa `cliente`.** O default de `construir_composicao` é
     `ClienteDeValidacao`, que constrói o agente e recusa falar com modelo. É a
@@ -322,7 +310,6 @@ def criar_composicao(pedido: ComposicaoRequest) -> WorkflowJSON:
         composicao = Composicao(
             id=pedido.id,
             nome=pedido.nome,
-            dominio=pedido.dominio,
             justificativa=pedido.justificativa,
             # Relógio do SERVIDOR, como em `/api/receitas`: um timestamp do
             # cliente permitiria gravar uma composição "criada" antes de outra
@@ -331,10 +318,6 @@ def criar_composicao(pedido: ComposicaoRequest) -> WorkflowJSON:
             blocos=tuple(blocos),
         )
         definicao = construir_composicao(composicao)
-    except KeyError as erro:
-        # Domínio desconhecido. `KeyError` formata com aspas extras em `str()`,
-        # então usa o argumento — a mensagem já lista os disponíveis.
-        raise HTTPException(status_code=422, detail=erro.args[0]) from erro
     except ValueError as erro:
         raise HTTPException(status_code=422, detail=str(erro)) from erro
 
@@ -358,7 +341,6 @@ def listar_composicoes() -> list[ComposicaoResumoJSON]:
         ComposicaoResumoJSON(
             id=c.id,
             nome=c.nome,
-            dominio=c.dominio,
             version=c.version,
             gerado_em=c.gerado_em.isoformat(),
             blocos=list(c.nomes),

@@ -1,7 +1,10 @@
 # Agent Orchestrator — Documento de Design
 
 **Data:** 2026-09-14
-**Status:** Design aprovado em partes; aguardando revisão integral
+**Estado:** ENTREGUE nas partes que viraram produto (conciliação ponta a ponta).
+O escopo foi superado: o runtime genérico (`2026-09-16-runtime-de-orquestracao`)
+e a execução como grafo (`2026-09-17-execucao-como-grafo`) mudaram a forma do
+projeto. Vale como registro do raciocínio original, não como plano vigente.
 **Autor:** Leonardo Lermen
 **Nome:** de trabalho. Marca a definir quando houver cliente.
 

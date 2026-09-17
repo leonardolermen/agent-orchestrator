@@ -43,21 +43,22 @@ def _corpo(resolvers, wid="minha-cascata"):
 # -- o catálogo -------------------------------------------------------------
 
 
-def test_o_catalogo_e_DERIVADO_do_CATALOGO_do_grill():
-    """Uma lista escrita à mão na camada HTTP divergiria na primeira mudança, e
-    o sintoma seria uma tela oferecendo um resolver que `construir` recusa."""
-    from orchestrator.grill.catalogo import CATALOGO
+def test_o_catalogo_e_DERIVADO_do_CATALOGO_plano():
+    """Uma lista escrita à mão na camada HTTP divergiria na primeira mudança,
+    e o sintoma seria uma tela oferecendo um bloco que `construir` recusa."""
+    from orchestrator.domains.registro import CATALOGO
 
     dados = cliente.get("/api/catalogo").json()
 
-    assert {e["nome"] for e in dados} == set(CATALOGO)
+    assert {r["nome"] for r in dados["regras"]} == {r.nome for r in CATALOGO.regras}
+    assert {a["name"] for a in dados["agentes"]} == {a.name for a in CATALOGO.agentes}
 
 
-def test_o_catalogo_vem_na_ordem_em_que_a_CASCATA_RODA():
+def test_as_regras_vem_na_ordem_em_que_a_CASCATA_RODA():
     """Ordem alfabética sugeriria que o autor escolhe a sequência. Ele não
     escolhe: a paleta é oferecida do mais barato ao mais caro porque é essa a
     ordem de execução."""
-    classes = [e["cost_class"] for e in cliente.get("/api/catalogo").json()]
+    classes = [r["cost_class"] for r in cliente.get("/api/catalogo").json()["regras"]]
     ordem = ["REGRA", "AGENTE", "CREW", "HUMANO"]
 
     assert classes == sorted(classes, key=ordem.index)
@@ -65,12 +66,45 @@ def test_o_catalogo_vem_na_ordem_em_que_a_CASCATA_RODA():
 
 def test_o_catalogo_traz_os_parametros_com_DEFAULT_do_proprio_resolver():
     """`_param` lê o default do dataclass do resolver. A tela preenche com ele,
-    então renomear o campo no resolver explode no import e não na tela."""
-    l2 = next(e for e in cliente.get("/api/catalogo").json() if e["nome"] == "L2")
+    então renomear o campo no resolver explode no import e não na tela.
+
+    A comparação é contra `dataclasses.fields(ToleranceMatcher)`, e é ela que
+    carrega o teste: conferir que o default é `int` passaria com um literal
+    escrito à mão no catálogo, que é exatamente a divergência que `_param`
+    existe para tornar impossível. O sintoma seria a tela preencher `5` num
+    campo cujo resolver já mudou para outro valor — e ninguém veria.
+    """
+    import dataclasses
+
+    from orchestrator.matching.tolerance import ToleranceMatcher
+
+    dados = cliente.get("/api/catalogo").json()
+    l2 = next(r for r in dados["regras"] if r["nome"] == "L2")
+    do_resolver = {f.name: f.default for f in dataclasses.fields(ToleranceMatcher)}
 
     assert {p["nome"] for p in l2["parametros"]} == {"max_cents", "max_business_days"}
-    assert all(isinstance(p["default"], int) for p in l2["parametros"])
+    assert {p["nome"]: p["default"] for p in l2["parametros"]} == {
+        "max_cents": do_resolver["max_cents"],
+        "max_business_days": do_resolver["max_business_days"],
+    }
     assert all(p["descricao"] for p in l2["parametros"])
+
+
+def test_o_catalogo_expoe_as_ferramentas_de_TODAS_as_origens():
+    """"Todas as nossas tools disponíveis" — o pedido, na borda HTTP.
+
+    A identidade contra `CATALOGO.ferramentas` (não só a presença de uma) é o
+    que torna a lista DERIVADA: uma lista escrita à mão com seis nomes,
+    incluindo `contar_palavras`, passaria por uma checagem de "está contido"
+    sem nunca ser pega divergindo.
+    """
+    from orchestrator.domains.registro import CATALOGO
+
+    nomes = {f["nome"] for f in cliente.get("/api/catalogo").json()["ferramentas"]}
+
+    assert nomes == set(CATALOGO.ferramentas.names())
+    # E que a ferramenta do domínio `swe` atravessou a fusão das origens.
+    assert "contar_palavras" in nomes
 
 
 # -- a defesa contra decoração ---------------------------------------------
@@ -181,8 +215,14 @@ def test_a_receita_composta_APARECE_na_listagem_de_workflows():
 
 def test_cascata_com_AGENTE_e_marcada_como_nao_executavel_pela_API():
     """A regra que governa o módulo HTTP: nenhum endpoint gasta dinheiro. A
-    tela desabilita o botão em vez de deixar o usuário colher um 409."""
-    cliente.post("/api/receitas", json=_corpo([{"nome": "agente"}], wid="cara"))
+    tela desabilita o botão em vez de deixar o usuário colher um 409.
+
+    "investigador", não "agente": o catálogo plano (Task 3) nomeia o bloco
+    AGENTE da conciliação pelo `Resolver.name` que ele sempre teve — o
+    cardápio do grill é que usava a chave "agente" só para propor este mesmo
+    bloco.
+    """
+    cliente.post("/api/receitas", json=_corpo([{"nome": "investigador"}], wid="cara"))
 
     w = next(x for x in cliente.get("/api/workflows").json() if x["id"] == "cara")
 
@@ -193,14 +233,16 @@ def test_cascata_com_AGENTE_e_marcada_como_nao_executavel_pela_API():
 
 
 def test_a_pagina_do_compositor_e_servida():
-    """A tela virou um app React (Vite + React Flow), buildado para
-    `web/compor/`. O `StaticFiles(html=True)` serve o `index.html` de lá.
+    """A tela virou um app React (Vite + React Flow), buildado para `web/` e
+    servido na RAIZ — a autoria é a vista `?vista=compor`. Antes ela morava em
+    `/compor/`, ao lado de duas páginas estáticas, e foi essa convivência que
+    produziu o defeito do modo escuro por default.
 
     O teste ancora no que o BUILD garante — a raiz onde o React monta e um
     módulo carregado — e não em marcação escrita à mão, que agora é gerada e
     muda de nome de arquivo a cada build (hash no asset).
     """
-    r = cliente.get("/compor/")
+    r = cliente.get("/?vista=compor")
 
     assert r.status_code == 200
     assert 'id="raiz"' in r.text
@@ -223,54 +265,95 @@ def test_a_pagina_DIZ_que_as_SETAS_nao_sao_do_autor():
 
     import orchestrator.api.app as mod
 
-    bundles = list((Path(mod.__file__).parents[3] / "web" / "compor" / "assets").glob("*.js"))
-    assert bundles, "o app do compositor não foi buildado (npm --prefix web-app run build)"
+    bundles = list((Path(mod.__file__).parents[3] / "web" / "assets").glob("*.js"))
+    assert bundles, "o app não foi buildado (npm --prefix web-app run build)"
     fonte = "\n".join(b.read_text(encoding="utf-8") for b in bundles)
 
     assert "setas" in fonte
     assert "classe de custo" in fonte
 
 
+def test_a_tela_NAO_pergunta_o_dominio_antes_de_mostrar_bloco():
+    """O quadro em branco, ancorado onde ele é verdade: no bundle.
+
+    A prova não é o texto do `<label>` que sumiu — ele poderia sumir com a
+    chamada continuando lá, e a paleta seguiria particionada. A prova é a
+    ORIGEM da paleta: enquanto o bundle falar com `/api/dominios`, a tela ainda
+    depende de uma partição que ela não mostra, que é a versão pior do defeito
+    que esta fatia remove.
+
+    A rota já não existe (ver `test_a_rota_de_dominios_nao_existe_mais`); este
+    teste continua valendo porque ele fixa a ORIGEM da paleta no bundle, e não
+    a existência da rota — um bundle que voltasse a montar a paleta por
+    partição quebraria aqui antes de quebrar em qualquer outro lugar.
+    """
+    from pathlib import Path
+
+    import orchestrator.api.app as mod
+
+    bundles = list((Path(mod.__file__).parents[3] / "web" / "assets").glob("*.js"))
+    assert bundles, "o app não foi buildado (npm --prefix web-app run build)"
+    fonte = "\n".join(b.read_text(encoding="utf-8") for b in bundles)
+
+    assert "/api/dominios" not in fonte
+    assert "/api/catalogo" in fonte
+
+
 # -- o nó do agente: modelo e ferramentas ----------------------------------
 
 
-def test_o_catalogo_expoe_as_ferramentas_DERIVADAS_do_registro():
-    """Uma lista escrita à mão divergiria no dia em que alguém acrescentasse
-    uma ferramenta, e a tela mostraria quatro de cinco sem nenhum sintoma."""
-    from orchestrator.conciliacao.ferramentas import ToolContext, registry_de
-
-    agente = next(e for e in cliente.get("/api/catalogo").json() if e["nome"] == "agente")
-
-    assert tuple(agente["ferramentas"]) == registry_de(ToolContext([], [])).names()
+# A invariante "a tela expõe as ferramentas derivadas do registro" segue
+# coberta — agora ao nível do catálogo plano — por
+# `test_o_catalogo_expoe_as_ferramentas_de_TODAS_as_origens`, acima. Não
+# existe mais um bloco "agente" em `/api/catalogo` (o registro do grill não é
+# mais servido por esta rota) para repetir o teste como estava.
 
 
 def test_o_modelo_do_agente_e_PADRAO_e_nao_escolha_gravada():
     """Quem decide o modelo é a execução (`--model`). Cravar um modelo na
     receita faria o canvas prometer algo que a receita não carrega — e é a
-    diferença exata para o canvas de referência, que fixa o modelo no nó."""
+    diferença exata para o canvas de referência, que fixa o modelo no nó.
+
+    `AgenteDeclarado.model` é `""` — string vazia, não um nome de modelo —
+    porque `construir_agente` lê `decl.model or client.model`: só o CLIENTE
+    (`--model` da CLI, nunca a receita) decide de fato. Antes desta fatia
+    (Task 3) a invariante equivalente vivia em
+    `grill.catalogo.CATALOGO["agente"].modelo_padrao`; ela migra para o
+    catálogo PLANO porque é dele que `grill.receita.construir` passou a ler o
+    bloco "investigador" — `grill.catalogo.CATALOGO` não existe mais.
+    """
     from datetime import UTC, datetime
 
+    from orchestrator.agent.declarado import AgenteDeclarado
+    from orchestrator.domains.registro import CATALOGO
     from orchestrator.grill.receita import Receita, ResolverReceita, para_json
 
-    agente = next(e for e in cliente.get("/api/catalogo").json() if e["nome"] == "agente")
-    assert agente["modelo_padrao"] == "claude-opus-5"
+    investigador = CATALOGO.bloco("investigador")
+    assert isinstance(investigador, AgenteDeclarado)
+    assert investigador.model == ""
 
     r = Receita(
         id="x", nome="x", justificativa="", gerado_em=datetime.now(UTC),
-        resolvers=(ResolverReceita(nome="agente"),),
+        resolvers=(ResolverReceita(nome="investigador"),),
     )
     # A receita SERIALIZADA não carrega modelo nenhum. É isso que o "padrão" na
     # tela está dizendo.
     assert "model" not in str(para_json(r)).lower()
 
 
-def test_resolver_DETERMINISTICO_nao_tem_modelo_nem_ferramenta():
-    """`None` e lista vazia, não `"-"`: a tela usa a AUSÊNCIA para não desenhar
-    uma linha de modelo onde não houve escolha de modelo."""
-    for nome in ("L1", "L2", "L3", "revisor"):
-        e = next(x for x in cliente.get("/api/catalogo").json() if x["nome"] == nome)
-        assert e["modelo_padrao"] is None, nome
-        assert e["ferramentas"] == [], nome
+# `test_resolver_DETERMINISTICO_do_grill_nao_tem_modelo_nem_ferramenta` não
+# migra — REMOVIDO por decisão explícita da Task 3, não por descuido.
+#
+# Ela provava que `EntradaCatalogo` (o valor do dict `grill.catalogo.CATALOGO`)
+# tinha `modelo_padrao=None` e `ferramentas=()` para os blocos determinísticos
+# — um campo cada, existente só porque `EntradaCatalogo` era uma forma ÚNICA
+# usada tanto para regra quanto para agente. O catálogo PLANO (Task 1) não tem
+# essa forma única: `RegraDisponivel` (as regras) não tem `modelo_padrao` nem
+# `ferramentas` — a ausência que o teste checava não é mais um VALOR que um
+# campo pode assumir, é a FORMA do tipo. Não há mais o que construir para
+# provar que ela é `None`/`()`; a pergunta que o teste fazia deixou de fazer
+# sentido, e não porque a garantia enfraqueceu — porque o tipo agora a
+# carrega estruturalmente.
 
 
 # -- o botão Run ------------------------------------------------------------
@@ -281,12 +364,16 @@ def test_a_pagina_tem_o_botao_RUN():
 
     import orchestrator.api.app as mod
 
-    bundles = list((Path(mod.__file__).parents[3] / "web" / "compor" / "assets").glob("*.js"))
+    bundles = list((Path(mod.__file__).parents[3] / "web" / "assets").glob("*.js"))
     fonte = "\n".join(b.read_text(encoding="utf-8") for b in bundles)
 
     assert "Run" in fonte
     # E a mensagem que explica por que ele fica desabilitado numa cascata paga.
     assert "etapa paga" in fonte
+
+
+def test_a_rota_de_dominios_nao_existe_mais():
+    assert cliente.get("/api/dominios").status_code == 404
 
 
 def test_cascata_GRATIS_composta_pela_tela_RODA_de_verdade():
@@ -304,8 +391,12 @@ def test_cascata_GRATIS_composta_pela_tela_RODA_de_verdade():
 
 def test_cascata_PAGA_composta_pela_tela_e_recusada_pelo_SERVIDOR():
     """A tela desabilita o botão, mas quem garante é o servidor. Testado
-    forçando o POST — que é exatamente o que fiz no navegador."""
-    cliente.post("/api/receitas", json=_corpo([{"nome": "agente"}], wid="com-agente"))
+    forçando o POST — que é exatamente o que fiz no navegador.
+
+    "investigador", não "agente" — ver o comentário em
+    `test_cascata_com_AGENTE_e_marcada_como_nao_executavel_pela_API`.
+    """
+    cliente.post("/api/receitas", json=_corpo([{"nome": "investigador"}], wid="com-agente"))
 
     r = cliente.post("/api/workflows/com-agente/runs", json={"seed": 1, "n": 60})
 

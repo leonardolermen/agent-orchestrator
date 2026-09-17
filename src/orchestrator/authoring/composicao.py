@@ -1,4 +1,4 @@
-"""Uma cascata composta, de qualquer domínio.
+"""Uma cascata composta a partir do catálogo, com agente declarado inline.
 
 **Por que não estender a `Receita` do grill.** Ela é `resolvers: tuple[
 ResolverReceita(nome, parametros)]` — uma lista de NOMES do `CATALOGO`, que é o
@@ -16,13 +16,40 @@ caso particular em que todos os blocos já existem por nome.
 
 **O que uma composição garante, e a garantia é estrutural:**
 
-1. **Um domínio só.** Blocos de domínios diferentes trabalham `WorkItem.kind`
-   diferentes — uma cascata com os dois não é ruim, é vazia de sentido, porque o
-   segundo roda sobre um pool que o primeiro nem enxerga.
-2. **A ordem não é do autor.** `Stage.ordered()` ordena por `CostClass`, e não
+1. **A ordem não é do autor.** `Stage.ordered()` ordena por `CostClass`, e não
    existe campo de ordem aqui. É a mesma defesa contra decoração que o canvas
    tem, agora no formato persistido.
-3. **Valida construindo.** Se `construir_composicao` retorna, a cascata roda.
+2. **Valida construindo.** Se `construir_composicao` retorna, a cascata roda.
+
+**A terceira garantia era "um domínio só", e hoje ela NÃO TEM DONO aqui.
+Dito em voz alta porque a meia-verdade é pior que a lacuna.**
+
+Ela dizia: blocos cujos `WorkItem.kind` não conversam produzem uma cascata vazia
+de sentido, porque o segundo roda sobre um pool que o primeiro nem enxerga. A
+guarda antiga a fazia comparando o `kind` do agente com os `kinds` do domínio
+declarado na composição — e ela PRECISAVA sair. Com a tela sem seletor, toda
+composição chegava com o domínio default, e a checagem passou a recusar qualquer
+agente cujo kind não fosse `"lancamento"`: guarda certa aplicada ao pedido
+errado, recusando cascata válida.
+
+O lugar certo é o grafo — `Stage.consome`/`Stage.produz` declara a fiação POR
+DEGRAU, e o que se valida é o grafo que VAI RODAR, não uma partição de catálogo.
+Só que, para uma composição construída AQUI, essa guarda está **inerte**, por
+dois motivos que se somam:
+
+1. `construir_composicao` devolve UM stage com `consome`/`produz` nos defaults,
+   e `WorkflowDefinition.__post_init__` desliga a checagem de beco sem saída no
+   grafo inteiro assim que um único stage usa o default — o custo está dito em
+   voz alta em `kernel/definition.py`, e vale aqui;
+2. mesmo se rodasse, não acharia nada: esta função não POPULA `consome`/`produz`
+   a partir dos blocos, e a checagem de lá procura `produz` órfão — ela nunca
+   compara o `kind` de um agente com coisa nenhuma.
+
+Logo: um agente com `kind` digitado errado é aceito, e em execução simplesmente
+nunca pega item nenhum. Religar isso precisa das DUAS pontas — o X7/X8 (ensinar
+`AgenteDeclarado` a declarar o que PRODUZ) e a fiação aqui, derivando
+`consome`/`produz` dos blocos. Enquanto as duas não existirem, quem escreve um
+agente na tela é quem garante o `kind`.
 """
 
 import hashlib
@@ -35,20 +62,22 @@ from typing import Any
 from orchestrator.agent.declarado import (
     AgenteDeclarado,
     ClienteDeValidacao,
-    Dominio,
     construir_agente,
 )
 from orchestrator.agent.llm import LLMClient
-from orchestrator.domains.registro import dominio as buscar_dominio
+from orchestrator.domains.registro import CATALOGO
+from orchestrator.kernel.cost import CostClass
 from orchestrator.kernel.definition import Stage, WorkflowDefinition
 from orchestrator.kernel.resolver import Resolver
+from orchestrator.review.fila import Fila
+from orchestrator.review.revisor import RevisorHumano
 
 _RAIZ_PADRAO = Path("data") / "composicoes"
 
 
 @dataclass(frozen=True)
 class BlocoRegra:
-    """Uma regra do domínio, com os parâmetros ajustados."""
+    """Uma regra do catálogo, com os parâmetros ajustados."""
 
     nome: str
     parametros: dict[str, int] = field(default_factory=dict)
@@ -68,7 +97,6 @@ Bloco = BlocoRegra | BlocoAgente
 class Composicao:
     id: str
     nome: str
-    dominio: str
     blocos: tuple[Bloco, ...]
     gerado_em: datetime
     justificativa: str = ""
@@ -100,10 +128,30 @@ class Composicao:
 def construir_composicao(
     c: Composicao,
     *,
+    fila: Fila | None = None,
     cliente: LLMClient | None = None,
     contexto: Any = None,
 ) -> WorkflowDefinition:
     """Valida construindo. Se retorna, a cascata roda.
+
+    **`fila` é a MESMA costura de `grill.receita.construir`, de propósito.**
+    Um bloco de classe `HUMANO` precisa da fila de decisões já tomadas para
+    existir como resolver, e ela não cabe em `RegraDisponivel.construir`, cuja
+    assinatura é uniforme `(parametros) -> Resolver`. Lá a fila entra por
+    palavra-chave e `workflows._de_receita` a liga ao `WorkflowContext.fila`;
+    aqui a palavra-chave é a mesma, para que o dia em que uma composição ganhar
+    caminho de execução seja um `fila=ctx.fila` a mais, e não uma segunda via
+    de configuração inventada ao lado da primeira.
+
+    **O default `Fila.vazia()` vale SÓ para validar, e é por isso que está
+    dito aqui em voz alta.** `domains.registro._revisor_precisa_da_fila` existe
+    exatamente para impedir que uma fila vazia entre em silêncio: um revisor
+    sobre fila vazia CONSTRÓI, a cascata fica desenhável, e nenhuma decisão
+    aprovada chega à execução — sem erro nenhum avisando. O default aqui é
+    seguro pelo mesmo motivo que `ClienteDeValidacao` é: a chamada default não
+    EXECUTA nada (`/api/composicoes` só compõe e grava, e composição não entra
+    no `registry()` dos workflows — ver `listar_composicoes`). Quem for
+    executar passa a fila de verdade, de propósito, e isso aparece no diff.
 
     **O cliente default é a TRANCA, não um modelo.** `ClienteDeValidacao`
     constrói o agente e recusa falar com modelo. É a mesma escolha do
@@ -116,23 +164,28 @@ def construir_composicao(
     para serem LIDAS — o arquiteto (§9 do spec da plataforma) devolve o erro ao
     modelo para ele se corrigir, e a pessoa na tela merece o mesmo texto.
 
-    `contexto` é o do DOMÍNIO — `ToolContext` na conciliação, `None` em domínios
-    cujas ferramentas não precisam de dados. Ele é ligado ao registro aqui, na
-    construção, e não fica guardado no catálogo (ver `ToolRegistry.ligado`).
+    `contexto` é o que as ferramentas precisam para EXECUTAR — `ToolContext` nas
+    de conciliação, e nada nas que não leem dados. Ele é ligado ao registro
+    aqui, na construção, e não fica guardado no catálogo (ver
+    `ToolRegistry.ligado`).
     """
-    d = buscar_dominio(c.dominio)
-    por_nome = {r.nome: r for r in d.regras}
-    # Sem contexto, o registro do domínio passa INTACTO — e o do `conciliacao`
-    # é um catálogo, que recusa executar. É o que faz "compor" e "executar"
-    # serem coisas diferentes: `com_contexto(None)` ligaria o registro a nada e
-    # as ferramentas estourariam em `None.bank` na primeira chamada, o que é
-    # pior que a recusa clara de um registro não ligado.
-    #
-    # Um domínio cujas ferramentas de fato não precisam de dados declara
-    # `contexto=None` na PRÓPRIA construção (ver `procurement` em
-    # `domains/registro.py`), e essa declaração sobrevive a este caminho.
-    ferramentas = d.ferramentas if contexto is None else d.ferramentas.com_contexto(contexto)
+    por_nome = {r.nome: r for r in CATALOGO.regras}
+    # Sem contexto, o registro do catálogo passa INTACTO — e catálogo recusa
+    # executar. É o que faz "compor" e "executar" serem coisas diferentes:
+    # `com_contexto(None)` ligaria o registro a nada e as ferramentas
+    # estourariam em `None.bank` na primeira chamada, o que é pior que a recusa
+    # clara de um registro não ligado.
+    ferramentas = (
+        CATALOGO.ferramentas
+        if contexto is None
+        else CATALOGO.ferramentas.com_contexto(contexto)
+    )
     cliente = cliente or ClienteDeValidacao()
+    # `is None`, não `or`: mesma disciplina de `grill.receita.construir`. `Fila`
+    # não define `__bool__` nem `__len__` hoje, mas no dia em que definir um
+    # `or` trocaria silenciosamente uma fila vazia EXPLÍCITA pelo default.
+    if fila is None:
+        fila = Fila.vazia()
 
     vistos: set[str] = set()
     resolvers: list[Resolver] = []
@@ -150,8 +203,8 @@ def construir_composicao(
             regra = por_nome.get(bloco.nome)
             if regra is None:
                 raise ValueError(
-                    f"regra desconhecida no domínio {c.dominio!r}: "
-                    f"{bloco.nome!r}. disponíveis: {sorted(por_nome)}"
+                    f"bloco desconhecido no catálogo: {bloco.nome!r}. "
+                    f"disponíveis: {sorted(por_nome)}"
                 )
             conhecidos = {p.nome for p in regra.parametros}
             desconhecidos = sorted(set(bloco.parametros) - conhecidos)
@@ -160,16 +213,31 @@ def construir_composicao(
                     f"parâmetro desconhecido para {bloco.nome!r}: "
                     f"{desconhecidos}. aceitos: {sorted(conhecidos)}"
                 )
-            resolvers.append(regra.construir(dict(bloco.parametros)))
+            if regra.cost_class is CostClass.HUMANO:
+                # A CLASSE, não a grafia do nome — mesmo desvio que
+                # `grill.receita.construir` faz, e pelo mesmo motivo: um bloco
+                # HUMANO depende da FILA, que não cabe na assinatura uniforme
+                # `(parametros) -> Resolver`. Sem este ramo, `revisor` estava
+                # na paleta do canvas e era o único bloco que "Compor e
+                # validar" não conseguia compor: `regra.construir({})` caía em
+                # `_revisor_precisa_da_fila` e devolvia 422 com um texto
+                # escrito para quem implementa. O degrau humano é justamente o
+                # que FECHA a cascata — a razão declarada de o `revisor` ter
+                # sido carregado para o catálogo plano —, então a composição
+                # ficaria sem o único degrau que a fatia existe para publicar.
+                resolvers.append(RevisorHumano(fila=fila))
+            else:
+                resolvers.append(regra.construir(dict(bloco.parametros)))
         else:
-            decl = bloco.declaracao
-            if decl.kind not in d.kinds:
-                raise ValueError(
-                    f"o agente {decl.name!r} trabalha kind {decl.kind!r}, que "
-                    f"não é do domínio {c.dominio!r} ({list(d.kinds)}). ele "
-                    f"rodaria sobre um pool que não enxerga"
-                )
-            resolvers.append(construir_agente(decl, cliente, ferramentas))
+            # Sem checagem de `kind`: a antiga comparava com os `kinds` do
+            # domínio e recusava cascata válida depois que a tela perdeu o
+            # seletor. O lugar certo é o grafo — mas para uma composição
+            # construída aqui ele está INERTE: um stage só, `consome`/`produz`
+            # no default, e esta função não os popula a partir dos blocos. Um
+            # `kind` errado passa e o agente não pega item nenhum na execução.
+            # Ver o cabeçalho do módulo: religar precisa do X7/X8 E da fiação
+            # aqui.
+            resolvers.append(construir_agente(bloco.declaracao, cliente, ferramentas))
 
     return WorkflowDefinition(
         id=c.id,
@@ -177,7 +245,12 @@ def construir_composicao(
         # Um estágio só. Vários estágios são uma decisão de produto que ainda
         # não tem caso — e `Stage.ordered()` já dá a cascata inteira ordenada
         # por custo dentro de um.
-        stages=(Stage(name=d.nome, cascade=tuple(resolvers)),),
+        #
+        # O estágio herda o nome da COMPOSIÇÃO. Antes ele herdava o nome do
+        # domínio, e o domínio era o mesmo para toda cascata composta sobre
+        # ele — o que fazia todo estágio de conciliação se chamar "Conciliação
+        # bancária", independentemente do que a pessoa tinha montado.
+        stages=(Stage(name=c.nome, cascade=tuple(resolvers)),),
     )
 
 
@@ -236,7 +309,6 @@ def para_json(c: Composicao) -> dict[str, Any]:
     return {
         "id": c.id,
         "nome": c.nome,
-        "dominio": c.dominio,
         "justificativa": c.justificativa,
         "gerado_em": c.gerado_em.isoformat(),
         "version": c.version,
@@ -266,7 +338,6 @@ def de_json(d: dict[str, Any]) -> Composicao:
     return Composicao(
         id=d["id"],
         nome=d["nome"],
-        dominio=d["dominio"],
         justificativa=d.get("justificativa", ""),
         gerado_em=gerado,
         blocos=tuple(blocos),
@@ -334,7 +405,6 @@ __all__ = [
     "BlocoAgente",
     "BlocoRegra",
     "Composicao",
-    "Dominio",
     "agora",
     "caminho",
     "construir_composicao",

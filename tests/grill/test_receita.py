@@ -86,7 +86,12 @@ def test_construir_propaga_a_mensagem_do_post_init_do_resolver():
 def test_construir_usa_defaults_inertes():
     # Sem cliente e sem contexto, um workflow com agente ainda CONSTRÓI (logo
     # é desenhável) — e só explode se alguém tentar chamar o modelo.
-    r = _receita(ResolverReceita("agente", {}))
+    #
+    # `investigador`, não `agente`: o catálogo plano (Task 3) nomeia o bloco
+    # AGENTE da conciliação pelo `Resolver.name` que ele sempre teve
+    # (`Investigator.name` já era "investigador" antes desta fatia) — o
+    # cardápio do grill é que usava a chave `"agente"` só para ele.
+    r = _receita(ResolverReceita("investigador", {}))
     d = construir(r)
 
     agente = d.stages[0].ordered()[0]
@@ -156,22 +161,22 @@ def test_validar_id_rejeita_id_reservado():
         validar_id("conciliacao")
 
 
-def test_construir_rejeita_max_turns_menor_que_um():
-    # `range(max_turns)` com max_turns <= 0 é vazio: o agente nunca chama o
-    # modelo e a investigação inteira vira abstenção muda — furando "se
-    # `construir` retorna, a receita roda".
-    r = _receita(ResolverReceita("agente", {"max_turns": -5}))
-    with pytest.raises(ValueError, match="max_turns"):
-        construir(r)
-
-
-def test_construir_rejeita_budget_microcents_negativo():
-    r = _receita(ResolverReceita("agente", {"budget_microcents": -1}))
-    with pytest.raises(ValueError, match="budget_microcents"):
-        construir(r)
-
-
-def test_construir_rejeita_budget_total_microcents_negativo():
-    r = _receita(ResolverReceita("agente", {"budget_total_microcents": -1}))
-    with pytest.raises(ValueError, match="budget_total_microcents"):
-        construir(r)
+# `test_construir_rejeita_max_turns_menor_que_um`,
+# `test_construir_rejeita_budget_microcents_negativo` e
+# `test_construir_rejeita_budget_total_microcents_negativo` não migram: elas
+# provavam que o bloco `"agente"` do CARDÁPIO do grill aceitava
+# `max_turns`/`budget_microcents`/`budget_total_microcents` como parâmetro da
+# RECEITA e repassava para `Investigator.__post_init__` validar. Isso exigia
+# uma entrada de catálogo com assinatura própria — exatamente o que
+# `EntradaCatalogo.construir(parametros, *, fila, cliente, context)` permitia
+# e o que `RegraDisponivel.construir(parametros)` (Task 1) deliberadamente não
+# tem espaço para reproduzir.
+#
+# `AgenteDeclarado` (o "investigador" do catálogo plano) não expõe NENHUM
+# parâmetro ajustável — `max_turns`/orçamento são fixados na DECLARAÇÃO do
+# domínio (`domains/registro.py`), não na composição — e são validados lá, por
+# `AgenteDeclarado.__post_init__`/`Agent.__post_init__`, no import, nunca por
+# uma receita. Uma receita que tentasse passar esses nomes hoje é recusada
+# como "parâmetro desconhecido" (mesma guarda que já existia para as regras),
+# o que é um resultado diferente do que estes três testes mediam — a
+# capacidade em si não existe mais para migrar.

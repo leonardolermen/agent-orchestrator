@@ -1,4 +1,4 @@
-"""A composição: uma cascata de qualquer domínio, com agente declarado inline.
+"""A composição: uma cascata do catálogo, com agente declarado inline.
 
 O que a `Receita` do grill não sabia carregar é o `BlocoAgente`: um agente que
 não existe pronto em catálogo nenhum, criado na própria composição. Tentar
@@ -40,10 +40,8 @@ def _agente(**kw) -> AgenteDeclarado:
     return AgenteDeclarado(**{**base, **kw})
 
 
-def _comp(blocos, dominio="swe", cid="minha") -> Composicao:
-    return Composicao(
-        id=cid, nome="Minha", dominio=dominio, gerado_em=AGORA, blocos=tuple(blocos)
-    )
+def _comp(blocos, cid="minha") -> Composicao:
+    return Composicao(id=cid, nome="Minha", gerado_em=AGORA, blocos=tuple(blocos))
 
 
 def _construir(c, contexto=None):
@@ -60,7 +58,7 @@ def test_agente_declarado_INLINE_vira_resolver():
     assert r.name == "meu-triador"
 
 
-def test_o_agente_inline_recebe_as_ferramentas_do_DOMINIO():
+def test_o_agente_inline_recebe_as_ferramentas_do_CATALOGO():
     d = _construir(
         _comp([BlocoAgente(declaracao=_agente(ferramentas=("contar_palavras",)))])
     )
@@ -69,25 +67,61 @@ def test_o_agente_inline_recebe_as_ferramentas_do_DOMINIO():
     assert r.tools.names() == ("contar_palavras",)
 
 
-def test_ferramenta_de_OUTRO_dominio_e_recusada():
+def test_ferramenta_INEXISTENTE_e_recusada():
+    """O recorte é sobre o catálogo INTEIRO — não existe mais uma partição de
+    ferramentas por domínio. O que continua sendo recusado é declarar uma
+    ferramenta que ninguém publicou."""
     with pytest.raises(ValueError, match="ferramenta inexistente"):
         _construir(
-            _comp([BlocoAgente(declaracao=_agente(ferramentas=("buscar_lancamentos",)))])
+            _comp([BlocoAgente(declaracao=_agente(ferramentas=("nao_existe",)))])
         )
 
 
-# -- um domínio só ----------------------------------------------------------
+def test_bloco_desconhecido_no_catalogo_LISTA_os_disponiveis():
+    """A mensagem é lida por quem compõe — e pelo modelo, que se corrige com
+    ela. Um "não achei" sem a lista obriga a adivinhar o nome certo."""
+    with pytest.raises(ValueError, match="bloco desconhecido no catálogo"):
+        _construir(_comp([BlocoRegra(nome="nao-existe")]))
 
 
-def test_agente_de_KIND_ESTRANHO_ao_dominio_e_recusado():
-    """Ele rodaria sobre um pool que não enxerga."""
-    with pytest.raises(ValueError, match="não é do domínio"):
-        _construir(_comp([BlocoAgente(declaracao=_agente(kind="lancamento"))]))
+def test_o_degrau_HUMANO_do_catalogo_COMPOE():
+    """O bloco que a paleta oferecia e a composição não conseguia construir.
+
+    `revisor` é a única regra de classe `HUMANO` do catálogo, e ele depende da
+    FILA de decisões — que não cabe na assinatura uniforme
+    `(parametros) -> Resolver`. Sem o ramo por `cost_class`,
+    `regra.construir({})` caía em `_revisor_precisa_da_fila` e "Compor e
+    validar" devolvia 422 com um texto escrito para quem implementa. O degrau
+    humano é o que FECHA a cascata, e é a razão declarada de o `revisor` ter
+    sido carregado para o catálogo plano: sem ele, a composição — o caminho
+    que esta fatia existe para abrir — era o único que não fechava.
+    """
+    c = _comp([BlocoRegra(nome="L1"), BlocoRegra(nome="revisor")])
+
+    cascata = _construir(c).stages[0].ordered()
+
+    assert [r.name for r in cascata] == ["L1", "revisor"]
+    assert [r.cost_class.name for r in cascata] == ["REGRA", "HUMANO"]
 
 
-def test_regra_de_OUTRO_dominio_e_recusada():
-    with pytest.raises(ValueError, match="regra desconhecida"):
-        _construir(_comp([BlocoRegra(nome="L1")], dominio="swe"))
+def test_o_revisor_composto_LE_A_FILA_QUE_RECEBEU():
+    """O ramo HUMANO existe para a fila REAL chegar — não para o bloco parar
+    de levantar.
+
+    Um `RevisorHumano(fila=Fila.vazia())` cravado aqui construiria igual e
+    passaria o teste acima, enquanto nenhuma decisão aprovada chegaria à
+    execução: o fallback silencioso que `_revisor_precisa_da_fila` existe para
+    impedir. Este teste é o que torna a diferença visível — a fila que entra
+    por palavra-chave é a que o resolver carrega.
+    """
+    from orchestrator.review.fila import Fila
+
+    minha = Fila.vazia()
+
+    d = construir_composicao(_comp([BlocoRegra(nome="revisor")]), fila=minha)
+
+    (r,) = d.stages[0].cascade
+    assert r.fila is minha
 
 
 # -- a ordem não é do autor -------------------------------------------------
@@ -100,8 +134,7 @@ def test_a_ordem_dos_BLOCOS_nao_decide_a_ordem_da_CASCATA():
         [
             BlocoAgente(declaracao=_agente(kind="requisicao", name="buscador-meu")),
             BlocoRegra(nome="preferido"),
-        ],
-        dominio="procurement",
+        ]
     )
 
     classes = [r.cost_class.name for r in _construir(c).stages[0].ordered()]
@@ -114,14 +147,14 @@ def test_a_ordem_dos_BLOCOS_nao_decide_a_ordem_da_CASCATA():
 
 def test_bloco_REPETIDO_e_recusado():
     """O segundo rodaria sobre o pool que o primeiro já esvaziou."""
-    c = _comp([BlocoRegra(nome="preferido"), BlocoRegra(nome="preferido")], "procurement")
+    c = _comp([BlocoRegra(nome="preferido"), BlocoRegra(nome="preferido")])
 
     with pytest.raises(ValueError, match="esvaziou"):
         _construir(c)
 
 
 def test_parametro_desconhecido_de_REGRA_e_recusado():
-    c = _comp([BlocoRegra(nome="L2", parametros={"nao_existe": 3})], "conciliacao")
+    c = _comp([BlocoRegra(nome="L2", parametros={"nao_existe": 3})])
 
     with pytest.raises(ValueError, match="parâmetro desconhecido"):
         _construir(c, contexto=ToolContext([], []))
@@ -137,15 +170,9 @@ def test_gerado_em_sem_fuso_e_recusado():
         Composicao(
             id="x",
             nome="X",
-            dominio="swe",
             gerado_em=datetime(2026, 9, 16, 12, 0),
             blocos=(BlocoAgente(declaracao=_agente()),),
         )
-
-
-def test_dominio_desconhecido_lista_os_disponiveis():
-    with pytest.raises(KeyError, match="disponíveis"):
-        _construir(_comp([BlocoRegra(nome="x")], dominio="nao-existe"))
 
 
 # -- a versão ---------------------------------------------------------------
@@ -168,8 +195,8 @@ def test_mudar_o_PROMPT_muda_a_versao():
 
 
 def test_mudar_um_PARAMETRO_de_regra_muda_a_versao():
-    a = _comp([BlocoRegra(nome="L2", parametros={"max_cents": 5})], "conciliacao")
-    b = _comp([BlocoRegra(nome="L2", parametros={"max_cents": 50})], "conciliacao")
+    a = _comp([BlocoRegra(nome="L2", parametros={"max_cents": 5})])
+    b = _comp([BlocoRegra(nome="L2", parametros={"max_cents": 50})])
 
     assert a.version != b.version
 
@@ -184,14 +211,27 @@ def test_o_roundtrip_preserva_TUDO_inclusive_o_agente_inline():
             BlocoAgente(
                 declaracao=_agente(kind="requisicao", name="b", max_turns=9)
             ),
-        ],
-        "procurement",
+        ]
     )
 
     voltou = de_json(para_json(c))
 
     assert voltou.version == c.version
     assert voltou.blocos[1].declaracao.max_turns == 9
+
+
+def test_o_que_vai_para_o_DISCO_nao_carrega_dominio():
+    """A outra metade da remoção, no formato persistido.
+
+    `Composicao.dominio` sumiu do dataclass, mas um `para_json` que continuasse
+    escrevendo a chave (ou um `de_json` que continuasse a exigir) manteria o
+    conceito vivo no disco, onde nenhum type checker olha. E um campo gravado
+    que ninguém lê é o próximo a ser lido por engano.
+    """
+    d = para_json(_comp([BlocoAgente(declaracao=_agente())]))
+
+    assert "dominio" not in d
+    assert de_json(d).version == _comp([BlocoAgente(declaracao=_agente())]).version
 
 
 def test_tipo_de_bloco_desconhecido_LEVANTA_em_vez_de_sumir():
@@ -245,8 +285,7 @@ def test_compor_SEM_contexto_deixa_o_registro_como_CATALOGO():
     d = _construir(
         _comp(
             [BlocoAgente(declaracao=_agente(kind="lancamento", name="meu-investigador",
-                                            ferramentas=("buscar_lancamentos",)))],
-            dominio="conciliacao",
+                                            ferramentas=("buscar_lancamentos",)))]
         )
     )
 
@@ -262,8 +301,7 @@ def test_compor_COM_contexto_entrega_um_agente_que_EXECUTA():
     d = _construir(
         _comp(
             [BlocoAgente(declaracao=_agente(kind="lancamento", name="meu-investigador",
-                                            ferramentas=("buscar_lancamentos",)))],
-            dominio="conciliacao",
+                                            ferramentas=("buscar_lancamentos",)))]
         ),
         contexto=ToolContext([], []),
     )

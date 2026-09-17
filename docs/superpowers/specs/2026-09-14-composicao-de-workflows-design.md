@@ -1,7 +1,10 @@
 # Composição de Workflows — Documento de Design
 
 **Data:** 2026-09-14
-**Status:** ⚠️ **DESIGN APROVADO, CONSTRUÇÃO NÃO AGENDADA**
+**Estado:** ENTREGUE PARCIALMENTE. Existem `Composicao`, o canvas de composição
+e o entrevistador. Falta a composição alcançar o GRAFO — etapas com
+`consome`/`produz` e arestas derivadas —, que é o trabalho pendente do spec de
+execução como grafo (X7–X8).
 **Escopo:** V3 — a plataforma
 **Spec pai:** [`2026-09-14-agent-orchestrator-design.md`](2026-09-14-agent-orchestrator-design.md)
 

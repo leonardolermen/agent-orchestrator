@@ -15,17 +15,6 @@ export interface Parametro {
   descricao: string;
 }
 
-export interface EntradaCatalogo {
-  nome: string;
-  cost_class: CostClass;
-  resumo: string;
-  parametros: Parametro[];
-  ferramentas: string[];
-  // `null` para resolver determinístico. A ausência é usada para NÃO desenhar
-  // uma linha de modelo onde não houve escolha de modelo.
-  modelo_padrao: string | null;
-}
-
 export interface Ferramenta {
   nome: string;
   descricao: string;
@@ -50,14 +39,17 @@ export interface AgenteDeclarado {
   budget_microcents: number;
 }
 
-export interface DominioInfo {
-  id: string;
-  nome: string;
-  kinds: string[];
+// Tudo que dá para compor, SEM agrupamento. Espelha `CatalogoJSON`.
+//
+// Não há mais partição por domínio: a paleta é o catálogo inteiro, e a garantia
+// que o domínio dava — blocos que trabalham o mesmo `kind` — é do grafo, que
+// recusa degraus cujos kinds não conectam.
+//
+// Regra e agente em listas SEPARADAS: o que a tela edita em cada um é
+// diferente — regra tem parâmetros, agente tem prompt, vocabulário e
+// ferramentas. Uma lista só obrigaria a inspecionar o tipo em cada linha.
+export interface Catalogo {
   ferramentas: Ferramenta[];
-  // Regra e agente em listas SEPARADAS: o que a tela edita em cada um é
-  // diferente — regra tem parâmetros, agente tem prompt, vocabulário e
-  // ferramentas. Uma lista só obrigaria a inspecionar o tipo em cada linha.
   regras: Regra[];
   agentes: AgenteDeclarado[];
 }
@@ -109,7 +101,6 @@ export type BlocoPedido =
 export interface ComposicaoResumo {
   id: string;
   nome: string;
-  dominio: string;
   version: string;
   gerado_em: string;
   // NOMES e não contagem: "3 blocos" não distingue uma cascata que começa numa
@@ -158,14 +149,12 @@ async function pedir<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  catalogo: () => pedir<EntradaCatalogo[]>("/api/catalogo"),
+  // A ÚNICA fonte da paleta. Antes eram duas — esta rota servia o cardápio do
+  // grill (só conciliação) e `/api/dominios` servia a paleta particionada, o
+  // que obrigava a tela a perguntar o domínio antes de mostrar qualquer bloco.
+  catalogo: () => pedir<Catalogo>("/api/catalogo"),
 
   ambiente: () => pedir<Ambiente>("/api/ambiente"),
-
-  // A PRIMEIRA pergunta da tela. Antes ela não existia: a paleta era o
-  // catálogo do grill — o cardápio da conciliação — e por isso o canvas só
-  // ofereceu blocos de conciliação até alguém perguntar por quê.
-  dominios: () => pedir<DominioInfo[]>("/api/dominios"),
 
   criarReceita: (corpo: {
     id: string;
@@ -188,7 +177,6 @@ export const api = {
   criarComposicao: (corpo: {
     id: string;
     nome: string;
-    dominio: string;
     justificativa: string;
     blocos: BlocoPedido[];
   }) =>
@@ -208,7 +196,104 @@ export const api = {
         taxa_divergencia: ambiente.taxa_divergencia,
       }),
     }),
+
+  // Os workflows JÁ SALVOS. É o que a vista de execução navega, e é o que a
+  // CLI do grill entrega: ela imprime `/?workflow=<id>` como último passo,
+  // então esta listagem é o outro lado daquele link.
+  workflows: () => pedir<WorkflowResumo[]>("/api/workflows"),
+
+  workflow: (workflowId: string) =>
+    pedir<WorkflowConstruido>(`/api/workflows/${encodeURIComponent(workflowId)}`),
+
+  fila: (workflowId: string, dataset: ParametrosDaFila) =>
+    pedir<Fila>(
+      `/api/fila/${encodeURIComponent(workflowId)}?${queryDoDataset(dataset)}`,
+    ),
+
+  // `workflow_id` é segmento de PATH e o dataset é query — a rota é
+  // `/api/fila/{workflow_id}`, e a fila é escopada nas DUAS dimensões:
+  // `caminho_da_fila(workflow_id, dataset)` toma o workflow primeiro e o
+  // `dataset_id(seed, n, taxa)` depois. Mandar uma sem a outra decide na fila
+  // errada em silêncio.
+  decidir: (
+    workflowId: string,
+    divergenceId: string,
+    dataset: ParametrosDaFila,
+    corpo: Decisao,
+  ) =>
+    pedir<ItemDaFila>(
+      `/api/fila/${encodeURIComponent(workflowId)}/${encodeURIComponent(divergenceId)}/decisao?${queryDoDataset(dataset)}`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(corpo),
+      },
+    ),
 };
+
+export interface WorkflowResumo {
+  id: string;
+  nome: string;
+  classes: string[];
+  gerado_em: string | null;
+  // Falso quando a cascata tem classe AGENTE. A tela desabilita a opção em vez
+  // de deixar a pessoa colher um 409 — mas quem GARANTE é o servidor.
+  executavel: boolean;
+}
+
+/** Os três campos que escopam um dataset. Os MESMOS de `RunRequest`. */
+export interface ParametrosDaFila {
+  seed: number;
+  n: number;
+  taxa_divergencia: number;
+}
+
+function queryDoDataset(d: ParametrosDaFila): string {
+  return new URLSearchParams({
+    seed: String(d.seed),
+    n: String(d.n),
+    taxa_divergencia: String(d.taxa_divergencia),
+  }).toString();
+}
+
+export interface Lancamento {
+  id: string;
+  lado: string;
+  data: string;
+  valor: number; // centavos, sempre int — ver `money.py`
+  descricao: string;
+  contraparte: string;
+  documento: string | null;
+}
+
+export interface ItemDaFila {
+  divergence_id: string;
+  tipo: string;
+  confianca: string;
+  explicacao: string;
+  evidencia: string[];
+  acao_sugerida: string;
+  conciliar_com: string[];
+  lancamentos: Lancamento[];
+  decidido: boolean;
+}
+
+export interface Fila {
+  workflow: string;
+  dataset: string;
+  itens: ItemDaFila[];
+  // A taxonomia vem da API, NUNCA de uma lista escrita aqui. Duplicar os
+  // valores no front cria drift silencioso no dia em que a taxonomia crescer —
+  // o mesmo defeito que a fatia da fila existiu para tornar impossível.
+  tipos: string[];
+}
+
+export interface Decisao {
+  veredito: "aceitar" | "rejeitar" | "corrigir";
+  autor: string;
+  tipo?: string;
+  conciliar_com?: string[];
+}
 
 // Um agente em branco. É o que transforma a paleta de "escolha um pronto" em
 // "crie um" — e é o pedido do dono: uma plataforma geral, não um cardápio.
@@ -221,11 +306,16 @@ export const api = {
 //
 // Os números NÃO saem vazios: `max_turns` e o orçamento têm default no
 // servidor, e um agente sem teto é um agente que gasta até o fim da fila.
-export function agenteEmBranco(nome: string, kind: string): AgenteDeclarado {
+//
+// O `kind` também nasce VAZIO, e é a mudança do quadro em branco: antes ele
+// vinha do domínio escolhido (`dominio.kinds[0]`), que decidia pela pessoa
+// sobre que tipo de item o agente trabalha. É o grafo que liga os degraus por
+// `kind` — quem monta precisa dizer qual é, e o painel pede.
+export function agenteEmBranco(nome: string): AgenteDeclarado {
   return {
     name: nome,
     system: "",
-    kind,
+    kind: "",
     prompt: "",
     tipos: [],
     abstem_com: "NAO_SEI",
