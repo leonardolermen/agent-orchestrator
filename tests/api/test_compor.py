@@ -72,14 +72,24 @@ def test_o_catalogo_traz_os_parametros_com_DEFAULT_do_proprio_resolver():
 
     assert {p["nome"] for p in l2["parametros"]} == {"max_cents", "max_business_days"}
     assert all(isinstance(p["default"], int) for p in l2["parametros"])
+    assert all(p["descricao"] for p in l2["parametros"])
 
 
 def test_o_catalogo_expoe_as_ferramentas_de_TODAS_as_origens():
-    """"Todas as nossas tools disponíveis" — o pedido, na borda HTTP."""
+    """"Todas as nossas tools disponíveis" — o pedido, na borda HTTP.
+
+    A identidade contra `CATALOGO.ferramentas` (não só a presença de uma) é o
+    que torna a lista DERIVADA: uma lista escrita à mão com seis nomes,
+    incluindo `contar_palavras`, passaria por uma checagem de "está contido"
+    sem nunca ser pega divergindo.
+    """
+    from orchestrator.domains.registro import CATALOGO
+
     nomes = {f["nome"] for f in cliente.get("/api/catalogo").json()["ferramentas"]}
 
+    assert nomes == set(CATALOGO.ferramentas.names())
+    # E que a ferramenta do domínio `swe` atravessou a fusão das origens.
     assert "contar_palavras" in nomes
-    assert len(nomes) >= 6
 
 
 # -- a defesa contra decoração ---------------------------------------------
@@ -278,11 +288,23 @@ def test_o_modelo_do_agente_e_PADRAO_e_nao_escolha_gravada():
     assert "model" not in str(para_json(r)).lower()
 
 
-# A invariante "resolver determinístico não tem modelo nem ferramenta" agora é
-# estrutural, não de runtime: `RegraJSON` (schemas.py) não declara `prompt`,
-# `tipos`, `ferramentas` nem campo de modelo — a ausência no SCHEMA é o que
-# impede a tela de desenhar uma edição que o construtor não aceita. Não há
-# valor `None`/`[]` para checar porque o campo não existe.
+def test_resolver_DETERMINISTICO_do_grill_nao_tem_modelo_nem_ferramenta():
+    """`None` e lista vazia, não `"-"`: a AUSÊNCIA é o que diz que não houve
+    escolha de modelo.
+
+    Esta era a invariante do `EntradaCatalogo` do GRILL, checada antes via
+    `/api/catalogo` — rota que passou a servir o catálogo PLANO, cujo
+    `RegraJSON` nem tem esses campos (ver o comentário acima do handler
+    `catalogo()`). `grill.catalogo.CATALOGO` continua vivo em produção —
+    `/api/receitas` chega nele por `construir` — então a checagem migra para
+    ler o objeto direto, sem HTTP, em vez de desaparecer.
+    """
+    from orchestrator.grill.catalogo import CATALOGO as CATALOGO_DO_GRILL
+
+    for nome in ("L1", "L2", "L3", "revisor"):
+        e = CATALOGO_DO_GRILL[nome]
+        assert e.modelo_padrao is None, nome
+        assert e.ferramentas == (), nome
 
 
 # -- o botão Run ------------------------------------------------------------
