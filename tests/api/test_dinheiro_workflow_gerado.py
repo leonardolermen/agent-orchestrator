@@ -46,7 +46,8 @@ def test_executar_workflow_com_agente_responde_409(tmp_path):
     cliente = TestClient(app_mod.app)
 
     resposta = cliente.post(
-        "/api/workflows/pago/runs", json={"seed": 1, "n": 60, "taxa_divergencia": 0.15}
+        "/api/workflows/pago/runs",
+        json={"fonte": {"tipo": "sintetica", "seed": 1, "n": 60, "taxa_divergencia": 0.15}},
     )
 
     assert resposta.status_code == 409
@@ -68,7 +69,10 @@ def test_o_modelo_nunca_e_chamado_por_um_endpoint(tmp_path, monkeypatch):
     monkeypatch.setattr(cat_mod.ClienteAusente, "complete", espiao)
     cliente = TestClient(app_mod.app)
 
-    cliente.post("/api/workflows/pago/runs", json={"seed": 1, "n": 60, "taxa_divergencia": 0.15})
+    cliente.post(
+        "/api/workflows/pago/runs",
+        json={"fonte": {"tipo": "sintetica", "seed": 1, "n": 60, "taxa_divergencia": 0.15}},
+    )
     cliente.get("/api/workflows/pago")
     cliente.get("/api/workflows")
 
@@ -92,7 +96,8 @@ def test_workflow_sem_agente_continua_executando(tmp_path):
 
     assert (
         cliente.post(
-            "/api/workflows/gratis/runs", json={"seed": 1, "n": 60, "taxa_divergencia": 0.15}
+            "/api/workflows/gratis/runs",
+            json={"fonte": {"tipo": "sintetica", "seed": 1, "n": 60, "taxa_divergencia": 0.15}},
         ).status_code
         == 200
     )
@@ -103,7 +108,7 @@ def test_a_embutida_continua_executando(tmp_path):
     assert (
         cliente.post(
             "/api/workflows/conciliacao/runs",
-            json={"seed": 1, "n": 60, "taxa_divergencia": 0.15},
+            json={"fonte": {"tipo": "sintetica", "seed": 1, "n": 60, "taxa_divergencia": 0.15}},
         ).status_code
         == 200
     )

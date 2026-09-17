@@ -380,7 +380,10 @@ def test_cascata_GRATIS_composta_pela_tela_RODA_de_verdade():
     """O fluxo inteiro: compor, gravar, executar — sem sair da web."""
     cliente.post("/api/receitas", json=_corpo([{"nome": "L1"}], wid="so-regra"))
 
-    r = cliente.post("/api/workflows/so-regra/runs", json={"seed": 1, "n": 120})
+    r = cliente.post(
+        "/api/workflows/so-regra/runs",
+        json={"fonte": {"tipo": "sintetica", "seed": 1, "n": 120}},
+    )
 
     assert r.status_code == 200, r.text
     assert r.json()["deterministic_rate"] > 0
@@ -398,7 +401,10 @@ def test_cascata_PAGA_composta_pela_tela_e_recusada_pelo_SERVIDOR():
     """
     cliente.post("/api/receitas", json=_corpo([{"nome": "investigador"}], wid="com-agente"))
 
-    r = cliente.post("/api/workflows/com-agente/runs", json={"seed": 1, "n": 60})
+    r = cliente.post(
+        "/api/workflows/com-agente/runs",
+        json={"fonte": {"tipo": "sintetica", "seed": 1, "n": 60}},
+    )
 
     assert r.status_code == 409
     assert "etapa paga" in r.json()["detail"]

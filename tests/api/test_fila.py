@@ -110,7 +110,7 @@ def test_ler_a_fila_nao_chama_o_modelo(monkeypatch):
 def test_execucao_so_serve_classes_que_nao_gastam():
     corpo = cliente.post(
         "/api/workflows/conciliacao/runs",
-        json={"seed": 1, "n": 30, "taxa_divergencia": 0.15},
+        json={"fonte": {"tipo": "sintetica", "seed": 1, "n": 30, "taxa_divergencia": 0.15}},
     ).json()
 
     assert all(r["cost_class"] != "AGENTE" for r in corpo["by_resolver"])
@@ -120,7 +120,7 @@ def test_execucao_so_serve_classes_que_nao_gastam():
 def test_a_soma_das_taxas_mais_a_lacuna_continua_um():
     corpo = cliente.post(
         "/api/workflows/conciliacao/runs",
-        json={"seed": 1, "n": 300, "taxa_divergencia": 0.15},
+        json={"fonte": {"tipo": "sintetica", "seed": 1, "n": 300, "taxa_divergencia": 0.15}},
     ).json()
 
     soma = sum(r["rate"] for r in corpo["by_resolver"]) + corpo["gap"]["rate"]
@@ -174,7 +174,7 @@ def test_decisao_aceitar_atualiza_a_execucao_apos_invalidar_cache():
     proposta que concilia os dois deve fechar essa lacuna na PRÓXIMA leitura
     do endpoint de execução — o que só acontece se o POST limpar o cache.
     """
-    corpo_execucao = {"seed": 1, "n": 30, "taxa_divergencia": 0.15}
+    corpo_execucao = {"fonte": {"tipo": "sintetica", "seed": 1, "n": 30, "taxa_divergencia": 0.15}}
 
     antes = cliente.post("/api/workflows/conciliacao/runs", json=corpo_execucao).json()
     assert antes["gap"]["items"] == 1

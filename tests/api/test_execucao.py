@@ -15,7 +15,7 @@ def _cache_limpo():
     """`executar()` delega para `_executar`, que é `lru_cache`d.
 
     Duas funções neste arquivo postam o EXATO mesmo corpo
-    (`{"seed": 1, "n": 100, "taxa_divergencia": 0.15}`): o canário
+    (`{"fonte": {"tipo": "sintetica", "seed": 1, "n": 100, "taxa_divergencia": 0.15}}`): o canário
     (`test_execucao_nao_chama_o_modelo_de_jeito_nenhum`) e
     `test_execucao_nao_serve_resolver_que_gasta_dinheiro`. Se uma rodar depois da
     outra com o cache ainda quente, a segunda vira cache hit — o corpo de
@@ -60,7 +60,7 @@ def test_execucao_nao_chama_o_modelo_de_jeito_nenhum(monkeypatch):
 
     resposta = cliente.post(
         "/api/workflows/conciliacao/runs",
-        json={"seed": 1, "n": 100, "taxa_divergencia": 0.15},
+        json={"fonte": {"tipo": "sintetica", "seed": 1, "n": 100, "taxa_divergencia": 0.15}},
     )
 
     assert resposta.status_code == 200
@@ -84,7 +84,7 @@ def test_execucao_nao_serve_resolver_que_gasta_dinheiro():
     """
     corpo = cliente.post(
         "/api/workflows/conciliacao/runs",
-        json={"seed": 1, "n": 100, "taxa_divergencia": 0.15},
+        json={"fonte": {"tipo": "sintetica", "seed": 1, "n": 100, "taxa_divergencia": 0.15}},
     ).json()
 
     assert "AGENTE" not in [r["cost_class"] for r in corpo["by_resolver"]]
@@ -93,7 +93,7 @@ def test_execucao_nao_serve_resolver_que_gasta_dinheiro():
 def test_execucao_reporta_taxa_e_custo_por_resolver():
     corpo = cliente.post(
         "/api/workflows/conciliacao/runs",
-        json={"seed": 1, "n": 300, "taxa_divergencia": 0.15},
+        json={"fonte": {"tipo": "sintetica", "seed": 1, "n": 300, "taxa_divergencia": 0.15}},
     ).json()
 
     nomes = [r["name"] for r in corpo["by_resolver"]]
@@ -108,7 +108,7 @@ def test_a_lacuna_e_reportada_explicitamente():
     # composição — o ponto mais valioso da tela.
     corpo = cliente.post(
         "/api/workflows/conciliacao/runs",
-        json={"seed": 1, "n": 300, "taxa_divergencia": 0.15},
+        json={"fonte": {"tipo": "sintetica", "seed": 1, "n": 300, "taxa_divergencia": 0.15}},
     ).json()
 
     assert corpo["gap"]["items"] > 0
@@ -119,7 +119,7 @@ def test_a_lacuna_e_reportada_explicitamente():
 def test_n_invalido_da_422_em_vez_de_estourar():
     resposta = cliente.post(
         "/api/workflows/conciliacao/runs",
-        json={"seed": 1, "n": 300, "taxa_divergencia": 5.0},
+        json={"fonte": {"tipo": "sintetica", "seed": 1, "n": 300, "taxa_divergencia": 5.0}},
     )
     assert resposta.status_code == 422
 
@@ -182,7 +182,7 @@ def test_resolver_com_layer_diferente_do_name_e_reportado_pelo_proprio_nome(monk
 
     corpo = cliente.post(
         "/api/workflows/layer_diferente/runs",
-        json={"seed": 1, "n": 100, "taxa_divergencia": 0.15},
+        json={"fonte": {"tipo": "sintetica", "seed": 1, "n": 100, "taxa_divergencia": 0.15}},
     ).json()
 
     (resolvido,) = corpo["by_resolver"]
@@ -243,3 +243,12 @@ def test_teto_negativo_e_recusado_pelo_SCHEMA():
 
     with pytest.raises(pydantic.ValidationError):
         RunRequest(teto_microcents=-1)
+
+
+def test_a_forma_ANTIGA_do_pedido_e_recusada_em_voz_alta():
+    """`seed` no topo era o pedido inteiro até esta fatia. Aceitar e ignorar
+    daria um run com parâmetros diferentes dos pedidos, sem erro — e um número
+    silenciosamente errado é pior que uma recusa."""
+    r = cliente.post("/api/workflows/conciliacao/runs", json={"seed": 2, "n": 60})
+
+    assert r.status_code == 422

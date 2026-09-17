@@ -64,7 +64,8 @@ def test_workflow_gerado_executa_e_fecha_a_lacuna(tmp_path):
     cliente = TestClient(app_mod.app)
 
     dados = cliente.post(
-        "/api/workflows/acme/runs", json={"seed": 1, "n": 60, "taxa_divergencia": 0.15}
+        "/api/workflows/acme/runs",
+        json={"fonte": {"tipo": "sintetica", "seed": 1, "n": 60, "taxa_divergencia": 0.15}},
     ).json()
 
     soma = sum(r["rate"] for r in dados["by_resolver"]) + dados["gap"]["rate"]

@@ -249,8 +249,10 @@ def test_o_ambiente_traz_os_limites_que_a_execucao_APLICA():
     dados = cliente.get("/api/ambiente").json()
 
     assert cliente.post(
-        "/api/workflows/conciliacao/runs", json={"seed": dados["seed"], "n": dados["n"]}
+        "/api/workflows/conciliacao/runs",
+        json={"fonte": {"tipo": "sintetica", "seed": dados["seed"], "n": dados["n"]}},
     ).status_code == 200
     assert cliente.post(
-        "/api/workflows/conciliacao/runs", json={"seed": 1, "n": dados["n_max"] + 1}
+        "/api/workflows/conciliacao/runs",
+        json={"fonte": {"tipo": "sintetica", "seed": 1, "n": dados["n_max"] + 1}},
     ).status_code == 422

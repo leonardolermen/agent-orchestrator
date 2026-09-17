@@ -6,7 +6,7 @@ mão em paralelo a eles — ver o teste anti-drift.
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from orchestrator.kernel.definition import Stage, WorkflowDefinition
 from orchestrator.review.decision import Veredito
@@ -74,7 +74,18 @@ class RunRequest(BaseModel):
 
     `fonte` com default mantém todo chamador de hoje funcionando sem edição: um
     corpo vazio continua sendo o benchmark sintético com os mesmos números.
+
+    `extra="forbid"`: antes desta fatia, `seed`/`n`/`taxa_divergencia` eram o
+    pedido inteiro. Sem essa trava, um cliente que ainda manda esse formato
+    antigo teria os três campos silenciosamente ignorados (o comportamento
+    padrão do Pydantic para campo desconhecido) e a execução cairia nos
+    defaults de `FonteSintetica` — um run com parâmetros DIFERENTES dos
+    pedidos, sem erro nenhum. Um 422 que nomeia o campo estranho é o que faz
+    esse cliente descobrir que a forma mudou, em vez de descobrir que o
+    número estava errado.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     fonte: FonteSintetica | FonteArquivo = Field(
         default_factory=FonteSintetica, discriminator="tipo"
