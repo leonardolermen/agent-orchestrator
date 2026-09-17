@@ -353,7 +353,17 @@ class ComposicaoRequest(BaseModel):
 
     id: str
     nome: str
-    dominio: str
+    # ANDAIME DE UMA FATIA, e ele sai junto com `Composicao.dominio`.
+    #
+    # A tela não tem mais seletor de domínio e por isso não manda este campo. O
+    # domínio, porém, ainda é o que `construir_composicao` usa para achar as
+    # regras e ligar as ferramentas — enquanto isso for verdade, exigir o campo
+    # faria toda composição vinda da tela morrer num "field required" do
+    # Pydantic, que é o erro mais mudo possível para quem só clicou em "Compor".
+    # O default mantém o caminho vivo; a cascata de OUTRO domínio continua sendo
+    # recusada com o texto que explica por quê, e é essa recusa que desaparece
+    # quando `Dominio` morrer.
+    dominio: str = "conciliacao"
     justificativa: str = ""
     blocos: list[BlocoJSON] = Field(min_length=1)
 

@@ -258,6 +258,30 @@ def test_a_pagina_DIZ_que_as_SETAS_nao_sao_do_autor():
     assert "classe de custo" in fonte
 
 
+def test_a_tela_NAO_pergunta_o_dominio_antes_de_mostrar_bloco():
+    """O quadro em branco, ancorado onde ele é verdade: no bundle.
+
+    A prova não é o texto do `<label>` que sumiu — ele poderia sumir com a
+    chamada continuando lá, e a paleta seguiria particionada. A prova é a
+    ORIGEM da paleta: enquanto o bundle falar com `/api/dominios`, a tela ainda
+    depende de uma partição que ela não mostra, que é a versão pior do defeito
+    que esta fatia remove.
+
+    `/api/dominios` ainda RESPONDE — quem a apaga é a fatia seguinte. O que
+    este teste fixa é que a tela não a consome mais.
+    """
+    from pathlib import Path
+
+    import orchestrator.api.app as mod
+
+    bundles = list((Path(mod.__file__).parents[3] / "web" / "assets").glob("*.js"))
+    assert bundles, "o app não foi buildado (npm --prefix web-app run build)"
+    fonte = "\n".join(b.read_text(encoding="utf-8") for b in bundles)
+
+    assert "/api/dominios" not in fonte
+    assert "/api/catalogo" in fonte
+
+
 # -- o nó do agente: modelo e ferramentas ----------------------------------
 
 

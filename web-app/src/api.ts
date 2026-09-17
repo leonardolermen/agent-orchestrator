@@ -15,17 +15,6 @@ export interface Parametro {
   descricao: string;
 }
 
-export interface EntradaCatalogo {
-  nome: string;
-  cost_class: CostClass;
-  resumo: string;
-  parametros: Parametro[];
-  ferramentas: string[];
-  // `null` para resolver determinístico. A ausência é usada para NÃO desenhar
-  // uma linha de modelo onde não houve escolha de modelo.
-  modelo_padrao: string | null;
-}
-
 export interface Ferramenta {
   nome: string;
   descricao: string;
@@ -50,14 +39,17 @@ export interface AgenteDeclarado {
   budget_microcents: number;
 }
 
-export interface DominioInfo {
-  id: string;
-  nome: string;
-  kinds: string[];
+// Tudo que dá para compor, SEM agrupamento. Espelha `CatalogoJSON`.
+//
+// Não há mais partição por domínio: a paleta é o catálogo inteiro, e a garantia
+// que o domínio dava — blocos que trabalham o mesmo `kind` — é do grafo, que
+// recusa degraus cujos kinds não conectam.
+//
+// Regra e agente em listas SEPARADAS: o que a tela edita em cada um é
+// diferente — regra tem parâmetros, agente tem prompt, vocabulário e
+// ferramentas. Uma lista só obrigaria a inspecionar o tipo em cada linha.
+export interface Catalogo {
   ferramentas: Ferramenta[];
-  // Regra e agente em listas SEPARADAS: o que a tela edita em cada um é
-  // diferente — regra tem parâmetros, agente tem prompt, vocabulário e
-  // ferramentas. Uma lista só obrigaria a inspecionar o tipo em cada linha.
   regras: Regra[];
   agentes: AgenteDeclarado[];
 }
@@ -158,14 +150,12 @@ async function pedir<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  catalogo: () => pedir<EntradaCatalogo[]>("/api/catalogo"),
+  // A ÚNICA fonte da paleta. Antes eram duas — esta rota servia o cardápio do
+  // grill (só conciliação) e `/api/dominios` servia a paleta particionada, o
+  // que obrigava a tela a perguntar o domínio antes de mostrar qualquer bloco.
+  catalogo: () => pedir<Catalogo>("/api/catalogo"),
 
   ambiente: () => pedir<Ambiente>("/api/ambiente"),
-
-  // A PRIMEIRA pergunta da tela. Antes ela não existia: a paleta era o
-  // catálogo do grill — o cardápio da conciliação — e por isso o canvas só
-  // ofereceu blocos de conciliação até alguém perguntar por quê.
-  dominios: () => pedir<DominioInfo[]>("/api/dominios"),
 
   criarReceita: (corpo: {
     id: string;
@@ -188,7 +178,6 @@ export const api = {
   criarComposicao: (corpo: {
     id: string;
     nome: string;
-    dominio: string;
     justificativa: string;
     blocos: BlocoPedido[];
   }) =>
@@ -318,11 +307,16 @@ export interface Decisao {
 //
 // Os números NÃO saem vazios: `max_turns` e o orçamento têm default no
 // servidor, e um agente sem teto é um agente que gasta até o fim da fila.
-export function agenteEmBranco(nome: string, kind: string): AgenteDeclarado {
+//
+// O `kind` também nasce VAZIO, e é a mudança do quadro em branco: antes ele
+// vinha do domínio escolhido (`dominio.kinds[0]`), que decidia pela pessoa
+// sobre que tipo de item o agente trabalha. É o grafo que liga os degraus por
+// `kind` — quem monta precisa dizer qual é, e o painel pede.
+export function agenteEmBranco(nome: string): AgenteDeclarado {
   return {
     name: nome,
     system: "",
-    kind,
+    kind: "",
     prompt: "",
     tipos: [],
     abstem_com: "NAO_SEI",
