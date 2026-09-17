@@ -112,19 +112,13 @@ class RunRequest(BaseModel):
 class ResolverRunJSON(BaseModel):
     """O que um resolver da cascata fez, e a que custo.
 
-    **`matches` conta RESOLUÇÕES; `rate` é `matches / RunJSON.itens`, que conta
-    ITENS.** As duas unidades coincidem num domínio de um item por resolução
-    (um CSV de issues) e NÃO coincidem na conciliação, onde toda resolução casa
-    ao menos um bancário com um contábil — lá `rate` sai pela metade do que um
-    leitor entende por "fração do pool que esta regra resolveu".
-
-    Está assim porque `Run` só sabe contar resoluções por identidade de
-    resolver: `resolved_by_resolver` é `len(saida.resolutions)`, e
-    `Resolution.produced_by` é PROVENIÊNCIA, não identidade (P3.2), então não
-    dá para derivar itens por resolver a partir do `Run` de hoje. Fechar isso é
-    uma linha no motor (`resolved_items_by_resolver`), e ela não cabe nesta
-    fatia. Até lá, quem lê precisa saber a unidade — e é por isso que ela está
-    escrita aqui em vez de subentendida.
+    **`matches` conta RESOLUÇÕES; `rate` é ITENS sobre `RunJSON.itens`.** Os
+    dois campos existem porque as duas unidades não são a mesma: uma resolução
+    de pagamento agregado consome um bancário e três contábeis. `rate` sai de
+    `Run.resolved_items_by_resolver`, que o motor acumula ao lado da contagem
+    de resoluções exatamente para que ninguém volte a dividir uma pela outra —
+    isso dava metade do número na conciliação e o número certo num domínio de
+    um item por resolução, que é erro de unidade disfarçado de métrica.
     """
 
     name: str
@@ -156,12 +150,17 @@ class MedidoJSON(BaseModel):
 class RunJSON(BaseModel):
     """O resultado de uma execução, em unidades do MOTOR.
 
-    `itens`, `resolvidos` e `gap.items` contam ITENS do pool; `por_resolver[].
-    matches` conta RESOLUÇÕES. As duas unidades não são a mesma, e a diferença
-    é real: uma resolução de pagamento agregado consome quatro itens de uma
-    vez. Por isso `sum(por_resolver[].rate) + gap.rate` NÃO fecha em 1.0 — o
-    que fecha é `resolvidos + gap.items == itens`, que é a conta em uma
-    unidade só.
+    `itens`, `resolvidos`, `gap.items` e `por_resolver[].rate` estão todos na
+    unidade ITEM, e é isso que faz `sum(por_resolver[].rate) + gap.rate` fechar
+    em 1.0. `por_resolver[].matches` é a outra unidade — RESOLUÇÕES — e está
+    lá por si, nunca como numerador de uma taxa.
+
+    A soma fechar não é garantida pelo tipo: `gap` é CONTADO
+    (`len(run.unresolved.items)`) e as taxas por resolver são AFIRMADAS pelos
+    resolvers (`Resolution.item_ids`). Dois resolvers citando o mesmo item
+    fariam a soma passar de 1.0. É o desenho certo: a lacuna, que é o número
+    que o operador lê, nunca mente; a soma estourar é sintoma visível de um
+    resolver que consome o que não recebeu. Há teste.
     """
 
     input_ref: str

@@ -182,6 +182,14 @@ def _medir(proposta: Proposta, args) -> None:
     m = evaluate(dataset, resultado)
 
     total = m.bank_total
+    # CONTAGEM DE RESOLUÇÕES sobre LANÇAMENTOS BANCÁRIOS, e isto está certo —
+    # não é o erro de unidade que a API tinha. Aqui o denominador é o lado
+    # bancário, e toda resolução da conciliação carrega exatamente um id
+    # bancário, então a razão é de fato "que fração do extrato esta regra
+    # fechou". A suposição é real e não é garantida pelo tipo; ela está dita
+    # aqui para que ninguém "conserte" isto para
+    # `run.resolved_items_by_resolver`, que conta os DOIS lados e daria o
+    # dobro contra este denominador.
     partes = " · ".join(
         f"{nome} {(resultado.matches_by_resolver.get(nome, 0) / total if total else 0):.1%}"
         for nome in resultado.matches_by_resolver

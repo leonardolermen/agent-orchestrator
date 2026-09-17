@@ -68,11 +68,10 @@ def test_workflow_gerado_executa_e_fecha_a_lacuna(tmp_path):
         json={"fonte": {"tipo": "sintetica", "seed": 1, "n": 60, "taxa_divergencia": 0.15}},
     ).json()
 
-    # A conta fecha em ITENS, a unidade do pool. `matches` conta RESOLUÇÕES, e
-    # uma delas pode consumir vários itens — somar as duas unidades daria um
-    # número sem significado. Ver o docstring de `RunJSON`.
+    soma = sum(r["rate"] for r in dados["por_resolver"]) + dados["gap"]["rate"]
+    assert soma == pytest.approx(1.0)
+    # Em itens absolutos, a mesma afirmação sem as divisões.
     assert dados["resolvidos"] + dados["gap"]["items"] == dados["itens"]
-    assert dados["gap"]["rate"] == pytest.approx(dados["gap"]["items"] / dados["itens"])
     assert [r["name"] for r in dados["por_resolver"]] == ["L1", "revisor"]
 
 

@@ -558,16 +558,18 @@ def _executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
         ResolverRunJSON(
             name=d.name,
             cost_class=d.cost_class.name,
-            # `run.resolved_by_resolver`, chaveado por IDENTIDADE do resolver —
-            # não por PROVENIÊNCIA (`Resolution.produced_by`). Os dois
-            # coincidem hoje (P3.2 em DECISOES.md), mas só um deles responde
-            # "quanto este resolver da cascata resolveu" por construção.
+            # Os dois chaveados por IDENTIDADE do resolver — não por
+            # PROVENIÊNCIA (`Resolution.produced_by`). Os dois coincidem hoje
+            # (P3.2 em DECISOES.md), mas só a identidade responde "quanto este
+            # resolver da cascata resolveu" por construção.
             #
-            # Conta RESOLUÇÕES, e `total` conta ITENS: uma resolução de
-            # pagamento agregado consome quatro itens de uma vez. Por isso
-            # `sum(rate) + gap.rate` não fecha em 1.0 — ver `RunJSON`.
+            # `matches` conta RESOLUÇÕES; `rate` divide ITENS por ITENS. São
+            # dois campos do `Run` de propósito: dividir a contagem de
+            # resoluções pelo tamanho do pool daria metade do número na
+            # conciliação, onde toda resolução casa ao menos um bancário com um
+            # contábil — e o número certo num domínio de um item por resolução.
             matches=run.resolved_by_resolver.get(d.name, 0),
-            rate=run.resolved_by_resolver.get(d.name, 0) / total if total else 0.0,
+            rate=run.resolved_items_by_resolver.get(d.name, 0) / total if total else 0.0,
             # A mesma guarda de `metrics.evaluate`: um resolver que não gastou
             # token nenhum converte para zero em qualquer modelo, e uma cascata
             # só de regras não deve exigir tabela de preços para ler zero.

@@ -76,6 +76,14 @@ def execute(
     propostas: list[Proposal] = []
     custos: dict[str, Cost] = {}
     matches_por_resolver: dict[str, int] = {}
+    # Ao lado de `matches_por_resolver`, e NUNCA no lugar dele: um conta
+    # RESOLUÇÕES, o outro conta ITENS consumidos por elas. Os dois números
+    # coincidem num domínio de um item por resolução e divergem por um fator 2
+    # na conciliação, onde toda resolução casa ao menos um bancário com um
+    # contábil. Manter os dois separados e nomeados é o que impede alguém de
+    # refundi-los — dividir contagem de resolução pelo tamanho do pool já
+    # produziu uma taxa pela metade na tela.
+    itens_por_resolver: dict[str, int] = {}
     matches_por_classe: dict[CostClass, list[Resolution]] = {}
 
     rondas = 0
@@ -192,6 +200,20 @@ def execute(
                 matches_por_resolver[resolver.name] = (
                     matches_por_resolver.get(resolver.name, 0) + len(saida.resolutions)
                 )
+                # Itens, na mesma soma acumulada e pelo mesmo motivo.
+                #
+                # **Isto é uma AFIRMAÇÃO do resolver, não uma medição do pool.**
+                # `item_ids` é o que o resolver diz ter consumido; quem
+                # realmente encolhe é `work.without(...)`, que ignora id que não
+                # está no pool. Dois resolvers do mesmo stage citando o mesmo id
+                # — ou um resolver citando id que não recebeu — fazem esta soma
+                # passar do tamanho do pool, e nada aqui impede. É deliberado:
+                # a LACUNA continua saindo de `unresolved`, contada, então ela
+                # nunca mente; a soma por resolver é declarativa, e uma soma
+                # que estoura vira sintoma visível em vez de lacuna negativa.
+                itens_por_resolver[resolver.name] = itens_por_resolver.get(
+                    resolver.name, 0
+                ) + sum(len(r.item_ids) for r in saida.resolutions)
                 matches_por_classe.setdefault(resolver.cost_class, []).extend(saida.resolutions)
                 # Só `resolutions` encolhe o pool e só `produced` o aumenta.
                 # `saida.proposals` não aparece em nenhuma das duas expressões, e é
@@ -291,6 +313,7 @@ def execute(
         unresolved=work,
         cost_by_resolver=custos,
         resolved_by_resolver=matches_por_resolver,
+        resolved_items_by_resolver=itens_por_resolver,
         resolutions_by_class=matches_por_classe,
         policy_decisions=tuple(decisoes),
         rondas=rondas,

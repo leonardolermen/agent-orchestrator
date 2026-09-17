@@ -117,22 +117,22 @@ def test_execucao_so_serve_classes_que_nao_gastam():
     assert "revisor" in [r["name"] for r in corpo["por_resolver"]]
 
 
-def test_o_que_foi_resolvido_mais_a_lacuna_e_o_pool_inteiro():
-    """Era `sum(taxa por resolver) + lacuna == 1`, e ela valia enquanto o
-    denominador era o lado bancário e todo match carregava exatamente um id
-    bancário. Com o motor genérico as duas pontas deixaram de estar na mesma
-    unidade: `matches` conta RESOLUÇÕES e `itens` conta ITENS do pool — uma
-    resolução de pagamento agregado consome quatro itens de uma vez.
+def test_a_soma_das_taxas_mais_a_lacuna_continua_um():
+    """E ela agora VERIFICA o que antes assumia.
 
-    A propriedade que interessa é a mesma — nada some do relatório — escrita
-    na unidade em que ela é verdadeira.
+    A soma valia por uma suposição — "todo match carrega exatamente um id
+    bancário" — que o tipo não garantia. Agora as duas pontas são itens: a
+    lacuna é CONTADA (`run.unresolved`) e cada taxa é AFIRMADA pelo resolver
+    (`Resolution.item_ids`). Dois resolvers citando o mesmo item fazem a soma
+    passar de 1.0, e é isso que este teste passa a pegar.
     """
     corpo = cliente.post(
         "/api/workflows/conciliacao/runs",
         json={"fonte": {"tipo": "sintetica", "seed": 1, "n": 300, "taxa_divergencia": 0.15}},
     ).json()
 
-    assert corpo["resolvidos"] + corpo["gap"]["items"] == corpo["itens"]
+    soma = sum(r["rate"] for r in corpo["por_resolver"]) + corpo["gap"]["rate"]
+    assert abs(soma - 1.0) < 1e-9
     assert corpo["gap"]["items"] > 0
 
 

@@ -115,20 +115,17 @@ def test_a_lacuna_e_reportada_explicitamente():
     ).json()
 
     assert corpo["gap"]["items"] > 0
-    # A conta que fecha é em UMA unidade, e a unidade é o item do pool.
-    #
-    # Era `sum(rate por resolver) + gap.rate == 1.0`, e ela valia enquanto o
-    # denominador era o lado bancário e cada match carregava exatamente um id
-    # bancário. Com o motor genérico, `matches` conta RESOLUÇÕES e `itens`
-    # conta ITENS — e uma resolução de pagamento agregado consome quatro itens
-    # de uma vez. Somar as duas unidades daria um número que não significa
-    # nada; esta é a mesma verificação de "nada some do relatório", escrita na
-    # unidade em que ela é verdadeira.
+    # A soma fecha porque as duas pontas estão na MESMA unidade: `rate` é
+    # itens consumidos sobre itens do pool (`Run.resolved_items_by_resolver`),
+    # e a lacuna é o pool que sobrou. Enquanto `rate` dividia CONTAGEM DE
+    # RESOLUÇÕES pelo pool, esta soma dava 0.575 na conciliação.
+    soma = sum(r["rate"] for r in corpo["por_resolver"]) + corpo["gap"]["rate"]
+    assert abs(soma - 1.0) < 1e-9
+    # E a conta em itens absolutos, que é a mesma afirmação sem as divisões.
     assert corpo["resolvidos"] + corpo["gap"]["items"] == corpo["itens"]
-    assert corpo["gap"]["rate"] == pytest.approx(corpo["gap"]["items"] / corpo["itens"])
-    # E o piso da outra unidade: toda resolução consome pelo menos um item,
-    # então a contagem por resolver nunca pode passar dos itens resolvidos.
-    assert 0 < sum(r["matches"] for r in corpo["por_resolver"]) <= corpo["resolvidos"]
+    # `matches` continua sendo a OUTRA unidade, e aqui ela é estritamente
+    # menor: toda resolução da conciliação consome dois itens ou mais.
+    assert 0 < sum(r["matches"] for r in corpo["por_resolver"]) < corpo["resolvidos"]
 
 
 def test_n_invalido_da_422_em_vez_de_estourar():
@@ -203,12 +200,16 @@ def test_resolver_com_layer_diferente_do_name_e_reportado_pelo_proprio_nome(monk
     (resolvido,) = corpo["por_resolver"]
     assert resolvido["name"] == "resolver_x"
     assert resolvido["matches"] == 3
-    assert resolvido["rate"] == pytest.approx(3 / corpo["itens"])
-
-    # Cada uma das três resoluções casa um bancário com um contábil, então
-    # seis itens saem do pool. É a diferença entre as duas unidades, medida.
+    # Cada uma das três resoluções casa um bancário com um contábil: TRÊS
+    # resoluções, SEIS itens. `rate` é a segunda unidade, nunca a primeira —
+    # `3 / itens` era a fórmula errada, e ela passava porque nada mais a
+    # contradizia.
     assert corpo["resolvidos"] == 6
+    assert resolvido["rate"] == pytest.approx(6 / corpo["itens"])
     assert corpo["resolvidos"] + corpo["gap"]["items"] == corpo["itens"]
+
+    soma = sum(r["rate"] for r in corpo["por_resolver"]) + corpo["gap"]["rate"]
+    assert soma == pytest.approx(1.0)
 
 
 def test_pedido_SEM_fonte_continua_valendo():
