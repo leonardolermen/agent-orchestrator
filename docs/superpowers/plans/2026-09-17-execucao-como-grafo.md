@@ -331,7 +331,7 @@ from orchestrator.kernel.work import WorkItem, WorkSet
 Em `src/orchestrator/kernel/event.py`, acrescentar ao `EventKind`, junto de `ITEM_RESOLVIDO`:
 
 ```python
-    ITEM_PRODUZIDO = "item_produzido"
+    ITEM_PRODUZIDO = "item.produzido"
 ```
 
 - [ ] **Step 5: Implementar a mudança no motor**
@@ -649,7 +649,7 @@ E a guarda, imediatamente após `saida = resolver.resolve(elegiveis)`:
 Acrescentar `STAGE_CONCLUIDO` ao `EventKind` em `kernel/event.py`:
 
 ```python
-    STAGE_CONCLUIDO = "stage_concluido"
+    STAGE_CONCLUIDO = "stage.concluido"
 ```
 
 - [ ] **Step 5: Rodar os testes novos**
@@ -1106,7 +1106,7 @@ E passar `rondas=rondas` na construção do `Run`.
 Acrescentar `RONDA_INICIADA` ao `EventKind` em `kernel/event.py`:
 
 ```python
-    RONDA_INICIADA = "ronda_iniciada"
+    RONDA_INICIADA = "ronda.iniciada"
 ```
 
 - [ ] **Step 5: Rodar os testes novos**
