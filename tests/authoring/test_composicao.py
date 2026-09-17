@@ -84,6 +84,46 @@ def test_bloco_desconhecido_no_catalogo_LISTA_os_disponiveis():
         _construir(_comp([BlocoRegra(nome="nao-existe")]))
 
 
+def test_o_degrau_HUMANO_do_catalogo_COMPOE():
+    """O bloco que a paleta oferecia e a composição não conseguia construir.
+
+    `revisor` é a única regra de classe `HUMANO` do catálogo, e ele depende da
+    FILA de decisões — que não cabe na assinatura uniforme
+    `(parametros) -> Resolver`. Sem o ramo por `cost_class`,
+    `regra.construir({})` caía em `_revisor_precisa_da_fila` e "Compor e
+    validar" devolvia 422 com um texto escrito para quem implementa. O degrau
+    humano é o que FECHA a cascata, e é a razão declarada de o `revisor` ter
+    sido carregado para o catálogo plano: sem ele, a composição — o caminho
+    que esta fatia existe para abrir — era o único que não fechava.
+    """
+    c = _comp([BlocoRegra(nome="L1"), BlocoRegra(nome="revisor")])
+
+    cascata = _construir(c).stages[0].ordered()
+
+    assert [r.name for r in cascata] == ["L1", "revisor"]
+    assert [r.cost_class.name for r in cascata] == ["REGRA", "HUMANO"]
+
+
+def test_o_revisor_composto_LE_A_FILA_QUE_RECEBEU():
+    """O ramo HUMANO existe para a fila REAL chegar — não para o bloco parar
+    de levantar.
+
+    Um `RevisorHumano(fila=Fila.vazia())` cravado aqui construiria igual e
+    passaria o teste acima, enquanto nenhuma decisão aprovada chegaria à
+    execução: o fallback silencioso que `_revisor_precisa_da_fila` existe para
+    impedir. Este teste é o que torna a diferença visível — a fila que entra
+    por palavra-chave é a que o resolver carrega.
+    """
+    from orchestrator.review.fila import Fila
+
+    minha = Fila.vazia()
+
+    d = construir_composicao(_comp([BlocoRegra(nome="revisor")]), fila=minha)
+
+    (r,) = d.stages[0].cascade
+    assert r.fila is minha
+
+
 # -- a ordem não é do autor -------------------------------------------------
 
 

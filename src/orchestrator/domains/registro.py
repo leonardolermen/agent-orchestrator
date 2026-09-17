@@ -143,16 +143,16 @@ def _revisor_precisa_da_fila(parametros: dict[str, int]) -> NoReturn:
     decisões já tomadas. Um `RevisorHumano(fila=Fila.vazia())` aqui
     CONSTRUIRIA — pareceria funcionar, a cascata ficaria "desenhável" — e
     decisões aprovadas nunca chegariam à execução, sem nada avisar: o
-    fallback silencioso que o spec proíbe, só que plausível. Achado revisando
-    a Task 3 (`docs/superpowers/sdd/2026-09-17-quadro-em-branco/`): o único
-    motivo de ele não ter mordido ainda é `grill.receita.construir` desviar
-    deste `construir` olhando `cost_class`. Um segundo consumidor que não
-    soubesse disso — `construir_composicao`, por exemplo — receberia fila
-    vazia em silêncio.
+    fallback silencioso que o spec proíbe, só que plausível.
 
     Quem compõe uma cascata com um bloco `CostClass.HUMANO` precisa
-    reconhecer a classe e montar o resolver direto, com a fila de verdade —
-    exatamente como `grill.receita.construir` faz.
+    reconhecer a classe e montar o resolver direto, com a fila de verdade. Os
+    dois consumidores fazem isso e são as duas referências vivas:
+    `grill.receita.construir` (o chat) e `authoring.composicao.
+    construir_composicao` (o canvas). O segundo NÃO ramificava, e o sintoma
+    foi exato: o `revisor` aparecia na paleta e era o único bloco que "Compor
+    e validar" recusava, com esta mensagem — escrita para quem implementa —
+    vazando para a tela.
     """
     raise ValueError(
         "'revisor' não pode ser construído por RegraDisponivel.construir: "

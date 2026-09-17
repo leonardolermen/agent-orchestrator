@@ -66,8 +66,11 @@ from orchestrator.agent.declarado import (
 )
 from orchestrator.agent.llm import LLMClient
 from orchestrator.domains.registro import CATALOGO
+from orchestrator.kernel.cost import CostClass
 from orchestrator.kernel.definition import Stage, WorkflowDefinition
 from orchestrator.kernel.resolver import Resolver
+from orchestrator.review.fila import Fila
+from orchestrator.review.revisor import RevisorHumano
 
 _RAIZ_PADRAO = Path("data") / "composicoes"
 
@@ -125,10 +128,30 @@ class Composicao:
 def construir_composicao(
     c: Composicao,
     *,
+    fila: Fila | None = None,
     cliente: LLMClient | None = None,
     contexto: Any = None,
 ) -> WorkflowDefinition:
     """Valida construindo. Se retorna, a cascata roda.
+
+    **`fila` é a MESMA costura de `grill.receita.construir`, de propósito.**
+    Um bloco de classe `HUMANO` precisa da fila de decisões já tomadas para
+    existir como resolver, e ela não cabe em `RegraDisponivel.construir`, cuja
+    assinatura é uniforme `(parametros) -> Resolver`. Lá a fila entra por
+    palavra-chave e `workflows._de_receita` a liga ao `WorkflowContext.fila`;
+    aqui a palavra-chave é a mesma, para que o dia em que uma composição ganhar
+    caminho de execução seja um `fila=ctx.fila` a mais, e não uma segunda via
+    de configuração inventada ao lado da primeira.
+
+    **O default `Fila.vazia()` vale SÓ para validar, e é por isso que está
+    dito aqui em voz alta.** `domains.registro._revisor_precisa_da_fila` existe
+    exatamente para impedir que uma fila vazia entre em silêncio: um revisor
+    sobre fila vazia CONSTRÓI, a cascata fica desenhável, e nenhuma decisão
+    aprovada chega à execução — sem erro nenhum avisando. O default aqui é
+    seguro pelo mesmo motivo que `ClienteDeValidacao` é: a chamada default não
+    EXECUTA nada (`/api/composicoes` só compõe e grava, e composição não entra
+    no `registry()` dos workflows — ver `listar_composicoes`). Quem for
+    executar passa a fila de verdade, de propósito, e isso aparece no diff.
 
     **O cliente default é a TRANCA, não um modelo.** `ClienteDeValidacao`
     constrói o agente e recusa falar com modelo. É a mesma escolha do
@@ -158,6 +181,11 @@ def construir_composicao(
         else CATALOGO.ferramentas.com_contexto(contexto)
     )
     cliente = cliente or ClienteDeValidacao()
+    # `is None`, não `or`: mesma disciplina de `grill.receita.construir`. `Fila`
+    # não define `__bool__` nem `__len__` hoje, mas no dia em que definir um
+    # `or` trocaria silenciosamente uma fila vazia EXPLÍCITA pelo default.
+    if fila is None:
+        fila = Fila.vazia()
 
     vistos: set[str] = set()
     resolvers: list[Resolver] = []
@@ -185,7 +213,21 @@ def construir_composicao(
                     f"parâmetro desconhecido para {bloco.nome!r}: "
                     f"{desconhecidos}. aceitos: {sorted(conhecidos)}"
                 )
-            resolvers.append(regra.construir(dict(bloco.parametros)))
+            if regra.cost_class is CostClass.HUMANO:
+                # A CLASSE, não a grafia do nome — mesmo desvio que
+                # `grill.receita.construir` faz, e pelo mesmo motivo: um bloco
+                # HUMANO depende da FILA, que não cabe na assinatura uniforme
+                # `(parametros) -> Resolver`. Sem este ramo, `revisor` estava
+                # na paleta do canvas e era o único bloco que "Compor e
+                # validar" não conseguia compor: `regra.construir({})` caía em
+                # `_revisor_precisa_da_fila` e devolvia 422 com um texto
+                # escrito para quem implementa. O degrau humano é justamente o
+                # que FECHA a cascata — a razão declarada de o `revisor` ter
+                # sido carregado para o catálogo plano —, então a composição
+                # ficaria sem o único degrau que a fatia existe para publicar.
+                resolvers.append(RevisorHumano(fila=fila))
+            else:
+                resolvers.append(regra.construir(dict(bloco.parametros)))
         else:
             # Sem checagem de `kind`: a antiga comparava com os `kinds` do
             # domínio e recusava cascata válida depois que a tela perdeu o

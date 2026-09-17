@@ -166,6 +166,27 @@ def test_um_agente_de_KIND_qualquer_e_ACEITO():
     assert r.status_code == 201, r.text
 
 
+def test_a_cascata_com_o_degrau_HUMANO_COMPOE_pela_borda_HTTP():
+    """O defeito, no caminho em que ele aparecia: paleta → clique → 422.
+
+    `/api/catalogo` serve toda `CATALOGO.regras`, então `revisor` está na
+    paleta do canvas. Clicar nele e apertar "Compor e validar" postava um
+    bloco `regra`, e `construir_composicao` chamava `regra.construir({})` sem
+    olhar a classe — o que devolvia 422 com a mensagem de
+    `_revisor_precisa_da_fila`, escrita para quem implementa e exibida para
+    quem usa. Era o único bloco da paleta que a composição não compunha, e
+    logo o degrau que FECHA a cascata.
+    """
+    r = cliente.post(
+        "/api/composicoes",
+        json=_corpo([{"tipo": "regra", "nome": "L1"}, {"tipo": "regra", "nome": "revisor"}]),
+    )
+
+    assert r.status_code == 201, r.text
+    cascata = r.json()["stages"][0]["cascade"]
+    assert [b["cost_class"] for b in cascata] == ["REGRA", "HUMANO"]
+
+
 def test_bloco_REPETIDO_e_recusado_com_o_motivo():
     corpo = _corpo(
         [

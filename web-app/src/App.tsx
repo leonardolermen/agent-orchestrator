@@ -273,9 +273,11 @@ export default function App() {
   // O que ele propõe e o canvas não sabe desenhar continua sendo DITO, não
   // descartado em silêncio. O caso que motivou o aviso era o `revisor`, que o
   // canvas não achava em `Dominio` nenhum; o catálogo plano publica o revisor,
-  // então ele agora POUSA — mas um nome que não esteja nem nas regras nem nos
-  // agentes ainda sai, e sair sem dizer seria a cascata mentindo sobre o que
-  // foi proposto.
+  // então ele POUSA aqui E COMPÕE — o segundo não era verdade até
+  // `construir_composicao` ganhar o ramo `CostClass.HUMANO`, e até lá "Compor
+  // e validar" com um revisor no canvas devolvia 422. Um nome que não esteja
+  // nem nas regras nem nos agentes ainda sai, e sair sem dizer seria a cascata
+  // mentindo sobre o que foi proposto.
   const aceitarProposta = (receita: Receita) => {
     if (!catalogo) {
       setAviso("o catálogo ainda não carregou; a proposta do chat não pôde pousar");
