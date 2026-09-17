@@ -1,7 +1,15 @@
 # Quadro em branco: a plataforma sem domínio
 
 **Data:** 2026-09-17
-**Estado:** proposta
+**Estado:** ENTREGUE (B1–B6). Duas lacunas continuam ABERTAS por decisão
+explícita do dono, e nenhuma das duas é silêncio: (A) a lacuna de custo da §7 —
+o quadro em branco entrou antes do G3, e enquanto o G3 não entrar, trabalho
+novo começa 100% na classe AGENTE; (B) a guarda de `kind` que a §5 descreve
+como "mais forte" não tem dono para composição feita pelo canvas —
+`construir_composicao` emite um `Stage` só, com `consome`/`produz` nos
+defaults, o que desliga a checagem de beco sem saída inteira antes de ela ter
+algo para comparar. Fecha com o X7/X8 (`AgenteDeclarado.produz` + fiação em
+`construir_composicao`), fora deste plano. Ambas registradas no README.
 **Antecessor:** `2026-09-17-execucao-como-grafo-design.md` (X1–X6 entregues)
 
 ---

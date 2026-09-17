@@ -86,10 +86,16 @@ autor, nunca acidente.
 Os esqueletos existem para achar defeito no kernel enquanto ele ainda está mole.
 Já funcionou três vezes: `procurement` e `swe` acharam dois defeitos de
 generalidade na primeira linha de código de domínio, e `redacao` achou o
-terceiro — **que não está no kernel, está no catálogo**: `Dominio.agentes` só
-aceita `AgenteDeclarado`, que descreve estruturalmente um resolver que *julga*
-um item, sem campo para "que kind este degrau produz". Por isso `redacao` roda
-mas não é registrado em `DOMINIOS`. Fechar isso é o próximo trabalho.
+terceiro — **que não está no kernel, está no catálogo**: `CATALOGO.agentes`
+descreve estruturalmente um resolver que *julga* um item e devolve
+`Proposal`/`Resolution` a respeito DELE, sem campo para "que kind este degrau
+produz". `redacao` não julga: cada um dos três degraus é uma `Tarefa` que
+TRANSFORMA o item num item de outro kind para o próximo consumir. Catalogá-lo
+hoje exigiria mentir sobre o que ele faz — por isso `redacao` roda
+(`tests/domains/test_redacao.py`) mas fica fora de `CATALOGO`, de propósito
+(a nota completa mora em `domains/registro.py`). Ensinar `AgenteDeclarado` a
+declarar `produz` fecha essa lacuna — é o mesmo X7/X8 da lacuna de `kind`, no
+anti-escopo abaixo.
 
 ## Por que Brasil
 
@@ -113,6 +119,30 @@ Anti-escopo vale tanto quanto escopo:
 - **Não** deixa o agente fazer o matching.
 - **Não** aceita trabalho sem itens. Um orquestrador que aceita tudo não mede
   nada — e medir é a única vantagem que este projeto tem.
+- **Não tem piso barato para trabalho novo, ainda.** A paleta é um catálogo
+  plano de tudo que existe, e o que existe hoje é regra de conciliação e de
+  compras — código, com a forma do trabalho delas. Um workflow de um trabalho
+  NOVO começa 100% na classe `AGENTE`, que é o pior custo possível. Enquanto
+  isso for verdade, a tese de custo não se aplica a ele: o que fecha é a regra
+  genérica declarativa (igualdade, tolerância, agrupamento, tabela, padrão,
+  limiar), e ela ainda não existe.
+- **Não garante mais que o `kind` de um agente bate com o que o degrau anterior
+  produz, para composição feita pelo canvas.** O domínio fazia essa checagem, e
+  ela saiu certo: com a tela sem seletor, toda composição chegava com o domínio
+  default e a checagem passou a recusar qualquer `kind` que não fosse
+  `lancamento` — guarda certa aplicada ao pedido errado, recusando cascata
+  válida. O lugar certo é o grafo: `Stage.consome`/`Stage.produz` valida a
+  fiação por degrau, e recusaria um `kind` que não conecta. Só que, para uma
+  composição montada por `construir_composicao`, essa checagem está INERTE —
+  a função devolve um único `Stage` com `consome`/`produz` nos defaults, o que
+  desliga a checagem de beco sem saída do grafo inteiro, e ela nunca popula
+  `consome`/`produz` a partir dos blocos, então não haveria o que comparar
+  mesmo se rodasse. Um `kind` digitado errado é aceito na composição e, em
+  execução, simplesmente não pega item nenhum — falha muda, sem erro. Fecha
+  com as duas pontas do X7/X8: `AgenteDeclarado` declarar o que `produz`, e
+  `construir_composicao` derivar `consome`/`produz` dos blocos a partir disso.
+  Até as duas existirem, quem escreve um agente na tela é quem garante o
+  `kind`.
 
 ### A invariante mais cara, e o limite dela
 
