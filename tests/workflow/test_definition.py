@@ -1,7 +1,12 @@
 import inspect
 
+import pytest
+
 from orchestrator.conciliacao import default_definition
 from orchestrator.kernel.cost import CostClass
+from orchestrator.kernel.definition import Stage, WorkflowDefinition
+from orchestrator.kernel.resolver import ResolverDescription, ResolverOutput
+from orchestrator.kernel.work import WorkSet
 
 
 def test_definicao_padrao_tem_as_tres_regras_num_stage():
@@ -63,3 +68,90 @@ def test_stage_expoe_a_cascata_ordenada_por_classe_de_custo():
     cascata = d.stages[0].ordered()
 
     assert [r.cost_class for r in cascata] == sorted(r.cost_class for r in cascata)
+
+
+class _Nada:
+    name = "nada"
+    cost_class = CostClass.REGRA
+
+    def describe(self) -> ResolverDescription:
+        return ResolverDescription(self.name, self.cost_class, "teste")
+
+    def resolve(self, work: WorkSet) -> ResolverOutput:
+        return ResolverOutput()
+
+
+def _stage(nome, consome=frozenset(), produz=frozenset()):
+    return Stage(name=nome, cascade=(_Nada(),), consome=consome, produz=produz)
+
+
+def test_recusa_beco_sem_saida():
+    """Um kind produzido que ninguém consome é item que fica no pool para
+    sempre, sem nunca chegar a um humano.
+
+    Esta é a guarda que impede `Tarefa` (Task 7) de virar a porta dos fundos
+    por onde "proposta não resolve" sairia: uma transformação é legítima
+    porque o item que ela produz AINDA passa por alguém. Se ninguém o
+    consome, ela encerrou o trabalho sem que nada fosse conferido.
+    """
+    with pytest.raises(ValueError, match="beco sem saída"):
+        WorkflowDefinition(
+            id="w",
+            name="w",
+            stages=(_stage("um", consome=frozenset({"a"}), produz=frozenset({"b"})),),
+        )
+
+
+def test_entrega_declara_o_kind_terminal():
+    """"Ninguém consome isto" tem de ser afirmação do autor, nunca acidente."""
+    d = WorkflowDefinition(
+        id="w",
+        name="w",
+        stages=(_stage("um", consome=frozenset({"a"}), produz=frozenset({"b"})),),
+        entrega=frozenset({"b"}),
+    )
+
+    assert d.entrega == frozenset({"b"})
+
+
+def test_kind_consumido_por_outro_stage_basta():
+    d = WorkflowDefinition(
+        id="w",
+        name="w",
+        stages=(
+            _stage("um", consome=frozenset({"a"}), produz=frozenset({"b"})),
+            _stage("dois", consome=frozenset({"b"}), produz=frozenset({"c"})),
+        ),
+        entrega=frozenset({"c"}),
+    )
+
+    assert len(d.stages) == 2
+
+
+def test_max_rondas_menor_que_um_e_erro():
+    """Zero ronda não executa nada e pareceria um workflow que não acha nada,
+    em vez de configuração inválida — a mesma falha que `max_turns < 1` já
+    recusa em `Agent`."""
+    with pytest.raises(ValueError, match="max_rondas"):
+        WorkflowDefinition(id="w", name="w", stages=(_stage("um"),), max_rondas=0)
+
+
+def test_version_muda_com_consome_produz_e_max_rondas():
+    """Dois grafos diferentes não podem hashear igual: `Run.workflow_version`
+    é o que o benchmark usa para saber que comparou a mesma coisa."""
+    base = WorkflowDefinition(
+        id="w", name="w", stages=(_stage("um", produz=frozenset({"b"})),),
+        entrega=frozenset({"b"}),
+    )
+    outro_consumo = WorkflowDefinition(
+        id="w", name="w",
+        stages=(_stage("um", consome=frozenset({"a"}), produz=frozenset({"b"})),),
+        entrega=frozenset({"b"}),
+    )
+    mais_rondas = WorkflowDefinition(
+        id="w", name="w", stages=(_stage("um", produz=frozenset({"b"})),),
+        entrega=frozenset({"b"}), max_rondas=3,
+    )
+
+    assert base.version != outro_consumo.version
+    assert base.version != mais_rondas.version

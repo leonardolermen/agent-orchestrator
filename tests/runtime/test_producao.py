@@ -77,6 +77,11 @@ def test_o_stage_seguinte_ve_o_que_o_anterior_produziu():
                 produz=frozenset({"c"}),
             ),
         ),
+        # Nenhum dos dois stages declara `consome`: cada um vê o pool inteiro
+        # (o comportamento padrão), e é exatamente por isso que a checagem
+        # LITERAL de `consome` não enxerga "b" sendo consumido por "dois" —
+        # só `entrega` fecha o grafo aqui.
+        entrega=frozenset({"b", "c"}),
     )
     pool = WorkSet(items=(WorkItem(id="i", kind="a", payload="x"),))
 
@@ -103,6 +108,8 @@ def test_producao_nao_apaga_a_resolucao_que_a_acompanha():
                 produz=frozenset({"b"}),
             ),
         ),
+        # "b" é o fim de linha deste pipeline de um único stage.
+        entrega=frozenset({"b"}),
     )
     pool = WorkSet(items=(WorkItem(id="i", kind="a", payload="x"),))
 
@@ -125,6 +132,8 @@ def test_o_stage_so_ve_os_kinds_que_declara_consumir():
                 produz=frozenset({"z"}),
             ),
         ),
+        # "z" é o fim de linha: nenhum outro stage o consome.
+        entrega=frozenset({"z"}),
     )
     pool = WorkSet(
         items=(
@@ -156,6 +165,8 @@ def test_o_stage_sem_item_do_seu_kind_nao_roda():
                 produz=frozenset({"z"}),
             ),
         ),
+        # "z" é o fim de linha: nenhum outro stage o consome.
+        entrega=frozenset({"z"}),
     )
     pool = WorkSet(items=(WorkItem(id="i", kind="normal", payload="x"),))
 
@@ -184,6 +195,8 @@ def test_consome_vazio_continua_vendo_o_pool_inteiro():
                 produz=frozenset({"b"}),
             ),
         ),
+        # "b" é o fim de linha deste pipeline de um único stage.
+        entrega=frozenset({"b"}),
     )
     pool = WorkSet(
         items=(
@@ -215,6 +228,10 @@ def test_produzir_kind_nao_declarado_e_erro_alto():
                 produz=frozenset({"outro"}),  # promete "outro", entrega "b"
             ),
         ),
+        # "outro" é o que a definição PROMETE entregar — a guarda de beco sem
+        # saída olha só a promessa, na construção. Só em runtime o resolver
+        # trai a promessa, que é o que este teste verifica.
+        entrega=frozenset({"outro"}),
     )
     pool = WorkSet(items=(WorkItem(id="i", kind="a", payload="x"),))
 
@@ -255,6 +272,8 @@ def test_stages_nao_sao_reordenados_por_custo():
                 produz=frozenset({"c"}),
             ),
         ),
+        # "c" é o fim de linha: nenhum outro stage o consome.
+        entrega=frozenset({"c"}),
     )
     pool = WorkSet(items=(WorkItem(id="i", kind="a", payload="x"),))
 

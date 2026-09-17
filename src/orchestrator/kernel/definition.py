@@ -89,6 +89,36 @@ class WorkflowDefinition:
     id: str
     name: str
     stages: tuple[Stage, ...]
+    # Quantas vezes a sequência de stages pode rodar. 1 = a semântica anterior
+    # a esta fatia, EXATA: os stages rodam em ordem e um pipeline fecha numa
+    # passada. Ronda extra só é necessária para ARESTA DE VOLTA — o revisor
+    # reprova e o rascunho volta ao escritor. A complexidade do laço se paga
+    # só quando há laço.
+    max_rondas: int = 1
+    # Os `kind` que SÃO a saída do run. É a única exceção à recusa de beco sem
+    # saída, e existe para que "ninguém consome isto" seja afirmação do autor
+    # em vez de acidente.
+    entrega: frozenset[str] = frozenset()
+
+    def __post_init__(self) -> None:
+        if self.max_rondas < 1:
+            raise ValueError(f"max_rondas precisa ser pelo menos 1: {self.max_rondas}")
+        # Beco sem saída: um item produzido que ninguém consome fica no pool
+        # para sempre e nunca chega a um revisor. Falha na CONSTRUÇÃO, e aqui
+        # — no kernel — e não em `authoring.construir()`: `construir()` é a via
+        # de AUTORIA, e os domínios em Python montam `WorkflowDefinition`
+        # direto. Uma guarda que só protege o canvas não protege o código, e é
+        # o código que roda em produção.
+        consumidos: set[str] = set()
+        for s in self.stages:
+            consumidos |= s.consome
+        for s in self.stages:
+            orfaos = sorted(s.produz - consumidos - self.entrega)
+            if orfaos:
+                raise ValueError(
+                    f"beco sem saída no stage {s.name!r}: {orfaos} não são "
+                    f"consumidos por nenhum stage nem declarados em `entrega`"
+                )
 
     @property
     def version(self) -> str:
@@ -99,18 +129,29 @@ class WorkflowDefinition:
         mão é número que desatualiza em silêncio — a mesma razão de `_param()`
         ler o default do próprio dataclass no catálogo do grill.
 
-        **Limite conhecido, e é real.** A forma é `(id, nome do stage, nome e
-        classe de cada resolver, na ordem de execução)`. Trocar um PARÂMETRO —
-        `L2(max_cents=5)` para `L2(max_cents=20)` — não muda a versão, porque o
-        kernel não tem como introspectar parâmetro de resolver genericamente.
-        Fechar isso exige `Resolver.version`, que é o PR #11 (a mesma peça que
-        a chave de idempotência precisa). Até lá, esta versão responde "a
-        cascata mudou de forma?", não "a cascata mudou?".
+        **Limite conhecido, e é real.** A forma é `(id, max_rondas, entrega,
+        nome do stage, consome, produz, nome e classe de cada resolver, na
+        ordem de execução)` — o GRAFO inteiro, não só a cascata. Dois
+        workflows com o mesmo encadeamento de resolvers mas arestas
+        diferentes (`consome`/`produz` trocados, ou `max_rondas` diferente)
+        são dois grafos diferentes, e não podem colidir na mesma versão.
+        Trocar um PARÂMETRO — `L2(max_cents=5)` para `L2(max_cents=20)` — não
+        muda a versão, porque o kernel não tem como introspectar parâmetro de
+        resolver genericamente. Fechar isso exige `Resolver.version`, que é o
+        PR #11 (a mesma peça que a chave de idempotência precisa). Até lá,
+        esta versão responde "o grafo mudou de forma?", não "o grafo mudou?".
         """
         forma = [
             self.id,
+            self.max_rondas,
+            sorted(self.entrega),
             [
-                [s.name, [[r.name, int(r.cost_class)] for r in s.ordered()]]
+                [
+                    s.name,
+                    sorted(s.consome),
+                    sorted(s.produz),
+                    [[r.name, int(r.cost_class)] for r in s.ordered()],
+                ]
                 for s in self.stages
             ],
         ]
