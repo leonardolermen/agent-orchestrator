@@ -140,6 +140,13 @@ Essa guarda é **mais forte** que a antiga: valida o grafo que vai rodar, em vez
 de uma partição de catálogo. `Dominio.kinds` é resto do tempo em que o pool só
 encolhia.
 
+**Vale para o grafo — ainda não para todo caminho até ele.** A força depende
+de os stages declararem `consome`/`produz`; para uma composição montada por
+`construir_composicao` hoje, nenhum declara (ver o **Estado** no topo deste
+arquivo e o docstring de `authoring/composicao.py` para o porquê). A guarda
+certa ainda não alcançou esse caminho de autoria — o design desta seção está
+certo, só falta chegar lá.
+
 `AgenteDeclarado.kind` **fica**: um agente ainda declara sobre que tipo de item
 trabalha. O que some é a conferência contra a lista de um domínio.
 
