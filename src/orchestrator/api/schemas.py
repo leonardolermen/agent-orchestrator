@@ -110,6 +110,23 @@ class RunRequest(BaseModel):
 
 
 class ResolverRunJSON(BaseModel):
+    """O que um resolver da cascata fez, e a que custo.
+
+    **`matches` conta RESOLUÇÕES; `rate` é `matches / RunJSON.itens`, que conta
+    ITENS.** As duas unidades coincidem num domínio de um item por resolução
+    (um CSV de issues) e NÃO coincidem na conciliação, onde toda resolução casa
+    ao menos um bancário com um contábil — lá `rate` sai pela metade do que um
+    leitor entende por "fração do pool que esta regra resolveu".
+
+    Está assim porque `Run` só sabe contar resoluções por identidade de
+    resolver: `resolved_by_resolver` é `len(saida.resolutions)`, e
+    `Resolution.produced_by` é PROVENIÊNCIA, não identidade (P3.2), então não
+    dá para derivar itens por resolver a partir do `Run` de hoje. Fechar isso é
+    uma linha no motor (`resolved_items_by_resolver`), e ela não cabe nesta
+    fatia. Até lá, quem lê precisa saber a unidade — e é por isso que ela está
+    escrita aqui em vez de subentendida.
+    """
+
     name: str
     cost_class: str
     matches: int
