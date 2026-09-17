@@ -386,7 +386,10 @@ def test_cascata_GRATIS_composta_pela_tela_RODA_de_verdade():
     )
 
     assert r.status_code == 200, r.text
-    assert r.json()["deterministic_rate"] > 0
+    # A fonte é a sintética, que CARREGA gabarito — então a medição contra
+    # verdade existe. Numa fonte de arquivo este bloco seria `null`, e é essa
+    # diferença que o campo separado passou a expressar.
+    assert r.json()["contra_gabarito"]["deterministic_rate"] > 0
     # A LACUNA sempre aparece, mesmo quando é zero: é invariante do §1.5, e
     # esconder a linha faria o leitor não saber se foi medida.
     assert "items" in r.json()["gap"]

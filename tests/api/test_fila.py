@@ -113,18 +113,27 @@ def test_execucao_so_serve_classes_que_nao_gastam():
         json={"fonte": {"tipo": "sintetica", "seed": 1, "n": 30, "taxa_divergencia": 0.15}},
     ).json()
 
-    assert all(r["cost_class"] != "AGENTE" for r in corpo["by_resolver"])
-    assert "revisor" in [r["name"] for r in corpo["by_resolver"]]
+    assert all(r["cost_class"] != "AGENTE" for r in corpo["por_resolver"])
+    assert "revisor" in [r["name"] for r in corpo["por_resolver"]]
 
 
-def test_a_soma_das_taxas_mais_a_lacuna_continua_um():
+def test_o_que_foi_resolvido_mais_a_lacuna_e_o_pool_inteiro():
+    """Era `sum(taxa por resolver) + lacuna == 1`, e ela valia enquanto o
+    denominador era o lado bancário e todo match carregava exatamente um id
+    bancário. Com o motor genérico as duas pontas deixaram de estar na mesma
+    unidade: `matches` conta RESOLUÇÕES e `itens` conta ITENS do pool — uma
+    resolução de pagamento agregado consome quatro itens de uma vez.
+
+    A propriedade que interessa é a mesma — nada some do relatório — escrita
+    na unidade em que ela é verdadeira.
+    """
     corpo = cliente.post(
         "/api/workflows/conciliacao/runs",
         json={"fonte": {"tipo": "sintetica", "seed": 1, "n": 300, "taxa_divergencia": 0.15}},
     ).json()
 
-    soma = sum(r["rate"] for r in corpo["by_resolver"]) + corpo["gap"]["rate"]
-    assert abs(soma - 1.0) < 1e-9
+    assert corpo["resolvidos"] + corpo["gap"]["items"] == corpo["itens"]
+    assert corpo["gap"]["items"] > 0
 
 
 def test_aceitar_acao_malformada_da_422():
@@ -170,14 +179,19 @@ def test_decisao_aceitar_atualiza_a_execucao_apos_invalidar_cache():
     Na semente 1/n=30/taxa=0.15 sobram exatamente duas divergências sem
     resolução determinística: `d-b-b00003` e `d-l-l00003` (o mesmo par —
     verificado rodando `reconcile` direto sobre o benchmark). Antes de
-    qualquer decisão a lacuna do canvas tem 1 item bancário aberto. Aceitar a
+    qualquer decisão a lacuna do canvas tem os DOIS itens abertos. Aceitar a
     proposta que concilia os dois deve fechar essa lacuna na PRÓXIMA leitura
     do endpoint de execução — o que só acontece se o POST limpar o cache.
+
+    Eram `1` antes desta fatia, e o `2` não é regressão: a lacuna passou a
+    contar ITENS DO POOL, os dois lados, em vez de só o lado bancário. É o
+    mesmo par de lançamentos, contado na unidade que vale para uma fonte que
+    não tem "lado bancário" nenhum.
     """
     corpo_execucao = {"fonte": {"tipo": "sintetica", "seed": 1, "n": 30, "taxa_divergencia": 0.15}}
 
     antes = cliente.post("/api/workflows/conciliacao/runs", json=corpo_execucao).json()
-    assert antes["gap"]["items"] == 1
+    assert antes["gap"]["items"] == 2
 
     _grava_proposta("d-b-b00003", acao_sugerida="conciliar_com(l00003)")
 
@@ -190,7 +204,7 @@ def test_decisao_aceitar_atualiza_a_execucao_apos_invalidar_cache():
 
     depois = cliente.post("/api/workflows/conciliacao/runs", json=corpo_execucao).json()
     assert depois["gap"]["items"] == 0
-    revisor = next(r2 for r2 in depois["by_resolver"] if r2["name"] == "revisor")
+    revisor = next(r2 for r2 in depois["por_resolver"] if r2["name"] == "revisor")
     assert revisor["matches"] == 1
 
 
@@ -329,3 +343,28 @@ def test_resposta_da_decisao_aceita_reflete_veredito_e_lancamentos_por_lado():
     assert por_lado["banco"]["contraparte"] == banco.counterparty
     assert por_lado["contabil"]["descricao"] == contabil.account
     assert por_lado["contabil"]["contraparte"] == contabil.supplier
+
+
+def test_uma_fila_JA_EM_DISCO_continua_sendo_encontrada():
+    """A compatibilidade que importa, no nível do HTTP.
+
+    A chave de `data/fila/**` deixou de sair de `dataset_id(seed, n, taxa)` e
+    passou a sair do `ref` da fonte — uma fonte de arquivo não tem os três. Se
+    as duas chaves divergissem, nada erraria: a fila simplesmente ficaria
+    INVISÍVEL, e toda decisão humana já tomada sumiria da tela sem uma linha
+    de log.
+
+    O arquivo aqui é escrito pela chave ANTIGA, calculada por `dataset_id` sem
+    passar por código novo nenhum. Quem o encontra é a rota, pela chave nova.
+    """
+    import orchestrator.api.app as modulo
+
+    caminho = caminho_da_fila("conciliacao", dataset_id(1, 30, 0.15), raiz=modulo._RAIZ_FILA)
+    assert not caminho.exists()
+    _grava_proposta("d-b-b00003")
+    assert caminho.exists(), "a proposta precisa estar na chave ANTIGA para o teste valer"
+
+    corpo = cliente.get("/api/fila/conciliacao", params=PARAMS).json()
+
+    assert [i["divergence_id"] for i in corpo["itens"]] == ["d-b-b00003"]
+    assert corpo["dataset"] == dataset_id(1, 30, 0.15)

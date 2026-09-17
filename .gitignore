@@ -27,6 +27,13 @@ build/
 # exatamente como chegamos aqui (`*.jsonl` cobria a fila por acidente).
 # Para versionar algo novo, adicione uma exceção explícita AQUI e diga por quê.
 data/*
+# Exceção explícita, como a regra acima pede. O diretório de entradas é a
+# RAIZ da cerca das fontes de arquivo (`api/app.py::_RAIZ_ENTRADAS`), e sem
+# ele versionado um clone novo tem a cerca apontando para o nada. Só o
+# diretório e o `.gitkeep` que explica por quê — nenhum arquivo de usuário.
+!data/entradas/
+data/entradas/*
+!data/entradas/.gitkeep
 *.ofx
 *.ret
 

@@ -87,7 +87,7 @@ def test_execucao_nao_serve_resolver_que_gasta_dinheiro():
         json={"fonte": {"tipo": "sintetica", "seed": 1, "n": 100, "taxa_divergencia": 0.15}},
     ).json()
 
-    assert "AGENTE" not in [r["cost_class"] for r in corpo["by_resolver"]]
+    assert "AGENTE" not in [r["cost_class"] for r in corpo["por_resolver"]]
 
 
 def test_execucao_reporta_taxa_e_custo_por_resolver():
@@ -96,10 +96,13 @@ def test_execucao_reporta_taxa_e_custo_por_resolver():
         json={"fonte": {"tipo": "sintetica", "seed": 1, "n": 300, "taxa_divergencia": 0.15}},
     ).json()
 
-    nomes = [r["name"] for r in corpo["by_resolver"]]
+    nomes = [r["name"] for r in corpo["por_resolver"]]
     assert nomes == ["L1", "L2", "L3", "revisor"]
-    assert all(r["microcents"] == 0 for r in corpo["by_resolver"])
-    assert 0.80 < corpo["deterministic_rate"] < 0.95
+    assert all(r["microcents"] == 0 for r in corpo["por_resolver"])
+    # A taxa contra gabarito mudou de lugar, não de valor: ela só existe
+    # quando a fonte carrega verdade, e por isso deixou de morar no topo.
+    assert 0.80 < corpo["contra_gabarito"]["deterministic_rate"] < 0.95
+    assert corpo["custo_microcents"] == 0
 
 
 def test_a_lacuna_e_reportada_explicitamente():
@@ -112,8 +115,20 @@ def test_a_lacuna_e_reportada_explicitamente():
     ).json()
 
     assert corpo["gap"]["items"] > 0
-    soma = sum(r["rate"] for r in corpo["by_resolver"]) + corpo["gap"]["rate"]
-    assert abs(soma - 1.0) < 1e-9
+    # A conta que fecha é em UMA unidade, e a unidade é o item do pool.
+    #
+    # Era `sum(rate por resolver) + gap.rate == 1.0`, e ela valia enquanto o
+    # denominador era o lado bancário e cada match carregava exatamente um id
+    # bancário. Com o motor genérico, `matches` conta RESOLUÇÕES e `itens`
+    # conta ITENS — e uma resolução de pagamento agregado consome quatro itens
+    # de uma vez. Somar as duas unidades daria um número que não significa
+    # nada; esta é a mesma verificação de "nada some do relatório", escrita na
+    # unidade em que ela é verdadeira.
+    assert corpo["resolvidos"] + corpo["gap"]["items"] == corpo["itens"]
+    assert corpo["gap"]["rate"] == pytest.approx(corpo["gap"]["items"] / corpo["itens"])
+    # E o piso da outra unidade: toda resolução consome pelo menos um item,
+    # então a contagem por resolver nunca pode passar dos itens resolvidos.
+    assert 0 < sum(r["matches"] for r in corpo["por_resolver"]) <= corpo["resolvidos"]
 
 
 def test_n_invalido_da_422_em_vez_de_estourar():
@@ -185,13 +200,15 @@ def test_resolver_com_layer_diferente_do_name_e_reportado_pelo_proprio_nome(monk
         json={"fonte": {"tipo": "sintetica", "seed": 1, "n": 100, "taxa_divergencia": 0.15}},
     ).json()
 
-    (resolvido,) = corpo["by_resolver"]
+    (resolvido,) = corpo["por_resolver"]
     assert resolvido["name"] == "resolver_x"
     assert resolvido["matches"] == 3
-    assert resolvido["rate"] == pytest.approx(3 / corpo["bank_total"])
+    assert resolvido["rate"] == pytest.approx(3 / corpo["itens"])
 
-    soma = sum(r["rate"] for r in corpo["by_resolver"]) + corpo["gap"]["rate"]
-    assert soma == pytest.approx(1.0)
+    # Cada uma das três resoluções casa um bancário com um contábil, então
+    # seis itens saem do pool. É a diferença entre as duas unidades, medida.
+    assert corpo["resolvidos"] == 6
+    assert corpo["resolvidos"] + corpo["gap"]["items"] == corpo["itens"]
 
 
 def test_pedido_SEM_fonte_continua_valendo():
@@ -252,3 +269,150 @@ def test_a_forma_ANTIGA_do_pedido_e_recusada_em_voz_alta():
     r = cliente.post("/api/workflows/conciliacao/runs", json={"seed": 2, "n": 60})
 
     assert r.status_code == 422
+
+
+def test_a_fonte_SINTETICA_continua_medindo_contra_gabarito():
+    """O caminho de hoje, com a forma nova. A conciliação não perde nada."""
+    r = cliente.post("/api/workflows/conciliacao/runs", json={})
+
+    assert r.status_code == 200, r.text
+    corpo = r.json()
+    assert corpo["contra_gabarito"] is not None
+    assert corpo["contra_gabarito"]["bank_total"] > 0
+    assert 0.0 <= corpo["contra_gabarito"]["deterministic_rate"] <= 1.0
+    assert corpo["input_ref"].startswith("synth:")
+
+
+def test_a_fonte_de_ARQUIVO_nao_inventa_taxa_de_acerto(tmp_path, monkeypatch):
+    """O teste que existe por causa de um bug real.
+
+    Antes desta fatia, compor uma cascata de compras e rodar devolvia `200` com
+    `deterministic_rate: 0.0` e lacuna de 100% — um número que parece medido e
+    não é. AUSENTE é a forma de dizer "não medido contra verdade"; `0.0` seria
+    a mesma mentira com outra roupa.
+    """
+    import orchestrator.api.app as api_app
+
+    raiz = tmp_path / "entradas"
+    raiz.mkdir()
+    (raiz / "itens.csv").write_text("id,texto\na,um\nb,dois\n", encoding="utf-8")
+    monkeypatch.setattr(api_app, "_RAIZ_ENTRADAS", raiz)
+
+    r = cliente.post(
+        "/api/workflows/conciliacao/runs",
+        json={"fonte": {"tipo": "arquivo", "caminho": "itens.csv",
+                        "kind": "lancamento", "campo_id": "id"}},
+    )
+
+    assert r.status_code == 200, r.text
+    corpo = r.json()
+    assert corpo["contra_gabarito"] is None
+    assert corpo["itens"] == 2
+    assert corpo["input_ref"].startswith("file:")
+
+
+def test_caminho_fora_da_raiz_vira_422_e_nao_500(tmp_path, monkeypatch):
+    import orchestrator.api.app as api_app
+
+    raiz = tmp_path / "entradas"
+    raiz.mkdir()
+    monkeypatch.setattr(api_app, "_RAIZ_ENTRADAS", raiz)
+
+    r = cliente.post(
+        "/api/workflows/conciliacao/runs",
+        json={"fonte": {"tipo": "arquivo", "caminho": "../segredo.csv",
+                        "kind": "k", "campo_id": "id"}},
+    )
+
+    assert r.status_code == 422
+    assert "raiz" in r.json()["detail"]
+
+
+def test_arquivo_inexistente_vira_422_e_NAO_VAZA_a_raiz(tmp_path, monkeypatch):
+    """Um caminho que passa na cerca mas não existe em disco.
+
+    A leitura do `ArquivoSource` é preguiçosa — o `__post_init__` só confere a
+    raiz —, então este caminho não falha na CONSTRUÇÃO: ele falha no `stat()`
+    de `_bytes()`, e sem tratamento vira 500.
+
+    A mensagem cita só o que o cliente pediu. `_RAIZ_ENTRADAS` é um caminho do
+    SERVIDOR, e devolvê-lo num erro entrega a árvore de diretórios a quem
+    sondar com nomes errados — a mesma informação que a cerca existe para
+    negar, vazando pela porta dos fundos.
+    """
+    import orchestrator.api.app as api_app
+
+    raiz = tmp_path / "entradas"
+    raiz.mkdir()
+    monkeypatch.setattr(api_app, "_RAIZ_ENTRADAS", raiz)
+
+    r = cliente.post(
+        "/api/workflows/conciliacao/runs",
+        json={"fonte": {"tipo": "arquivo", "caminho": "nao-existe.csv",
+                        "kind": "k", "campo_id": "id"}},
+    )
+
+    assert r.status_code == 422, r.text
+    detalhe = r.json()["detail"]
+    assert "nao-existe.csv" in detalhe
+    assert str(raiz) not in detalhe
+    assert str(raiz.parent) not in detalhe
+
+
+def test_arquivo_malformado_vira_422_com_a_linha_e_NAO_500(tmp_path, monkeypatch):
+    """O `ArquivoSource` recusa alto, com o número da linha. Essa recusa é
+    sobre a ENTRADA do cliente, então ela é 422 — deixá-la subir daria 500, que
+    diz "o servidor quebrou" sobre um arquivo que o usuário pode consertar."""
+    import orchestrator.api.app as api_app
+
+    raiz = tmp_path / "entradas"
+    raiz.mkdir()
+    (raiz / "itens.csv").write_text("id,texto\n,um\n", encoding="utf-8")
+    monkeypatch.setattr(api_app, "_RAIZ_ENTRADAS", raiz)
+
+    r = cliente.post(
+        "/api/workflows/conciliacao/runs",
+        json={"fonte": {"tipo": "arquivo", "caminho": "itens.csv",
+                        "kind": "k", "campo_id": "id"}},
+    )
+
+    assert r.status_code == 422, r.text
+    assert "linha 1" in r.json()["detail"]
+    assert str(raiz) not in r.json()["detail"]
+
+
+def test_o_custo_da_execucao_volta_na_resposta():
+    """`Run.cost_by_resolver` já acumula entre rondas. Gasto que não aparece na
+    tela é gasto que ninguém revisa."""
+    corpo = cliente.post("/api/workflows/conciliacao/runs", json={}).json()
+
+    assert "custo_microcents" in corpo
+    assert corpo["custo_microcents"] >= 0
+
+
+def test_a_fila_de_uma_fonte_de_arquivo_e_ESCOPADA_por_conteudo(tmp_path, monkeypatch):
+    """A chave da fila sai do `ref`, que carrega o sha do conteúdo. Este teste
+    prova que uma fonte de arquivo ABRE uma fila (não a fila vazia por
+    acidente) e que ela é outra quando o conteúdo muda."""
+    import orchestrator.api.app as api_app
+    from orchestrator.review.fila import dataset_de_ref
+
+    raiz = tmp_path / "entradas"
+    raiz.mkdir()
+    alvo = raiz / "itens.csv"
+    alvo.write_text("id,texto\na,um\n", encoding="utf-8")
+    monkeypatch.setattr(api_app, "_RAIZ_ENTRADAS", raiz)
+
+    def _ref() -> str:
+        return cliente.post(
+            "/api/workflows/conciliacao/runs",
+            json={"fonte": {"tipo": "arquivo", "caminho": "itens.csv",
+                            "kind": "k", "campo_id": "id"}},
+        ).json()["input_ref"]
+
+    antes = _ref()
+    alvo.write_text("id,texto\na,OUTRO\n", encoding="utf-8")
+    depois = _ref()
+
+    assert antes != depois
+    assert dataset_de_ref(antes) != dataset_de_ref(depois)

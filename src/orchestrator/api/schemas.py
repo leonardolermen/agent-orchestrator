@@ -48,6 +48,12 @@ class FonteSintetica(BaseModel):
     viraram os parâmetros de uma origem específica.
     """
 
+    # `extra="forbid"` aqui também, e não só no `RunRequest` de fora: sem ele,
+    # `{"tipo": "sintetica", "sede": 2}` dropa `sede` em silêncio e roda com o
+    # default — a MESMA falha que a trava do `RunRequest` existe para impedir,
+    # um nível abaixo dela.
+    model_config = ConfigDict(extra="forbid")
+
     tipo: Literal["sintetica"] = "sintetica"
     seed: int = Field(default=1, ge=0)
     n: int = Field(default=300, ge=1, le=5000)
@@ -62,6 +68,12 @@ class FonteArquivo(BaseModel):
     nome do arquivo ou da primeira coluna seria adivinhação, e o `kind` é o que
     liga um degrau ao outro no grafo.
     """
+
+    # Mesma trava. Aqui os quatro campos são obrigatórios, então um typo já
+    # levava 422 por ausência; o que ela fecha é o campo A MAIS — um
+    # `"max_linhas": 10` que o cliente acha que está configurando um teto e que
+    # hoje seria descartado sem uma palavra.
+    model_config = ConfigDict(extra="forbid")
 
     tipo: Literal["arquivo"]
     caminho: str
@@ -110,13 +122,40 @@ class GapJSON(BaseModel):
     rate: float
 
 
-class RunJSON(BaseModel):
+class MedidoJSON(BaseModel):
+    """O que só existe quando a fonte carrega gabarito.
+
+    `seed`, `n` e `bank_total` moravam no topo de `RunJSON` porque só existia
+    uma fonte. Num CSV de issues eles não têm valor certo nem valor neutro —
+    têm ausência, e é isso que esta separação passa a expressar.
+    """
+
     seed: int
     n: int
     bank_total: int
     deterministic_rate: float
-    by_resolver: list[ResolverRunJSON]
+
+
+class RunJSON(BaseModel):
+    """O resultado de uma execução, em unidades do MOTOR.
+
+    `itens`, `resolvidos` e `gap.items` contam ITENS do pool; `por_resolver[].
+    matches` conta RESOLUÇÕES. As duas unidades não são a mesma, e a diferença
+    é real: uma resolução de pagamento agregado consome quatro itens de uma
+    vez. Por isso `sum(por_resolver[].rate) + gap.rate` NÃO fecha em 1.0 — o
+    que fecha é `resolvidos + gap.items == itens`, que é a conta em uma
+    unidade só.
+    """
+
+    input_ref: str
+    itens: int
+    resolvidos: int
+    por_resolver: list[ResolverRunJSON]
     gap: GapJSON
+    custo_microcents: int
+    # AUSENTE, não zero. Publicar `0.0` sobre uma fonte sem verdade seria dizer
+    # "errou tudo" quando o certo é "não há com o que comparar".
+    contra_gabarito: MedidoJSON | None = None
 
 
 class RunResumoJSON(BaseModel):

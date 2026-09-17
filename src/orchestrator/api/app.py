@@ -42,6 +42,7 @@ from orchestrator.api.schemas import (
     GapJSON,
     ItemFilaJSON,
     LancamentoJSON,
+    MedidoJSON,
     ParametroJSON,
     ReceitaRequest,
     RegraJSON,
@@ -62,7 +63,7 @@ from orchestrator.authoring.composicao import (
     gravar,
     listar,
 )
-from orchestrator.conciliacao import reconcile
+from orchestrator.conciliacao import ReconcileResult
 from orchestrator.domains.registro import CATALOGO
 from orchestrator.grill.catalogo import MODELO_INERTE
 from orchestrator.grill.receita import Receita, ResolverReceita, construir
@@ -70,13 +71,17 @@ from orchestrator.grill.registro import gravar_receita, listar_receitas
 from orchestrator.kernel.cost import Cost, CostClass
 from orchestrator.kernel.event import EventBus
 from orchestrator.kernel.run import RunState
+from orchestrator.kernel.work import WorkSet
 from orchestrator.metrics import evaluate
 from orchestrator.observability.collector import SpanCollector
 from orchestrator.review.decision import Decision, Veredito, ids_de_conciliar_com
-from orchestrator.review.fila import Fila, caminho_da_fila, dataset_id
+from orchestrator.review.fila import Fila, caminho_da_fila, dataset_de_ref
+from orchestrator.runtime.engine import execute
+from orchestrator.sources.arquivo import ArquivoSource, RaizViolada
 from orchestrator.storage.jsonl.run_store import JsonlRunStore
 from orchestrator.storage.jsonl.trace_store import JsonlTraceStore
 from orchestrator.synth.benchmark import SyntheticSource, build_benchmark
+from orchestrator.synth.dataset import Dataset
 from orchestrator.taxonomy import DivergenceType
 from orchestrator.workflows import (
     WorkflowContext,
@@ -93,6 +98,16 @@ _RAIZ_RECEITAS: Path | None = None
 
 # Raiz das composições em disco, pelo mesmo motivo — `gravar` escreve.
 _RAIZ_COMPOSICOES: Path | None = None
+
+# A CERCA das fontes de arquivo. `caminho` chega pela rede e vira uma leitura
+# de disco aqui dentro; sem raiz, `/runs` é um leitor de arquivos arbitrários
+# do servidor. O alvo que importa não é `/etc/passwd` — é `data/fila/**`, que
+# devolveria a trilha de decisões humanas de OUTRO workflow.
+#
+# Concreta e não `Path | None` como as duas acima: elas têm um default no
+# consumidor (`Path("data")`), esta é o próprio default. Continua sendo
+# atributo de módulo para o teste trocá-la por um `tmp_path`.
+_RAIZ_ENTRADAS = Path(__file__).resolve().parents[3] / "data" / "entradas"
 
 
 @app.get("/api/workflows", response_model=list[WorkflowResumoJSON])
@@ -371,11 +386,92 @@ def executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
         # entrar em `_executar`, nem para virar um run persistido de um
         # workflow que não existe.
         raise HTTPException(status_code=404, detail=f"workflow desconhecido: {workflow_id}")
+    return _executar(workflow_id, pedido)
+
+
+def _fonte_de(pedido: RunRequest) -> tuple[SyntheticSource | ArquivoSource, Dataset | None]:
+    """A fonte e o gabarito, quando existe.
+
+    Quem sabe se há gabarito é a FONTE — não um `if` sobre o id do workflow.
+    `SyntheticSource` tem `dataset()`; uma fonte de dado real não tem, e é
+    exatamente por isso que `metrics.evaluate` continua exigindo um `Dataset`.
+
+    `Dataset | None` em vez de um método no protocolo: `kernel/source.py` diz
+    que gabarito é insumo de AVALIAÇÃO e o motor não deve recebê-lo. Pôr
+    `gabarito()` no `Source` obrigaria toda fonte de dado real a implementar um
+    método que devolve `None` — e convidaria alguém a chamá-lo no motor.
+    """
     f = pedido.fonte
-    return _executar(workflow_id, f.seed, f.n, f.taxa_divergencia)
+    if f.tipo == "sintetica":
+        fonte = SyntheticSource(seed=f.seed, n=f.n, taxa_divergencia=f.taxa_divergencia)
+        return fonte, fonte.dataset()
+    try:
+        return (
+            # `_RAIZ_ENTRADAS / f.caminho` com um `f.caminho` ABSOLUTO não
+            # concatena: o `Path` da direita vence, e o resultado cai fora da
+            # raiz. É a cerca do `ArquivoSource` que recusa, e é por isso que
+            # não há validação de forma escrita à mão aqui.
+            ArquivoSource(
+                caminho=_RAIZ_ENTRADAS / f.caminho,
+                kind=f.kind,
+                campo_id=f.campo_id,
+                raiz=_RAIZ_ENTRADAS,
+            ),
+            None,
+        )
+    except RaizViolada as erro:
+        # A mensagem do `RaizViolada` cita os dois caminhos ABSOLUTOS, e ela é
+        # a certa para um log do servidor. Aqui ela é reescrita com o que o
+        # CLIENTE pediu e nada mais: devolver a raiz resolvida entregaria a
+        # árvore de diretórios do servidor a quem sondar com nomes errados —
+        # a mesma informação que esta cerca existe para negar, saindo pela
+        # porta dos fundos.
+        raise HTTPException(
+            status_code=422,
+            detail=f"{f.caminho!r} está fora da raiz de entradas",
+        ) from erro
 
 
-def _executar(workflow_id: str, seed: int, n: int, taxa: float) -> RunJSON:
+def _ler(fonte: SyntheticSource | ArquivoSource, pedido: RunRequest) -> tuple[str, WorkSet]:
+    """O `ref` e o pool, na MESMA leitura.
+
+    Os dois juntos de propósito: `ArquivoSource` memoiza os bytes, então pedir
+    os dois aqui é UMA leitura de disco, e o `ref` nomeia exatamente o
+    conteúdo que virou trabalho.
+
+    E juntos também porque falham juntos. A leitura do `ArquivoSource` é
+    PREGUIÇOSA — `__post_init__` só confere a raiz —, então um arquivo que não
+    existe, que não é UTF-8, que estoura o teto ou que tem uma linha
+    malformada não falha na construção: falha aqui. Sem este `try`, cada um
+    desses vira 500, que diz "o servidor quebrou" sobre um arquivo que o
+    usuário pode consertar.
+    """
+    try:
+        return fonte.ref, fonte.load()
+    except (OSError, ValueError) as erro:
+        if pedido.fonte.tipo != "arquivo":
+            # Uma fonte sintética não lê disco; se ela levantou, é defeito do
+            # servidor e precisa subir como 500 em vez de virar um 422 que
+            # culpa o cliente.
+            raise
+        if isinstance(erro, OSError):
+            # NUNCA `str(erro)` para um erro de SO: a mensagem do errno embute
+            # o caminho ABSOLUTO resolvido. As `ValueError` do `ArquivoSource`
+            # citam só `caminho.name`, por desenho, e podem passar inteiras.
+            motivo = (
+                "arquivo não encontrado"
+                if isinstance(erro, FileNotFoundError)
+                else "não foi possível ler o arquivo"
+            )
+        else:
+            motivo = str(erro)
+        raise HTTPException(
+            status_code=422,
+            detail=f"{pedido.fonte.caminho!r}: {motivo}",
+        ) from erro
+
+
+def _executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
     """Executa e PERSISTE o run. Sem cache.
 
     Era `@lru_cache(maxsize=64)`, e o docstring de então já admitia o problema:
@@ -392,14 +488,22 @@ def _executar(workflow_id: str, seed: int, n: int, taxa: float) -> RunJSON:
     A definição servida aqui não tem agente: a execução não faz rede e não
     gasta em tokens. É isso que torna seguro um endpoint que qualquer F5
     dispara.
+
+    **Um caminho só, com um ramo no fim.** Chamava `conciliacao.reconcile()`, e
+    por isso só sabia executar sobre um extrato e um razão. Agora chama
+    `runtime.execute()` sobre o `WorkSet` que a FONTE entregar — é o mesmo
+    motor para as duas formas, e o único `if` que sobra é o do gabarito.
     """
     # O coletor assina o barramento. O domínio não sabe que está sendo
     # observado — ver `observability/collector.py`.
     bus = EventBus()
     coletor = SpanCollector().subscribe(bus)
-    fonte = SyntheticSource(seed=seed, n=n, taxa_divergencia=taxa)
-    dataset = fonte.dataset()
-    fila, _ = _abrir_fila(workflow_id, seed, n, taxa)
+    fonte, gabarito = _fonte_de(pedido)
+    # O `ref` vem ANTES da fila porque a fila depende dele: a chave de
+    # `data/fila/**` sai do `ref` da fonte (ver `dataset_de_ref`), e não mais
+    # de `(seed, n, taxa)` — que uma fonte de arquivo não tem.
+    ref, pool = _ler(fonte, pedido)
+    fila, _ = _abrir_fila(workflow_id, ref)
     definicao = construir_definicao(
         registry(_RAIZ_RECEITAS)[workflow_id], WorkflowContext(fila=fila)
     )
@@ -420,63 +524,106 @@ def _executar(workflow_id: str, seed: int, n: int, taxa: float) -> RunJSON:
             ),
         )
 
-    resultado = reconcile(
-        dataset.bank,
-        dataset.ledger,
-        definition=definicao,
-        # O `ref` vem da FONTE, não montado aqui: duas expressões que precisam
-        # concordar sobre o formato de um id são o join frágil de sempre.
-        input_ref=fonte.ref,
-        bus=bus,
-    )
+    # O MESMO modelo que a conversão de custo vai usar, passado explicitamente
+    # em vez de deixado no default de `execute`. As duas strings já eram
+    # iguais; passar fecha a coincidência — converter custo com um nome
+    # diferente do que rodou daria um número que não corresponde a nada.
+    modelo = MODELO_INERTE
+    run = execute(definicao, pool, input_ref=ref, bus=bus, model=modelo)
     # O run vai para o store ANTES de qualquer projeção para JSON: o que a tela
     # mostra é derivado, o que o store guarda é o fato.
-    if resultado.run is not None:
-        _run_store().save(resultado.run)
-        _trace_store().save(coletor.trace(resultado.run))
-    m = evaluate(dataset, resultado)
+    _run_store().save(run)
+    _trace_store().save(coletor.trace(run))
 
-    total = m.bank_total
+    # ITENS do pool, não lançamentos bancários. `bank_total` era a unidade de
+    # uma fonte só; num CSV de issues não existe "lado bancário".
+    total = len(pool.items)
+    # A lacuna passa a sair do `Run`: o pool que SOBROU, contado, e não
+    # inferido da soma das contagens por resolver.
+    #
+    # O comentário que estava aqui explicava por que a lacuna usava
+    # `bank_matched_total` em vez daquela soma: ela assumiria que todo match
+    # carrega exatamente um id bancário — verdade hoje, não garantida pelo
+    # tipo — e, no dia em que deixasse de ser, a lacuna iria a negativo em vez
+    # de crescer. Com `run.unresolved` a suposição deixa de existir: o resto é
+    # contado. O defeito que ele registra continua real, e é por isso que ele
+    # sobrevive aqui em vez de ser apagado.
+    #
+    # Todas as classes, não só REGRA: o revisor humano é classe HUMANO, e uma
+    # decisão aprovada precisa fechar a lacuna do canvas em vez de continuar
+    # contada como aberta. `run.unresolved` já é isso por construção — o pool
+    # encolhe a cada resolução, de qualquer classe.
+    resolvidos = total - len(run.unresolved.items)
     por_resolver = [
         ResolverRunJSON(
             name=d.name,
             cost_class=d.cost_class.name,
-            # `resultado.matches_by_resolver`, chaveado por IDENTIDADE do
-            # resolver — não `m.matches_by_layer`, que é chaveado por
-            # PROVENIÊNCIA (`MatchResult.layer`). Os dois coincidem hoje
-            # (P3.2 em DECISOES.md), mas só um deles responde "quanto este
-            # resolver da cascata resolveu" por construção.
-            matches=resultado.matches_by_resolver.get(d.name, 0),
-            rate=resultado.matches_by_resolver.get(d.name, 0) / total if total else 0.0,
-            microcents=m.cost_by_resolver_microcents.get(d.name, 0),
+            # `run.resolved_by_resolver`, chaveado por IDENTIDADE do resolver —
+            # não por PROVENIÊNCIA (`Resolution.produced_by`). Os dois
+            # coincidem hoje (P3.2 em DECISOES.md), mas só um deles responde
+            # "quanto este resolver da cascata resolveu" por construção.
+            #
+            # Conta RESOLUÇÕES, e `total` conta ITENS: uma resolução de
+            # pagamento agregado consome quatro itens de uma vez. Por isso
+            # `sum(rate) + gap.rate` não fecha em 1.0 — ver `RunJSON`.
+            matches=run.resolved_by_resolver.get(d.name, 0),
+            rate=run.resolved_by_resolver.get(d.name, 0) / total if total else 0.0,
+            # A mesma guarda de `metrics.evaluate`: um resolver que não gastou
+            # token nenhum converte para zero em qualquer modelo, e uma cascata
+            # só de regras não deve exigir tabela de preços para ler zero.
+            microcents=(
+                c.microcents(modelo)
+                if (c := run.cost_by_resolver.get(d.name, Cost.zero())) != Cost.zero()
+                else 0
+            ),
         )
         for stage in definicao.stages
         for d in (r.describe() for r in stage.ordered())
     ]
-    # A lacuna usa `bank_matched_total`, não a soma das contagens por
-    # resolver. A soma assumiria que todo MatchResult carrega exatamente um id
-    # bancário — verdade hoje, mas não garantida pelo tipo — e, se algum dia
-    # deixasse de ser, a lacuna iria a negativo em vez de crescer.
-    # `bank_matched_total` já é o conjunto de ids bancários casados
-    # intersectado com o dataset real (ver `evaluate`), então não depende
-    # dessa suposição. Como consequência, a soma
-    # `sum(rate por resolver) + gap.rate == 1.0` deixa de assumir a invariante
-    # "um id bancário por match" e passa a VERIFICÁ-LA.
-    #
-    # `_total` (todas as classes), não `bank_matched` (só REGRA — Task 5): o
-    # revisor humano é classe HUMANO, e uma decisão aprovada precisa fechar a
-    # lacuna do canvas, não continuar contada como aberta.
-    total_resolvido = m.bank_matched_total
+
+    medido = None
+    if gabarito is not None:
+        # `evaluate` exige um `ReconcileResult`, e ele é um invólucro FINO do
+        # `Run`: das seis coisas que carrega, `evaluate` lê exatamente duas —
+        # `matches` e `matches_by_class`. `divergences` fica vazio de propósito
+        # e isso NÃO é uma meia-verdade escondida: traduzir o resto do pool em
+        # `Divergence` é trabalho do domínio, para a CLI, e `evaluate` não o
+        # consulta. Adaptar `metrics.evaluate` para receber um `Run` seria mais
+        # limpo e arrastaria os outros dois chamadores (CLI e grill) para
+        # dentro desta fatia — troca que não vale aqui.
+        m = evaluate(
+            gabarito,
+            ReconcileResult(
+                matches=list(run.resolutions),
+                divergences=[],
+                proposals=list(run.proposals),
+                cost_by_resolver=run.cost_by_resolver,
+                matches_by_resolver=run.resolved_by_resolver,
+                matches_by_class=run.resolutions_by_class,
+            ),
+            model=modelo,
+        )
+        # `fonte.seed`/`fonte.n` e não `pedido.fonte.*`: este ramo só roda para
+        # a fonte que TEM gabarito, e é ela quem carrega os dois. Ler do pedido
+        # daria o mesmo número por um caminho que o tipo não garante.
+        medido = MedidoJSON(
+            seed=fonte.seed,
+            n=fonte.n,
+            bank_total=m.bank_total,
+            deterministic_rate=m.deterministic_rate,
+        )
+
     return RunJSON(
-        seed=seed,
-        n=n,
-        bank_total=total,
-        deterministic_rate=m.deterministic_rate,
-        by_resolver=por_resolver,
+        input_ref=ref,
+        itens=total,
+        resolvidos=resolvidos,
+        por_resolver=por_resolver,
         gap=GapJSON(
-            items=total - total_resolvido,
-            rate=(total - total_resolvido) / total if total else 0.0,
+            items=total - resolvidos,
+            rate=(total - resolvidos) / total if total else 0.0,
         ),
+        custo_microcents=run.custo_total_microcents(modelo),
+        contra_gabarito=medido,
     )
 
 
@@ -502,8 +649,16 @@ def _trace_store() -> JsonlTraceStore:
     return JsonlTraceStore(_RAIZ_FILA or Path("data"))
 
 
-def _abrir_fila(workflow_id: str, seed: int, n: int, taxa: float) -> tuple[Fila, str]:
-    dataset = dataset_id(seed, n, taxa)
+def _abrir_fila(workflow_id: str, ref: str) -> tuple[Fila, str]:
+    """A fila de decisões humanas de `(workflow, conjunto)`.
+
+    Recebia `(seed, n, taxa)` e chamava `dataset_id`. Passou a receber o `ref`
+    da FONTE porque uma fonte de arquivo não tem seed, n nem taxa — e porque o
+    `ref` sempre foi a identidade do conjunto. Para a sintética a chave é
+    byte a byte a mesma de antes (ver `dataset_de_ref`), então nenhuma fila já
+    gravada em `data/fila/**` deixa de ser encontrada.
+    """
+    dataset = dataset_de_ref(ref)
     return Fila(caminho_da_fila(workflow_id, dataset, raiz=_RAIZ_FILA)), dataset
 
 
@@ -584,7 +739,13 @@ def ler_fila(
 ) -> FilaJSON:
     if workflow_id not in registry(_RAIZ_RECEITAS):
         raise HTTPException(status_code=404, detail=f"workflow desconhecido: {workflow_id}")
-    fila, dataset = _abrir_fila(workflow_id, seed, n, taxa_divergencia)
+    # A chave da fila sai do `ref` da fonte, e a fonte desta rota é a
+    # sintética — as duas telas precisam concordar sobre qual arquivo abrir, e
+    # montar a chave aqui à mão seria o join frágil de sempre.
+    fila, dataset = _abrir_fila(
+        workflow_id,
+        SyntheticSource(seed=seed, n=n, taxa_divergencia=taxa_divergencia).ref,
+    )
     ds = build_benchmark(seed=seed, n=n, taxa_divergencia=taxa_divergencia)
     por_id = {e.id: ("banco", e) for e in ds.bank}
     por_id.update({e.id: ("contabil", e) for e in ds.ledger})
@@ -613,7 +774,10 @@ def decidir(
 ) -> ItemFilaJSON:
     if workflow_id not in registry(_RAIZ_RECEITAS):
         raise HTTPException(status_code=404, detail=f"workflow desconhecido: {workflow_id}")
-    fila, _ = _abrir_fila(workflow_id, seed, n, taxa_divergencia)
+    fila, _ = _abrir_fila(
+        workflow_id,
+        SyntheticSource(seed=seed, n=n, taxa_divergencia=taxa_divergencia).ref,
+    )
 
     # `corrigir` sem `tipo` nunca chega aqui: `DecisaoRequest._corrigir_exige_tipo`
     # (schemas.py) é um `@model_validator`, e o FastAPI devolve 422 antes de o
