@@ -3,9 +3,11 @@
 Até aqui este módulo também era O catálogo — a tabela `CATALOGO` de resolvers
 proponíveis pela entrevista. Essa tabela era só os cinco blocos da conciliação
 (`L1`, `L2`, `L3`, `agente`, `revisor`), sem noção de domínio — e é ela que a
-Task 3 remove: `grill.receita` e `grill.ferramentas` passaram a compor do
-catálogo PLANO (`orchestrator.domains.registro.CATALOGO`), que junta as três
-origens. Ver `docs/superpowers/sdd/2026-09-17-quadro-em-branco/task-3-*.md`.
+fatia do quadro em branco removeu: `grill.receita` e `grill.ferramentas`
+passaram a compor do catálogo PLANO
+(`orchestrator.domains.registro.CATALOGO`), que junta as três origens. O porquê
+está em `docs/superpowers/specs/2026-09-17-quadro-em-branco-design.md` (§1 —
+"Há DOIS catálogos, e é por isso que o chat erra").
 
 O que sobra aqui é ortogonal ao catálogo: `ClienteAusente` é o sentinela que
 `grill.receita.construir` usa como cliente DEFAULT — permite desenhar (e

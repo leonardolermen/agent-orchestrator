@@ -113,11 +113,21 @@ def test_o_catalogo_carrega_o_degrau_HUMANO():
 
 
 def test_as_ferramentas_das_TRES_origens_estao_no_MESMO_registro():
-    """"Todas as nossas tools disponíveis pra ele" — o pedido, virado teste."""
-    nomes = CATALOGO.ferramentas.names()
+    """"Todas as nossas tools disponíveis pra ele" — o pedido, virado teste.
 
+    A conferência é contra as origens, não contra um número: `>= 6` passaria
+    com o registro do `swe` sozinho somado a qualquer coisa, e o defeito que
+    este teste existe para pegar é justamente uma origem PERDIDA na fusão.
+    """
+    from orchestrator.conciliacao.ferramentas import catalogo_de_ferramentas
+    from orchestrator.domains.swe.workflow import ferramentas as ferramentas_swe
+
+    nomes = set(CATALOGO.ferramentas.names())
+    das_origens = set(catalogo_de_ferramentas().names()) | set(ferramentas_swe().names())
+
+    assert nomes == das_origens
     assert "contar_palavras" in nomes  # veio do swe
-    assert len(nomes) >= 6  # as 5 da conciliação mais a do swe
+    assert len(nomes) == 6  # as 5 da conciliação mais a do swe
 
 
 def test_o_catalogo_RECUSA_bloco_com_nome_repetido():
@@ -177,8 +187,22 @@ def test_o_catalogo_VALIDA_CONSTRUINDO_cada_agente():
 
 
 def test_bloco_acha_por_nome_em_qualquer_das_duas_listas():
-    assert CATALOGO.bloco("L1") is not None
-    assert CATALOGO.bloco("triador") is not None
+    """Quem compõe conhece o NOME, não a natureza — e recebe o bloco CERTO.
+
+    `is not None` provaria só que alguma coisa voltou: um `bloco()` que
+    devolvesse sempre a primeira regra passaria, e a cascata montada a partir
+    dele rodaria um resolver que ninguém escolheu. A identidade é o que torna
+    isso impossível.
+    """
+    from orchestrator.agent.declarado import AgenteDeclarado, RegraDisponivel
+
+    l1 = CATALOGO.bloco("L1")
+    triador = CATALOGO.bloco("triador")
+
+    assert isinstance(l1, RegraDisponivel) and l1.nome == "L1"
+    assert isinstance(triador, AgenteDeclarado) and triador.name == "triador"
+    assert l1 is next(r for r in CATALOGO.regras if r.nome == "L1")
+    assert triador is next(a for a in CATALOGO.agentes if a.name == "triador")
     assert CATALOGO.bloco("nao_existe") is None
 
 

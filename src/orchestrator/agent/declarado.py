@@ -255,9 +255,10 @@ class ParametroDeRegra:
     """O que uma regra aceita ser ajustada. DESCREVE, não valida.
 
     Sem faixa (mínimo/máximo) de propósito: as restrições já vivem nos
-    `__post_init__` dos resolvers, e duplicá-las aqui criaria duas fontes de
-    verdade que divergiriam na primeira mudança. Mesma decisão de
-    `ParametroSpec` no grill, pelo mesmo motivo.
+    `__post_init__` dos resolvers — `ToleranceMatcher.__post_init__` recusa
+    `max_cents` negativo, e é lá que a recusa tem o contexto para explicar por
+    quê —, e duplicá-las aqui criaria duas fontes de verdade que divergiriam na
+    primeira mudança.
     """
 
     nome: str
@@ -283,8 +284,10 @@ class RegraDisponivel:
     cost_class: CostClass
     resumo: str
     # `construir(parametros) -> Resolver`. Assinatura UNIFORME, como
-    # `EntradaCatalogo.construir` no grill: variável exigiria introspecção para
-    # saber o que passar, e é esse padrão que já deu um defeito silencioso.
+    # `workflows.WorkflowFactory`: variável exigiria introspecção para saber o
+    # que passar, e é esse padrão que já deu um defeito silencioso — o
+    # `_construir_definicao` da API, que decidia repassar a fila olhando o NOME
+    # do parâmetro da fábrica.
     construir: Callable[[dict[str, int]], Any]
     parametros: tuple[ParametroDeRegra, ...] = ()
 

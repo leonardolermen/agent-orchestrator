@@ -121,10 +121,18 @@ def listar_workflows() -> list[WorkflowResumoJSON]:
 
 
 def _ferramenta_json(ferramentas: ToolRegistry, nome: str) -> FerramentaJSON:
+    """A descrição vem do `ToolSpec`. Nunca escrita à mão nesta camada."""
     return FerramentaJSON(nome=nome, descricao=ferramentas.spec(nome).description)
 
 
 def _regra_json(r: RegraDisponivel) -> RegraJSON:
+    """Todo campo é lido da `RegraDisponivel`. Nenhum digitado aqui.
+
+    Existiam duas rotas servindo isto (`/api/catalogo` e `/api/dominios`), e a
+    extração era o que impedia as duas de divergirem. Sobrou uma — e a regra
+    continua valendo pelo motivo maior: um valor escrito à mão na camada HTTP
+    faria a tela oferecer um parâmetro que `construir` recusa.
+    """
     return RegraJSON(
         nome=r.nome,
         cost_class=r.cost_class.name,
@@ -137,6 +145,11 @@ def _regra_json(r: RegraDisponivel) -> RegraJSON:
 
 
 def _agente_json(a: AgenteDeclarado) -> AgenteDeclaradoJSON:
+    """Projeção do `AgenteDeclarado`, campo a campo — nada inventado aqui.
+
+    O que a tela edita é o que o catálogo declara: um default escrito nesta
+    camada viraria um agente que o canvas mostra e `construir_agente` recusa.
+    """
     return AgenteDeclaradoJSON(
         name=a.name,
         system=a.system,
