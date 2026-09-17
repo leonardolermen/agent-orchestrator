@@ -158,6 +158,24 @@ class ToolRegistry:
     def __contains__(self, nome: str) -> bool:
         return nome in self._por_nome
 
+    def spec(self, nome: str) -> ToolSpec:
+        """A ferramenta pelo nome. Levanta se não existe.
+
+        Existe para o RECORTE: um agente declarado recebe as ferramentas que
+        declara, não as que por acaso estão no registro do domínio. Sem poder
+        pegar uma por nome, o recorte seria feito por quem chama, com uma
+        segunda cópia do dicionário.
+
+        `KeyError` e não `None`: quem pede uma ferramenta pelo nome já checou a
+        lista, e um `None` silencioso viraria um registro com um buraco.
+        """
+        if nome not in self._por_nome:
+            raise KeyError(
+                f"ferramenta desconhecida: {nome!r}. disponíveis: "
+                f"{sorted(self._por_nome)}"
+            )
+        return self._por_nome[nome]
+
     def names(self) -> tuple[str, ...]:
         return tuple(self._por_nome)
 

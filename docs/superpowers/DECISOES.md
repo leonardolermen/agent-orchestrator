@@ -2612,3 +2612,101 @@ Três detalhes que só aparecem rodando:
 A classe de custo muda de TOM entre os temas e não de MATIZ: verde continua
 REGRA nos dois, senão a pessoa aprenderia duas linguagens para ler a mesma
 coisa.
+
+## A plataforma deixa de ser um conciliador
+
+### P6.112. ACHADO PELO DONO — o catálogo era um cardápio de conciliação
+
+Pergunta dele: *"por que só tem blocos de conciliação? eu quero uma plataforma
+geral."*
+
+Medido: existem **seis resolvers escritos** que o canvas não oferece —
+`FornecedorPreferido`, `ComprasAnteriores`, `BuscadorDeFornecedor` e
+`CompradorHumano` em `procurement`; `Triador` e o `triador` real em `swe`.
+
+**Por que aconteceu.** O `grill` foi construído no PR #4 para autorar receitas
+DE CONCILIAÇÃO, e o `CATALOGO` dele é o cardápio da conciliação. Quando montei o
+canvas, usei o `CATALOGO` porque era o registro de resolvers componíveis que
+existia — a FORMA certa, o ESCOPO errado. Não questionei.
+
+O brief original pedia explicitamente: *"identifique decisões no código atual
+que contradizem a visão e proponha migração, não as ignore"*. Esta contradizia,
+e eu construí em cima dela em vez de levantá-la.
+
+### P6.113. O problema não era a lista, era o CONTRATO
+
+Acrescentar entradas não resolveria. O construtor do catálogo é tipado em
+conciliação:
+
+    def _l1(p, *, fila: Fila, cliente: LLMClient, context: ToolContext)
+
+Esse `ToolContext` é `bank` e `ledger`. Um resolver de compras precisa de
+requisições e fornecedores — ele não cabe na assinatura.
+
+E há uma consequência de produto que a lista escondia: **cascatas não são
+misturáveis entre domínios.** `L1` trabalha `kind="lancamento"`,
+`FornecedorPreferido` trabalha `"requisicao"`, o `Triador` trabalha `"issue"`.
+Uma cascata com `L1 + FornecedorPreferido` não é ruim — é vazia de sentido,
+porque o segundo roda sobre um pool que o primeiro nem enxerga.
+
+### P6.114. A peça que destrava: um agente descrito como DADO
+
+A observação que resolve é que os três callables de `AgentSpec` não são
+arbitrários — são dado disfarçado. No `swe`:
+
+    units   → um `kind` e um template sobre o payload
+    parse   → um vocabulário fechado e um schema JSON
+    abstain → um rótulo
+
+Nenhum dos três precisa de Python. `AgenteDeclarado` é exatamente isso, e
+`construir_agente` o transforma no MESMO `Agent` do M2 — mesmo laço, mesmo
+orçamento em dois níveis, mesmo retry de formato, mesma captura estreita em
+volta de `client.complete()`. Nada é reimplementado; muda de onde vêm as três
+funções.
+
+**O que continua sendo código, e por quê.** A REGRA determinística. Casar por
+documento e valor é lógica de domínio — não há declaração que a substitua, e
+fingir que há produziria uma linguagem de regras pela metade. Agente, crew e
+revisão humana são genéricos; regra e ferramenta vêm do domínio.
+
+**A prova de que a abstração alcança algo real:** `test_reproduz_o_triador_do_swe`
+monta, só com declaração, o agente que hoje existe como quinze linhas de Python
+— e exige o mesmo comportamento. Sem esse teste, seria uma abstração desenhada a
+partir de nada, que é o que a regra dos três usos existe para impedir.
+
+### P6.115. O recorte de ferramentas, e a invariante que virou estrutura
+
+**Recorte.** Um agente recebe as ferramentas que DECLARA, não as que por acaso
+existem no registro do domínio. Sem isso, acrescentar uma ferramenta a um
+domínio mudaria o custo e o comportamento de todo agente dele, sem ninguém
+pedir.
+
+**A invariante do P6.86 agora é recusa de construção.** `abstem_com` não pode
+estar em `tipos`. No `swe`, `DUVIDA` era tipo E "não sei" ao mesmo tempo, e 16
+de 50 casos saíam do denominador da precisão. Lá a colisão foi descoberta
+MEDINDO, depois de três execuções pagas; aqui ela é impossível de declarar.
+
+Outras duas recusas do mesmo tipo: prompt que não interpola campo nenhum (todo
+item receberia o mesmo texto, e o agente responderia sem ler o item) e campo
+ausente no payload, que falha ALTO nomeando o que falta — um `defaultdict` que
+devolvesse vazio produziria prompt com buracos silenciosos.
+
+### P6.116. O OBSTÁCULO que sobrou, nomeado em vez de contornado
+
+`Dominio` guarda um `ToolRegistry`. Para `swe` isso basta: `contar_palavras` é
+sem estado. Para conciliação **não**: `registry_de(contexto)` produz ferramentas
+com `fn` ligado ao `ToolContext` — um registro construído com contexto vazio
+LISTA certo e EXECUTA errado, devolvendo zero resultados sem erro nenhum.
+
+É a pior forma possível de defeito neste projeto: silencioso e sobre dados.
+
+Duas saídas, e a escolha é de projeto:
+
+1. `Dominio` guarda uma FÁBRICA (`Callable[[contexto], ToolRegistry]`), e a
+   listagem usa um contexto vazio explicitamente rotulado como "só para
+   listar";
+2. `ToolSpec.fn` deixa de ser ligado ao contexto e passa a recebê-lo como
+   primeiro argumento, injetado pelo `ToolRegistry.call` na execução.
+
+A (2) é mais limpa e mexe no `ToolRegistry`, que hoje tem oito chamadores. Fica
+para o próximo passo, decidida antes de escrita — não depois.
