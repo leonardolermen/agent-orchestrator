@@ -193,14 +193,16 @@ def test_cascata_com_AGENTE_e_marcada_como_nao_executavel_pela_API():
 
 
 def test_a_pagina_do_compositor_e_servida():
-    """A tela virou um app React (Vite + React Flow), buildado para
-    `web/compor/`. O `StaticFiles(html=True)` serve o `index.html` de lá.
+    """A tela virou um app React (Vite + React Flow), buildado para `web/` e
+    servido na RAIZ — a autoria é a vista `?vista=compor`. Antes ela morava em
+    `/compor/`, ao lado de duas páginas estáticas, e foi essa convivência que
+    produziu o defeito do modo escuro por default.
 
     O teste ancora no que o BUILD garante — a raiz onde o React monta e um
     módulo carregado — e não em marcação escrita à mão, que agora é gerada e
     muda de nome de arquivo a cada build (hash no asset).
     """
-    r = cliente.get("/compor/")
+    r = cliente.get("/?vista=compor")
 
     assert r.status_code == 200
     assert 'id="raiz"' in r.text
@@ -223,8 +225,8 @@ def test_a_pagina_DIZ_que_as_SETAS_nao_sao_do_autor():
 
     import orchestrator.api.app as mod
 
-    bundles = list((Path(mod.__file__).parents[3] / "web" / "compor" / "assets").glob("*.js"))
-    assert bundles, "o app do compositor não foi buildado (npm --prefix web-app run build)"
+    bundles = list((Path(mod.__file__).parents[3] / "web" / "assets").glob("*.js"))
+    assert bundles, "o app não foi buildado (npm --prefix web-app run build)"
     fonte = "\n".join(b.read_text(encoding="utf-8") for b in bundles)
 
     assert "setas" in fonte
@@ -281,7 +283,7 @@ def test_a_pagina_tem_o_botao_RUN():
 
     import orchestrator.api.app as mod
 
-    bundles = list((Path(mod.__file__).parents[3] / "web" / "compor" / "assets").glob("*.js"))
+    bundles = list((Path(mod.__file__).parents[3] / "web" / "assets").glob("*.js"))
     fonte = "\n".join(b.read_text(encoding="utf-8") for b in bundles)
 
     assert "Run" in fonte

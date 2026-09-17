@@ -30,26 +30,7 @@ import {
 import { Chat } from "./Chat";
 import { NoResolver, classeDo, nomeDo, type DadosDoNo } from "./NoResolver";
 import { Painel } from "./Painel";
-
-function usarTema(): [boolean, () => void] {
-  const [escuro, setEscuro] = useState(
-    () => document.documentElement.classList.contains("dark"),
-  );
-  const alternar = () => {
-    const novo = !escuro;
-    setEscuro(novo);
-    document.documentElement.classList.toggle("dark", novo);
-    // `localStorage` pode levantar (janela privada, site data bloqueado). A
-    // preferência é conveniência por visitante — perdê-la volta ao default
-    // escuro, que é o comportamento certo.
-    try {
-      localStorage.setItem("tema", novo ? "dark" : "light");
-    } catch {
-      /* sem problema: o default volta a valer */
-    }
-  };
-  return [escuro, alternar];
-}
+import { BotaoDeTema, usarTema } from "./tema";
 
 const TIPOS_DE_NO = { resolver: NoResolver };
 
@@ -385,16 +366,22 @@ export default function App() {
           </select>
         </label>
 
-        <button
-          type="button"
-          onClick={alternarTema}
-          title={escuro ? "mudar para claro" : "mudar para escuro"}
-          className="ml-auto rounded border border-borda px-2 py-1 text-[12px] text-neutral-500 transition hover:bg-neutral-50 dark:border-noite-borda dark:text-noite-fraca dark:hover:bg-noite-cartao"
-        >
-          {escuro ? "☀" : "☾"}
-        </button>
+        <span className="ml-auto">
+          <BotaoDeTema escuro={escuro} alternar={alternarTema} />
+        </span>
+        {/* As outras DUAS VISTAS da mesma aplicação, não outras páginas.
+            Enquanto eram `index.html` e `fila.html` separados, estes links
+            precisavam carregar a query string inteira para as três telas
+            concordarem sobre qual dataset estavam olhando — e o P4.14 do
+            DECISOES registra que essa promessa já quebrou. */}
         <a href="/" className="text-[12px] text-humano hover:underline dark:text-noite-humano">
           ← cascata em execução
+        </a>
+        <a
+          href="/?vista=fila"
+          className="text-[12px] text-humano hover:underline dark:text-noite-humano"
+        >
+          fila →
         </a>
       </header>
 

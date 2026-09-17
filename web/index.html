@@ -1,27 +1,48 @@
 <!doctype html>
 <html lang="pt-BR">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Agent Orchestrator — cascata</title>
-  <!-- Descrição estática: existe também para quando a página é lida sem
-       executar o JavaScript (leitor de tela, crawler, ou o teste em
-       tests/api/test_estaticos.py, que só lê o HTML servido). -->
-  <meta name="description" content="Cascata medida de resolvers para conciliar lançamentos bancários.">
-  <link rel="stylesheet" href="/style.css">
-</head>
-<body>
-  <header>
-    <h1 id="titulo">carregando…</h1>
-    <p class="proveniencia" id="proveniencia"></p>
-    <label class="seletor">
-      workflow
-      <select id="workflow"></select>
-    </label>
-    <a id="link-fila" class="link-outro" href="/fila.html">Ver a fila de revisão →</a>
-  </header>
-  <main id="stages"></main>
-  <noscript>Esta página precisa de JavaScript para desenhar a cascata de conciliar lançamentos.</noscript>
-  <script src="/canvas.js"></script>
-</body>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent Orchestrator — cascata</title>
+    <meta name="description" content="Cascata de resolvers ordenada por custo: os nós são seus, as setas são derivadas. E a fila de revisão humana que fecha a cascata." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+    <!--
+      O TEMA, aplicado antes da primeira pintura.
+
+      Este script é inline e síncrono DE PROPÓSITO. O escuro é decisão de
+      produto, e uma decisão de produto que só vale depois de 361 kB de
+      JavaScript baixarem e executarem não é um default — é um conserto, e o
+      usuário vê o conserto acontecendo como um flash claro em toda visita.
+      `<script type="module">` não serve: módulo é adiado por especificação e
+      roda depois de o CSS já ter pintado.
+
+      A AUSÊNCIA de preferência cai no ESCURO, nunca no claro. `localStorage`
+      pode levantar (janela privada, site data bloqueado) e pode voltar vazio —
+      por isso a leitura é protegida, e os dois caminhos de falha terminam no
+      escuro. Um default baseado em `prefers-color-scheme` faria a tela abrir
+      clara em metade das máquinas, que é o oposto do que foi pedido.
+
+      Há um teste que ancora isto no HTML SERVIDO: ver
+      `tests/api/test_estaticos.py::test_a_raiz_JA_CHEGA_escura_sem_depender_do_bundle`.
+    -->
+    <script>
+      try {
+        if (localStorage.getItem("tema") === "light") {
+          document.documentElement.classList.remove("dark");
+        } else {
+          document.documentElement.classList.add("dark");
+        }
+      } catch (e) {
+        document.documentElement.classList.add("dark");
+      }
+    </script>
+    <script type="module" crossorigin src="./assets/index-w3lhEaPb.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-BuJeIRlM.css">
+  </head>
+  <body>
+    <div id="raiz"></div>
+    <noscript>Esta página precisa de JavaScript para desenhar a cascata.</noscript>
+  </body>
 </html>

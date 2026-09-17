@@ -158,7 +158,7 @@ O núcleo está construído e medido. O que existe hoje:
 - **Avaliação**: benchmark, matriz de confusão, regressão, colheita de decisão
   humana viram casos de teste
 - **Canvas** em React/React Flow que desenha a cascata com números medidos
-- **882 testes**, e nenhum deles chama API paga
+- **883 testes**, e nenhum deles chama API paga
 
 O agente **já rodou contra o modelo de verdade** — três execuções pagas, e foi
 delas que saiu a limitação medida registrada no P6.86.
@@ -197,6 +197,24 @@ nenhum resolver cobre, declarada em vez de escondida. Nenhum endpoint por trás
 da página tem caminho de código até o modelo (ver `tests/api/test_execucao.py`),
 então nenhum F5 gasta dinheiro.
 
+**Uma aplicação, três vistas**, todas na mesma URL e todas escuras por default:
+
+| Vista | URL | O que é |
+|---|---|---|
+| execução | `/` (ou `/?workflow=<id>`) | um workflow salvo, com os números medidos |
+| fila | `/?vista=fila` | a revisão humana que fecha a cascata |
+| compor | `/?vista=compor` | o canvas de autoria |
+
+O front é um app React em `web-app/`, buildado para `web/` — que é servido como
+estático. O bundle é commitado porque o pacote é Python e `pip install` não roda
+npm; o CI rebuilda e exige `git diff` vazio, então fonte não buildada não passa.
+
+```bash
+npm --prefix web-app install
+npm --prefix web-app run dev    # com proxy para o uvicorn em 8111
+npm --prefix web-app run build  # antes de commitar mudança de front
+```
+
 ### Avaliar o agente (gasta dinheiro)
 
 Exige `ANTHROPIC_API_KEY` no ambiente ou `ant auth login`.
@@ -216,7 +234,7 @@ de só imprimir o relatório:
 ```bash
 orchestrator-eval --via assinatura --seed 1 --n 30 --fila
 uvicorn orchestrator.api.app:app --port 8000
-# http://localhost:8000/fila.html?seed=1&n=30&taxa_divergencia=0.15
+# http://localhost:8000/?vista=fila&seed=1&n=30&taxa_divergencia=0.15
 ```
 
 Cada proposta pendente aparece com o lançamento bancário e o contábil lado a

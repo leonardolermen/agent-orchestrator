@@ -208,7 +208,104 @@ export const api = {
         taxa_divergencia: ambiente.taxa_divergencia,
       }),
     }),
+
+  // Os workflows JÁ SALVOS. É o que a vista de execução navega, e é o que a
+  // CLI do grill entrega: ela imprime `/?workflow=<id>` como último passo,
+  // então esta listagem é o outro lado daquele link.
+  workflows: () => pedir<WorkflowResumo[]>("/api/workflows"),
+
+  workflow: (workflowId: string) =>
+    pedir<WorkflowConstruido>(`/api/workflows/${encodeURIComponent(workflowId)}`),
+
+  fila: (workflowId: string, dataset: ParametrosDaFila) =>
+    pedir<Fila>(
+      `/api/fila/${encodeURIComponent(workflowId)}?${queryDoDataset(dataset)}`,
+    ),
+
+  // `workflow_id` é segmento de PATH e o dataset é query — a rota é
+  // `/api/fila/{workflow_id}`, e a fila é escopada nas DUAS dimensões:
+  // `caminho_da_fila(workflow_id, dataset)` toma o workflow primeiro e o
+  // `dataset_id(seed, n, taxa)` depois. Mandar uma sem a outra decide na fila
+  // errada em silêncio.
+  decidir: (
+    workflowId: string,
+    divergenceId: string,
+    dataset: ParametrosDaFila,
+    corpo: Decisao,
+  ) =>
+    pedir<ItemDaFila>(
+      `/api/fila/${encodeURIComponent(workflowId)}/${encodeURIComponent(divergenceId)}/decisao?${queryDoDataset(dataset)}`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(corpo),
+      },
+    ),
 };
+
+export interface WorkflowResumo {
+  id: string;
+  nome: string;
+  classes: string[];
+  gerado_em: string | null;
+  // Falso quando a cascata tem classe AGENTE. A tela desabilita a opção em vez
+  // de deixar a pessoa colher um 409 — mas quem GARANTE é o servidor.
+  executavel: boolean;
+}
+
+/** Os três campos que escopam um dataset. Os MESMOS de `RunRequest`. */
+export interface ParametrosDaFila {
+  seed: number;
+  n: number;
+  taxa_divergencia: number;
+}
+
+function queryDoDataset(d: ParametrosDaFila): string {
+  return new URLSearchParams({
+    seed: String(d.seed),
+    n: String(d.n),
+    taxa_divergencia: String(d.taxa_divergencia),
+  }).toString();
+}
+
+export interface Lancamento {
+  id: string;
+  lado: string;
+  data: string;
+  valor: number; // centavos, sempre int — ver `money.py`
+  descricao: string;
+  contraparte: string;
+  documento: string | null;
+}
+
+export interface ItemDaFila {
+  divergence_id: string;
+  tipo: string;
+  confianca: string;
+  explicacao: string;
+  evidencia: string[];
+  acao_sugerida: string;
+  conciliar_com: string[];
+  lancamentos: Lancamento[];
+  decidido: boolean;
+}
+
+export interface Fila {
+  workflow: string;
+  dataset: string;
+  itens: ItemDaFila[];
+  // A taxonomia vem da API, NUNCA de uma lista escrita aqui. Duplicar os
+  // valores no front cria drift silencioso no dia em que a taxonomia crescer —
+  // o mesmo defeito que a fatia da fila existiu para tornar impossível.
+  tipos: string[];
+}
+
+export interface Decisao {
+  veredito: "aceitar" | "rejeitar" | "corrigir";
+  autor: string;
+  tipo?: string;
+  conciliar_com?: string[];
+}
 
 // Um agente em branco. É o que transforma a paleta de "escolha um pronto" em
 // "crie um" — e é o pedido do dono: uma plataforma geral, não um cardápio.

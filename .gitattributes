@@ -1,4 +1,4 @@
-# O bundle de `web/compor/` é GERADO (Vite) e commitado, porque o pacote é
+# TUDO em `web/` é GERADO (Vite) e commitado, porque o pacote é
 # Python e `pip install` não roda npm.
 #
 # `-text` desliga a conversão de quebra de linha. Sem isso, o git guardaria LF,
@@ -8,5 +8,5 @@
 #
 # `linguist-generated` colapsa esses arquivos no diff do GitHub: eles não são
 # para ler, são para servir.
-web/compor/** -text linguist-generated
+web/** -text linguist-generated
 web-app/package-lock.json -text linguist-generated
