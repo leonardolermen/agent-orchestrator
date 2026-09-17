@@ -28,7 +28,7 @@ class EventKind(StrEnum):
     RESOLVER_INICIADO = "resolver.iniciado"
     RESOLVER_CONCLUIDO = "resolver.concluido"
     ITEM_RESOLVIDO = "item.resolvido"
-    ITEM_PRODUZIDO = "item_produzido"
+    ITEM_PRODUZIDO = "item.produzido"
     ITEM_PROPOSTO = "item.proposto"
     ERRO = "erro"
 
