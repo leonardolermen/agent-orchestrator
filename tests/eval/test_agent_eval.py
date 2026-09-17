@@ -281,3 +281,26 @@ def test_main_aceita_via_assinatura_e_nao_anuncia_gasto(capsys):
     assert "GASTA DINHEIRO" not in saida
     assert "assinatura" in saida.lower()
     assert "US$" not in saida
+
+
+def test_a_via_por_ASSINATURA_esta_sob_a_tranca_de_rede_da_suite():
+    """A tranca cobre DOIS pacotes, e por um tempo cobriu so um.
+
+    `eval/assinatura.py` nao usa `anthropic`: usa `claude_agent_sdk`, cujo
+    `query` fala com o modelo pela assinatura do Claude Code. Ele ficava fora de
+    `tests/conftest.py::_rede_proibida`, e
+    `test_main_aceita_via_assinatura_e_nao_anuncia_gasto` so nao gastava porque
+    `--n 20` por acaso nao produz divergencia nenhuma — um acidente de DADO,
+    exatamente a forma do defeito que aquela fixture nasceu para pegar. Bastava
+    alguem mexer no `n` daquele teste.
+
+    Aqui o `n` PRODUZ divergencias, entao o caminho de verdade e percorrido ate
+    o ponto em que a tranca fecha. `BaseException` e nao `Exception`: se a
+    tranca fosse capturavel, `assinatura.py` a transformaria em abstencao e este
+    `raises` falharia — que e o sinal desejado.
+    """
+    pytest.importorskip("claude_agent_sdk")
+    from orchestrator.eval.agent_eval import main
+
+    with pytest.raises(BaseException, match="falar com o modelo de verdade"):
+        main(["--via", "assinatura", "--n", "100"])

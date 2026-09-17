@@ -1373,5 +1373,5 @@ def test_a_tranca_de_REDE_da_suite_e_ALTA_e_nao_engolida(tmp_path, monkeypatch):
     # `BaseException`, e nao `Exception`: se a tranca fosse uma `Exception`,
     # `conversar` a capturaria, o POST devolveria 200, e este `raises` falharia
     # — que e exatamente o sinal que se quer.
-    with pytest.raises(BaseException, match="SDK real da Anthropic"):
+    with pytest.raises(BaseException, match="falar com o modelo de verdade"):
         cliente.post("/api/workflows/com-agente/runs", json={"fonte": _FONTE_ISSUES})

@@ -81,14 +81,32 @@ def _rede_proibida(monkeypatch):
     classe pela sua própria e, sendo o patch mais recente, vence), e deixa
     intacta a injeção de `sdk` que `tests/agent/test_anthropic_client.py` usa
     para provar o protocolo de mensagens sem rede.
+
+    **São DOIS pacotes, e trancar um só deixava o buraco aberto.**
+    `eval/assinatura.py` não usa `anthropic`: usa `claude_agent_sdk`, cujo
+    `query` fala com o modelo pela assinatura do Claude Code. Ele ficava fora da
+    tranca, e `test_main_aceita_via_assinatura_e_nao_anuncia_gasto` só não
+    gastava porque `--n 20` por acaso não produz divergência nenhuma — um
+    acidente de DADO, que é a mesma forma do defeito que esta fixture nasceu
+    para pegar. `create_sdk_mcp_server`/`tool` ficam de fora de propósito: eles
+    montam um servidor MCP em processo e não falam com ninguém.
     """
     import anthropic
 
     def _proibido(*args, **kwargs):
         raise RedeProibida(
-            "um teste chegou a construir o SDK real da Anthropic. nenhum teste "
-            "pode falar com a API paga: injete um `sdk`, use `FakeLLMClient`, "
-            "ou troque `_cliente_de_execucao`/`_tem_chave` por um dublê"
+            "um teste chegou a falar com o modelo de verdade. nenhum teste pode "
+            "usar a API paga nem a assinatura: injete um `sdk`, use "
+            "`FakeLLMClient`, ou troque `_cliente_de_execucao`/`_tem_chave`/"
+            "`investigator_factory` por um dublê"
         )
 
     monkeypatch.setattr(anthropic, "Anthropic", _proibido)
+
+    # `claude_agent_sdk` é extra opcional, como `fastapi`: sem ele instalado os
+    # próprios testes da via por assinatura já se pulam.
+    try:
+        import claude_agent_sdk
+    except ImportError:
+        return
+    monkeypatch.setattr(claude_agent_sdk, "query", _proibido)
