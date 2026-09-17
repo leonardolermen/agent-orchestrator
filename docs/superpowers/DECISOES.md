@@ -2275,3 +2275,666 @@ e qualidade se resolveria mexendo no prompt.
 **Terceira vez que uma segunda medição derruba uma leitura minha da primeira.**
 Está virando padrão, e o padrão tem nome: eu leio o número antes de perguntar
 quantas vezes ele se repetiu.
+
+## Canvas de autoria
+
+### P6.95. O backend de autoria já existia inteiro — e eu não sabia
+
+Antes de escrever tela, olhei o que havia. O `grill` **é** a camada de autoria e
+está completa:
+
+- `CATALOGO` — 5 resolvers componíveis, com `ParametroSpec` que lê o default do
+  PRÓPRIO dataclass do resolver (renomear o campo lá explode no import);
+- `Receita` — congelada, serializável, com `para_json`/`de_json`;
+- `construir(receita)` — *"valida construindo. Se retorna, a receita roda"*;
+- `registro.py` — grava, lê e lista receitas em disco;
+- e `registry()` já incluía as receitas de disco na listagem de workflows.
+
+Faltavam **duas rotas** e uma tela. Não faltava modelo, não faltava validação,
+não faltava persistência.
+
+Fica registrado porque foi a segunda vez nesta sessão: o `web/` também já tinha
+duas páginas e uma fila de revisão funcional. **A instrução do dono — "não
+assuma que uma feature não existe só porque não está evidente no README" —
+continua pagando.**
+
+### P6.96. A ordem NÃO é um campo, e é isso que impede a tela de virar decoração
+
+> **Atualizado.** A primeira versão desta tela era uma LISTA. O dono pediu um
+> canvas de nós, como o do CrewAI — e isso não enfraquece nada do que está
+> abaixo, porque a garantia mora no servidor. O que mudou foi o desenho; o que
+> permaneceu foi que a ordem não é um campo. Ver P6.99.
+
+O §3.5 nomeia o modo de falha de um canvas de autoria: **decoração** — desenhar
+uma coisa e executar outra. A defesa aqui não é visual, é estrutural:
+
+1. `ReceitaRequest` não tem campo de ordem. Quem ordena é `Stage.ordered()`, por
+   `CostClass`, e não existe entrada que a inverta.
+2. O endpoint devolve a definição **construída**, não a receita recebida. A tela
+   desenha o que voltou do servidor.
+3. `test_a_ordem_enviada_e_IGNORADA` envia HUMANO antes de REGRA e exige que
+   volte REGRA antes de HUMANO. Se alguém transformar a ordem num campo, esse
+   teste fica vermelho — e é exatamente ali que a decoração começaria.
+
+Não há drag-and-drop de reordenação porque **não há ordem para arrastar**. A
+ausência é o recurso.
+
+### P6.97. ACHADO NA TELA — meu próprio texto estava errado pela metade
+
+Dirigindo a página no navegador, cliquei `revisor` → `L2` → `L1` e a cascata
+mostrou `L2, L1, revisor`. O HUMANO foi para o fim sozinho, certo. Mas **L2
+ficou antes de L1**, e os dois são `REGRA`.
+
+Está correto: `sorted` é estável, então dentro de uma classe vale a ordem do
+autor — é a mesma semântica que `test_procurement_regra_barata_roda_antes_da_
+generica` já pinava. O errado era o meu texto na tela, que dizia *"você não
+escolheu esta ordem"*. Falso para metade do caso.
+
+Corrigido para: entre classes manda o custo; dentro de uma classe, a ordem em
+que você acrescentou.
+
+Achado **rodando a tela**, não lendo o código — quinta vez neste projeto. E é a
+primeira em que o defeito era de PROSA: o comportamento estava certo e a
+explicação dele, não. Numa tela cuja única defesa contra decoração é ser
+honesta sobre o que faz, prosa errada é defeito de verdade.
+
+### P6.98. O que este canvas NÃO faz, e por quê
+
+Ele compõe cascatas a partir de um catálogo. Ele **não** cria agentes, não
+edita prompt e não desenha fluxograma livre.
+
+A diferença importa: compor é escolher entre resolvers que já existem, foram
+testados e têm classe de custo declarada. Criar agente pela tela seria autorar
+prompt por UI — a direção do CrewAI que o projeto rejeitou, e que o teste
+`test_existe_uma_pasta_de_dominio` registra com todas as letras ("aqui o
+domínio é código tipado").
+
+Quando um domínio novo precisar de um resolver novo, ele entra no `CATALOGO`
+por código, com teste — e aparece na paleta sozinho.
+
+### P6.99. O canvas de nós: as arestas são SAÍDA, não entrada
+
+Pedido do dono, com referência visual: um canvas como o do CrewAI — nós, setas,
+arraste, paleta lateral. A primeira versão era uma lista, e lista não é o que
+ele pediu.
+
+**A diferença que faz este canvas ser honesto, e que é argumento de produto e
+não concessão:** num editor de fluxo de agentes convencional, *você desenha as
+setas* e a execução tenta seguir o desenho. Aqui a seta é **derivada**. Você
+posiciona os nós onde quiser; a flecha aponta sempre na ordem em que a cascata
+roda — `Stage.ordered()`, por classe de custo.
+
+Não há como desenhar uma aresta. Arrastar um nó para "antes" de outro reposiciona
+o nó e **não muda a seta**: ela volta a apontar no mesmo sentido, agora para
+cima. Isso parece estranho na primeira vez e é o ponto — a regra fica visível
+exatamente quando alguém tenta furá-la.
+
+Verificado dirigindo a página: arrastei o `revisor` de y=552 para y=12, acima do
+`L1`, e a última aresta continuou terminando nele. A seta aponta para cima e
+continua dizendo "é ele que roda por último".
+
+**O que a tela ganha de um canvas de nós que a lista não dava:** a transição
+entre classes de custo tem nome na aresta ("o que sobrou"), e é ali que a
+cascata age. Numa lista, isso era ordem vertical e nada mais.
+
+### P6.100. TRÊS defeitos que só a tela mostrou
+
+Rodar a página achou o que 753 testes não achariam, e os três são da mesma
+família: **o DOM estava certo e a tela estava errada.**
+
+1. **Nó invisível.** O auto-layout posicionava por índice só quem ainda não
+   tinha posição. Acrescentar `revisor` (índice 0) e depois `L1` (que VIRA
+   índice 0) dava a mesma coordenada aos dois. O `L1` existia no DOM, com os
+   atributos certos — e estava atrás do `revisor`. Nenhuma asserção sobre
+   "existe no DOM" falharia.
+
+   Corrigido com `fixado`: o nó reflui sozinho na ordem de execução até alguém
+   arrastá-lo; a partir daí é da pessoa.
+
+2. **`hidden` perdendo para `display: grid`.** O texto "Canvas vazio" tinha o
+   atributo `hidden` corretamente aplicado — e continuava visível atrás dos
+   nós, porque `.vazio { display: grid }` vence o `display: none` que o
+   atributo aplica. Um teste que checasse `elemento.hidden === true` passaria.
+
+3. **Parâmetro estourando o cartão.** `budget_total_microcents=400000000`
+   vazava para fora do nó. Truncado com reticências; o valor exato vive no
+   inspetor, onde dá para editá-lo.
+
+Sexto, sétimo e oitavo defeitos deste projeto achados por EXECUÇÃO. Os cinco
+primeiros foram sobre custo ou sobre o que produziu o custo; estes três são
+sobre renderização, e apontam a mesma lacuna por outro lado: **não há teste de
+tela neste projeto, e não vai haver por enquanto.** O substituto declarado é
+dirigir a página no navegador antes de dizer que ela está pronta — foi o que
+achou os três.
+
+### P6.101. O nó do agente mostra as ferramentas, e o modelo como PADRÃO
+
+Pedido: um card de agente como o da referência, com modelo e ferramentas.
+
+**As ferramentas dá para mostrar: elas são reais e estáticas.** Vêm de
+`registry_de`, derivadas do MESMO registro que o `Investigator` recebe — uma
+lista escrita à mão em `EntradaCatalogo` divergiria no dia em que alguém
+acrescentasse uma ferramenta, e a tela mostraria quatro de cinco sem sintoma.
+Há teste comparando as duas.
+
+**O modelo NÃO dá para cravar, e é a diferença para a referência.** No canvas do
+CrewAI o nó exibe `gpt-5.6-luna` como se fosse propriedade do agente. Aqui a
+`Receita` não carrega modelo nenhum — quem escolhe é a execução (`--model`), e
+`para_json(receita)` não tem a palavra. Então o nó mostra o default, rotulado
+`padrão`, e um teste garante que a receita serializada continua sem modelo.
+
+Cravar o modelo no nó seria a mesma classe de mentira que desenhar uma seta que
+a execução não segue.
+
+**Efeito colateral de layout, achado na tela:** o nó do agente tem 268px contra
+104 dos determinísticos. A constante `NO_H` deixou de servir para calcular as
+arestas — a seta saía do meio do cartão. Agora `alturaDe()` mede o elemento
+real, e `acrescentar` desenha ANTES de posicionar, porque um nó que ainda não
+está no DOM mede a altura mínima.
+
+### P6.102. O botão Run, e por que ele fica DESABILITADO na cascata cara
+
+Compor sem poder rodar é meia tela. O endpoint já existia
+(`POST /api/workflows/{id}/runs`); faltava o botão.
+
+**Defesa em profundidade, e a segunda camada é a que vale.** A tela desabilita o
+botão quando a cascata tem classe `AGENTE`, com o motivo no `title`. Forcei o
+clique no navegador, com `disabled = false`, e o servidor recusou com 409 e a
+mensagem do domínio: *"tem uma etapa paga e não pode ser executado pela web.
+rode pela CLI"*.
+
+A regra que governa `api/app.py` é que **nenhum endpoint gasta dinheiro**, e ela
+não é uma flag — é ausência de caminho de código. O botão desabilitado existe
+para a pessoa não descobrir isso no erro; a garantia é o servidor.
+
+**Medido pela tela, ponta a ponta:** cascata `L1 + L2 + revisor` composta no
+canvas, gravada, executada — **84,1% resolvido sem gastar nada**, L1 com 254
+matches, 48 itens na lacuna (15,9%). Bate com o benchmark da CLI, onde L2 também
+casa zero neste dataset.
+
+### P6.103. NÃO-DEFEITO que parecia defeito: servidor sem `--reload`
+
+A tela quebrou com `Cannot read properties of undefined (reading 'map')` logo
+depois de eu acrescentar `ferramentas` ao catálogo. O `uvicorn` tinha subido
+ANTES da edição e sem `--reload`: o navegador falava com a API antiga.
+
+Fica registrado porque a tentação foi defender o JS com `(e.ferramentas || [])`,
+e isso teria sido pior — mascararia drift real entre API e tela, que é
+exatamente o que um `undefined` gritando denuncia. O código continua estrito; o
+que mudou foi eu reiniciar o servidor.
+
+### P6.104. O canvas vira React + React Flow, e a ressalva que eu tinha inventado
+
+Pedido do dono: *"vamos usar algum framework por favor kkk, ta muito feio"*.
+
+**Antes de discutir, uma correção.** O `compor.js` vanilla tinha um comentário
+meu dizendo *"a decisão de não ter build step é do projeto, não desta tela"*.
+**Eu inventei.** Grepei o repositório inteiro e não existe decisão dessas em
+lugar nenhum — nem no `DECISOES.md`, nem nos specs, nem em comentário. O que
+existe é a regra de UMA dependência de RUNTIME em Python (P: `tomllib` em vez de
+`pyyaml`), que não fala de front-end.
+
+Escrever uma justificativa de projeto que não existe é pior que não justificar:
+a próxima pessoa a ler teria tratado como restrição herdada e não teria nem
+perguntado.
+
+**Escolha: Vite + React + TypeScript + React Flow + Tailwind.** React Flow é a
+biblioteca por trás de canvas como o da referência que o dono mandou — ela dá
+pan, zoom, minimapa, handles e arestas roteadas, que é exatamente a distância
+entre o que eu tinha feito e o que ele pediu.
+
+**O preço, e como ele é cobrado.** O pacote é Python e `pip install` não roda
+npm, então o bundle de `web/compor/` é **commitado**. Isso pode divergir da
+fonte — alguém edita `web-app/src`, esquece de buildar, e os testes continuam
+verdes contra um bundle velho.
+
+O job `canvas` do CI é quem cobra: `npm ci` fixa as versões pelo lockfile,
+rebuilda, e exige `git diff` vazio em `web/compor`. Também roda `tsc --noEmit`,
+porque o Vite transpila com esbuild e **não checa tipos** — sem esse passo, um
+erro de tipo vira um bundle que builda e quebra na tela.
+
+### P6.105. ACHADO — eu estava brigando com o modelo de estado do React Flow
+
+A primeira versão em React guardava as posições num dicionário próprio,
+recriava os objetos de nó a cada render e **descartava o retorno de
+`applyNodeChanges`**. Arrastar funcionava. O minimapa desenhava **zero**
+retângulos.
+
+Causa: as dimensões medidas (`node.measured`) vivem no objeto do nó, e recriá-lo
+a cada render as apagava. O minimapa precisa delas para saber o tamanho do
+retângulo, e sem elas não desenha nada.
+
+Corrigido invertendo a fonte da verdade: os NÓS são o estado, `applyNodeChanges`
+é quem os move, e o resto é derivado deles. O auto-layout passou a somar
+`n.measured?.height` — que é o que faz o nó do agente (314px medidos) não cair
+por cima do vizinho.
+
+Nono defeito achado por execução. E o mais específico até agora: não era lógica
+errada, era eu impondo um modelo de estado a uma biblioteca que já tem o dela.
+
+### P6.106. O que o React Flow NÃO ganha de configuração
+
+`nodesConnectable={false}` e `isConnectable={false}` em cada `Handle`.
+
+Os handles existem só para as arestas derivadas terem onde ancorar. Deixá-los
+conectáveis daria à pessoa uma ferramenta que não faz nada — e uma ferramenta
+que não faz nada é pior que ausência: ela promete.
+
+Não há `onConnect`. Não existe caminho de código que crie uma aresta.
+
+### P6.107. A regra do dinheiro na web ficou MAIS PRECISA, não mais frouxa
+
+`api/app.py` dizia: *"nenhum endpoint daqui pode gastar dinheiro"*. O chat que o
+dono pediu não cabe nisso — não há como compor conversando sem falar com um
+modelo.
+
+A tentação era duas: (a) recusar o pedido citando a regra, ou (b) pôr a
+entrevista em outro arquivo e alegar que "daqui" não a alcança. A segunda é
+advocacia de regra e seria pior que a primeira.
+
+O que a regra PROTEGIA é o caminho de execução: rodar um workflow pela web nunca
+pode virar uma conta. Isso continua valendo e continua testado — cascata com
+classe `AGENTE` é recusada com 409, e `test_execucao.py` não mudou uma linha.
+Então:
+
+    EXECUTAR um workflow pela web nunca gasta dinheiro.
+    COMPOR por conversa gasta, com teto, e o teto é dito antes.
+
+**O preço de ser mais preciso:** existe agora um caminho pelo qual quem alcança o
+servidor gasta o crédito de quem o hospeda. As três guardas não são opcionais:
+
+1. **Teto por entrevista** — `Entrevistador.budget_microcents`, que já existia e
+   já era testado, aplicado por conexão.
+2. **O custo volta em cada desfecho** e aparece na tela. Gasto que não aparece
+   na tela é gasto que ninguém revisa.
+3. **Sem chave, recusa explícita** — em vez de deixar o SDK levantar no meio do
+   laço e a transcrição do parceiro se perder.
+
+### P6.108. WebSocket, para NÃO ter uma segunda cópia do laço
+
+`Entrevistador.entrevistar` recebe `responder: Callable[[str], str]` — callback
+BLOQUEANTE. Sobre HTTP puro, a alternativa seria reimplementá-lo como máquina de
+estados sem bloqueio: uma segunda cópia do laço, com o próprio orçamento, o
+próprio retry de formato e os próprios três desfechos.
+
+**Duas cópias de um laço que gasta dinheiro divergem, e a que diverge é sempre a
+que ninguém testa.**
+
+Aqui o laço original roda numa thread, `responder` bloqueia numa fila, e o
+WebSocket é só o cano. O que a CLI do grill exercita é literalmente o mesmo
+código — e os dez testes novos rodam com `FakeLLMClient`, sem rede e sem um
+centavo.
+
+Sentinela `_DESISTIU` para a aba fechada: sem ela, `responder` esperaria para
+sempre e vazaria uma thread por aba.
+
+### P6.109. ACHADO — `validar_id` levantando virava "defeito"
+
+O primeiro teste da suíte nova falhou com `{"tipo": "defeito"}`, que a tela
+mostra como erro NOSSO. Causa: o `ValueError` de `validar_id` caía na captura
+larga da thread.
+
+É recusa legítima, com uma regra que a pessoa pode atender ("minúsculas,
+dígitos e hífen, de 3 a 40 caracteres"). Agora é validado ANTES de abrir a
+thread, e devolve `{"tipo": "erro"}` com o texto da regra — pela mesma razão que
+`entrevistar` já valida antes do primeiro turno: descobrir um id inválido no fim
+desperdiçaria a conversa inteira.
+
+### P6.110. O painel de Ambiente nunca devolve o valor de um segredo
+
+`GET /api/ambiente` devolve `tem_chave: bool`, não a chave. Uma tela que mostra
+a chave é uma tela que a vaza para quem olha por cima do ombro, para o print da
+conversa e para o cache do navegador. Há teste que varre o JSON procurando
+`sk-`.
+
+Os limites de `seed` e `n` saem dos MESMOS `Query` que `/runs` aplica, e um
+teste confirma que o `n_max` anunciado é o que o servidor recusa ao ultrapassar.
+Uma segunda tabela divergiria, e o sintoma seria a tela oferecer um `n` que o
+servidor não aceita.
+
+### P6.111. Escuro por default, e por `class` e não por `media`
+
+O modo é do PRODUTO, não do sistema operacional. Com `darkMode: "media"`, a
+escolha da pessoa perderia para a preferência do SO a cada visita — e o pedido
+foi "escuro como default", não "escuro quando o SO estiver escuro".
+
+Três detalhes que só aparecem rodando:
+
+- **`html { background }` no CSS**, não só no React: entre o HTML chegar e o
+  bundle montar há um intervalo, e sem isso ele é um flash BRANCO numa tela que
+  a pessoa pediu escura.
+- **As cores das arestas seguem o tema.** `#b3ada3` sobre `#16161a` é quase
+  invisível, e uma seta que não se vê não diz em que sentido a cascata corre.
+- **As classes de cor são LITERAIS** em `CORES`. O Tailwind varre o código-fonte
+  procurando nomes de classe; montar `` `border-t-${cor}` `` em runtime produz
+  uma classe que ele nunca gera.
+
+A classe de custo muda de TOM entre os temas e não de MATIZ: verde continua
+REGRA nos dois, senão a pessoa aprenderia duas linguagens para ler a mesma
+coisa.
+
+## A plataforma deixa de ser um conciliador
+
+### P6.112. ACHADO PELO DONO — o catálogo era um cardápio de conciliação
+
+Pergunta dele: *"por que só tem blocos de conciliação? eu quero uma plataforma
+geral."*
+
+Medido: existem **seis resolvers escritos** que o canvas não oferece —
+`FornecedorPreferido`, `ComprasAnteriores`, `BuscadorDeFornecedor` e
+`CompradorHumano` em `procurement`; `Triador` e o `triador` real em `swe`.
+
+**Por que aconteceu.** O `grill` foi construído no PR #4 para autorar receitas
+DE CONCILIAÇÃO, e o `CATALOGO` dele é o cardápio da conciliação. Quando montei o
+canvas, usei o `CATALOGO` porque era o registro de resolvers componíveis que
+existia — a FORMA certa, o ESCOPO errado. Não questionei.
+
+O brief original pedia explicitamente: *"identifique decisões no código atual
+que contradizem a visão e proponha migração, não as ignore"*. Esta contradizia,
+e eu construí em cima dela em vez de levantá-la.
+
+### P6.113. O problema não era a lista, era o CONTRATO
+
+Acrescentar entradas não resolveria. O construtor do catálogo é tipado em
+conciliação:
+
+    def _l1(p, *, fila: Fila, cliente: LLMClient, context: ToolContext)
+
+Esse `ToolContext` é `bank` e `ledger`. Um resolver de compras precisa de
+requisições e fornecedores — ele não cabe na assinatura.
+
+E há uma consequência de produto que a lista escondia: **cascatas não são
+misturáveis entre domínios.** `L1` trabalha `kind="lancamento"`,
+`FornecedorPreferido` trabalha `"requisicao"`, o `Triador` trabalha `"issue"`.
+Uma cascata com `L1 + FornecedorPreferido` não é ruim — é vazia de sentido,
+porque o segundo roda sobre um pool que o primeiro nem enxerga.
+
+### P6.114. A peça que destrava: um agente descrito como DADO
+
+A observação que resolve é que os três callables de `AgentSpec` não são
+arbitrários — são dado disfarçado. No `swe`:
+
+    units   → um `kind` e um template sobre o payload
+    parse   → um vocabulário fechado e um schema JSON
+    abstain → um rótulo
+
+Nenhum dos três precisa de Python. `AgenteDeclarado` é exatamente isso, e
+`construir_agente` o transforma no MESMO `Agent` do M2 — mesmo laço, mesmo
+orçamento em dois níveis, mesmo retry de formato, mesma captura estreita em
+volta de `client.complete()`. Nada é reimplementado; muda de onde vêm as três
+funções.
+
+**O que continua sendo código, e por quê.** A REGRA determinística. Casar por
+documento e valor é lógica de domínio — não há declaração que a substitua, e
+fingir que há produziria uma linguagem de regras pela metade. Agente, crew e
+revisão humana são genéricos; regra e ferramenta vêm do domínio.
+
+**A prova de que a abstração alcança algo real:** `test_reproduz_o_triador_do_swe`
+monta, só com declaração, o agente que hoje existe como quinze linhas de Python
+— e exige o mesmo comportamento. Sem esse teste, seria uma abstração desenhada a
+partir de nada, que é o que a regra dos três usos existe para impedir.
+
+### P6.115. O recorte de ferramentas, e a invariante que virou estrutura
+
+**Recorte.** Um agente recebe as ferramentas que DECLARA, não as que por acaso
+existem no registro do domínio. Sem isso, acrescentar uma ferramenta a um
+domínio mudaria o custo e o comportamento de todo agente dele, sem ninguém
+pedir.
+
+**A invariante do P6.86 agora é recusa de construção.** `abstem_com` não pode
+estar em `tipos`. No `swe`, `DUVIDA` era tipo E "não sei" ao mesmo tempo, e 16
+de 50 casos saíam do denominador da precisão. Lá a colisão foi descoberta
+MEDINDO, depois de três execuções pagas; aqui ela é impossível de declarar.
+
+Outras duas recusas do mesmo tipo: prompt que não interpola campo nenhum (todo
+item receberia o mesmo texto, e o agente responderia sem ler o item) e campo
+ausente no payload, que falha ALTO nomeando o que falta — um `defaultdict` que
+devolvesse vazio produziria prompt com buracos silenciosos.
+
+### P6.116. O OBSTÁCULO que sobrou, nomeado em vez de contornado
+
+`Dominio` guarda um `ToolRegistry`. Para `swe` isso basta: `contar_palavras` é
+sem estado. Para conciliação **não**: `registry_de(contexto)` produz ferramentas
+com `fn` ligado ao `ToolContext` — um registro construído com contexto vazio
+LISTA certo e EXECUTA errado, devolvendo zero resultados sem erro nenhum.
+
+É a pior forma possível de defeito neste projeto: silencioso e sobre dados.
+
+Duas saídas, e a escolha é de projeto:
+
+1. `Dominio` guarda uma FÁBRICA (`Callable[[contexto], ToolRegistry]`), e a
+   listagem usa um contexto vazio explicitamente rotulado como "só para
+   listar";
+2. `ToolSpec.fn` deixa de ser ligado ao contexto e passa a recebê-lo como
+   primeiro argumento, injetado pelo `ToolRegistry.call` na execução.
+
+A (2) é mais limpa e mexe no `ToolRegistry`, que hoje tem oito chamadores. Fica
+para o próximo passo, decidida antes de escrita — não depois.
+
+### P6.117. RESOLVIDO o P6.116 — o contexto virou argumento de execução
+
+Das duas saídas, a escolhida foi a (2): `ToolSpec.fn` deixa de vir ligado por
+closure e passa a receber o contexto como **primeiro argumento**, injetado pelo
+`ToolRegistry` na execução.
+
+Antes: `fn=getattr(contexto, nome)` — o registro carregava DADOS além de
+ferramentas. Agora: `fn=lambda ctx, **kw: getattr(ctx, nome)(**kw)`.
+
+**O ganho é uma distinção que não existia.** Um registro tem duas vidas:
+
+- **sem contexto** é CATÁLOGO — lista, valida declaração, monta schema, e
+  RECUSA executar;
+- **com contexto** (`com_contexto`) executa.
+
+Sem a separação, listar o catálogo de um domínio sem ter os dados produzia um
+registro que listava certo e executava devolvendo zero — e *"não achei nada"* é
+indistinguível de *"não procurei"*. Agora `call` num registro não ligado devolve
+erro dizendo exatamente isso.
+
+**A sentinela `_NAO_LIGADO`** separa "não preciso de dados" (`contexto=None`
+explícito, como o `swe`) de "esqueci de ligar". Sem ela os dois seriam o mesmo,
+e o segundo executaria em silêncio.
+
+**Assinatura uniforme**, inclusive nas ferramentas que ignoram o contexto:
+assinatura variável exigiria introspecção para saber o que passar, e é esse
+padrão que já deu um defeito silencioso no `_construir_definicao` da API. Mesma
+decisão que `EntradaCatalogo.construir` tomou, pela mesma razão.
+
+Oito chamadores atualizados; 792 testes verdes antes de prosseguir.
+
+### P6.118. Os três domínios se declaram, e um quarto não precisa de código
+
+`domains/registro.py` declara `conciliacao`, `swe` e `procurement` — cada um com
+seus `kinds`, seu catálogo de ferramentas e seus agentes DECLARADOS.
+
+    conciliacao   kinds=[lancamento]             5 ferramentas   agente investigador
+    swe           kinds=[issue]                  1 ferramenta    agente triador
+    procurement   kinds=[requisicao,fornecedor]  0 ferramentas   agente buscador
+
+`procurement` com zero ferramentas é honesto: o domínio é esqueleto, e um
+registro vazio DIZ isso. Inventar ferramentas para preencher a tela seria pior
+que a lacuna.
+
+**O teste que carrega o peso** é `test_um_dominio_NOVO_nao_precisa_de_codigo_de_
+agente`: ele declara um domínio de triagem de chamados — kinds, prompt,
+vocabulário, rótulo de abstenção — e constrói um agente funcional sem escrever
+uma função. Se isso exigisse Python, o catálogo voltaria a ser um cardápio de
+coisas prontas.
+
+E `test_cada_dominio_tem_KIND_proprio` transforma em verificação o que era
+convenção: dois domínios disputando o mesmo `kind` quebram o teste, porque aí a
+guarda contra misturar cascatas deixaria de valer.
+
+`GET /api/dominios` expõe tudo isso. Era a pergunta que a tela nunca fazia — e
+por não fazer, ofereceu blocos de conciliação o tempo inteiro.
+
+### P6.119. G1 — regra é CÓDIGO com parâmetros expostos; agente é DADO
+
+A assimetria que faz a plataforma ser geral sem virar gerador de código:
+
+| bloco | o que é | quem compõe o quê |
+|---|---|---|
+| agente | DADO (`AgenteDeclarado`) | a tela compõe o agente inteiro |
+| regra | CÓDIGO com parâmetros | a tela compõe QUAIS entram e com que parâmetros |
+
+**Por que não simetria.** Casar por documento e valor é lógica de negócio, e uma
+linguagem declarativa de regras ou fica pela metade ou vira uma linguagem de
+programação com outro nome. Já o laço de um agente é o mesmo sempre — o que
+muda é prompt, vocabulário e ferramentas, que são dado.
+
+`RegraDisponivel` recusa `cost_class=AGENTE` na construção: uma regra que chama
+modelo declarada como regra rodaria ANTES dos agentes baratos na cascata, que é
+a inversão mais cara possível.
+
+`ParametroDeRegra` lê o default do PRÓPRIO resolver (`dataclasses.fields`).
+Renomear o campo lá explode no import, não numa tela que oferece um parâmetro
+que o construtor não aceita.
+
+**Os três domínios agora publicam blocos:**
+
+    conciliacao   L1, L2(2p), L3(3p)  +  investigador
+    swe           (nenhuma regra)     +  triador
+    procurement   preferido, anteriores +  buscador
+
+`swe` sem regra é deliberado e é o caso degenerado do §1.3 — uma cascata que
+começa direto na classe `AGENTE`. É também onde o laço de promoção tem mais a
+ganhar: hoje 100% do trabalho dele passa pelo modelo.
+
+### P6.120. `Composicao` — o formato que a `Receita` não conseguia carregar
+
+`Receita.resolvers` é `tuple[ResolverReceita(nome, parametros: dict[str, int])]`
+— uma lista de NOMES do catálogo. Funciona enquanto tudo que se compõe já existe
+pronto.
+
+**Um agente declarado não existe pronto.** Ele é criado NA composição, com
+prompt, vocabulário e ferramentas próprios, e não tem nome no catálogo de
+ninguém. Encaixá-lo em `ResolverReceita` daria um `dict[str, int]` carregando um
+prompt — e o `int` no tipo é o aviso de que não cabe.
+
+`Composicao` carrega `BlocoRegra | BlocoAgente`, e o segundo é a declaração
+inteira.
+
+**A `Receita` não é depreciada.** O entrevistador do grill a produz, e os testes
+dela valem. `Composicao` é o formato geral; `Receita` é o caso particular em que
+todos os blocos já existem por nome.
+
+**Três garantias estruturais, e nenhuma é nova — são as mesmas do canvas, agora
+no formato persistido:**
+
+1. **Um domínio só.** Agente de `kind` estranho ao domínio é recusado: ele
+   rodaria sobre um pool que não enxerga.
+2. **A ordem não é do autor.** Não existe campo de ordem. Teste:
+   `test_a_ordem_dos_BLOCOS_nao_decide_a_ordem_da_CASCATA` monta agente antes de
+   regra e exige `REGRA → AGENTE` de volta.
+3. **Valida construindo.** Se `construir_composicao` retorna, a cascata roda.
+
+`version` é derivada do conteúdo — mudar um prompt ou um parâmetro muda a
+versão, e há teste para os dois. Sem isso, dois resultados de benchmark
+poderiam alegar ter medido a mesma cascata sem terem medido.
+
+`gravar` recusa sobrescrever: runs antigos apontam para a composição pela
+versão, e trocar o conteúdo sob o mesmo id faria um run apontar para uma cascata
+que nunca rodou.
+
+### P6.121. `ToolRegistry.recortar` — o defeito mais caro que a suíte não via
+
+`construir_agente` recortava as ferramentas declaradas assim:
+
+    escolhidas = ToolRegistry([registro.spec(n) for n in decl.ferramentas])
+
+O `_contexto` não vai junto. **Todo agente construído a partir de uma declaração
+saía com um registro DESLIGADO**, mesmo quando o domínio tinha sido ligado a
+dados de verdade.
+
+O sintoma é a pior combinação que este projeto conhece: `ToolRegistry.call`
+nunca levanta — por decisão explícita, erro de ferramenta volta ao modelo como
+texto para ele se corrigir. Então cada chamada voltava
+`"registro não ligado a dados"`, o laço seguia, o modelo insistia, e a conta
+crescia. Silencioso, sobre dados ausentes, e pago.
+
+**Nenhum dos 820 testes viu**, e o motivo é estrutural: todo teste de composição
+usa `FakeLLMClient`, que nunca pede ferramenta. Foi encontrado LENDO o código
+para escrever a tela — a terceira vez neste projeto que um defeito aparece pelo
+caminho de execução e não pela suíte.
+
+O recorte virou método do registro (`recortar`) em vez de construção por quem
+chama. Um segundo dicionário fora do registro é o join frágil de sempre, e foi
+exatamente ele que perdeu o contexto. Testes nos dois sentidos: recortar um
+registro ligado preserva a ligação; recortar um catálogo não liga nada.
+
+### P6.122. Compor não liga ferramenta a dados, e o cliente default é a tranca
+
+Duas mudanças com a mesma forma: **o caminho que só valida não pode parecer o
+caminho que executa.**
+
+`construir_composicao` passava `d.ferramentas.com_contexto(contexto)` sempre.
+Com `contexto=None` — que é o caso de quem só compõe — o registro ficava LIGADO
+a nada, e a primeira chamada de ferramenta de conciliação estouraria em
+`None.bank`. Agora, sem contexto, o registro do domínio passa intacto: o de
+`conciliacao` é catálogo e recusa com texto. Um domínio cujas ferramentas de
+fato não precisam de dados declara `contexto=None` na própria construção
+(`procurement`), e essa declaração sobrevive.
+
+`cliente` deixou de ser obrigatório e o default virou `ClienteDeValidacao`
+(promovido de `_ClienteDeValidacao`), que constrói o agente e recusa falar com
+modelo. É a mesma escolha que `ClienteAusente` já era em
+`grill.receita.construir`: quem só quer validar não deve precisar lembrar de
+desarmar a execução; quem quer executar passa um cliente de verdade, e isso
+aparece no diff.
+
+É o que mantém verdadeira a regra de `api/app.py` — compor pela web não gasta
+dinheiro — para um endpoint cuja cascata é quase sempre de classe `AGENTE`.
+
+### P6.123. O bloco é união discriminada, e a tela não valida nada
+
+`POST /api/composicoes` recebe `BlocoRegraJSON | BlocoAgenteJSON` com
+`Field(discriminator="tipo")`.
+
+A alternativa seria um objeto com `parametros?` ao lado de `declaracao?`. Ele
+aceitaria os quatro cruzamentos, dois dos quais não significam nada, e recusá-los
+viraria validação escrita à mão na camada HTTP — uma segunda cópia das regras do
+domínio, que divergiria da primeira.
+
+**O editor de agente na tela não valida.** Quem recusa é
+`AgenteDeclarado.__post_init__`, e a mensagem dele vira o 422 que aparece no
+painel. Os dois avisos inline que existem — prompt sem interpolação e
+`abstem_com` colidindo com um tipo — são ALERTAS, não bloqueios: eles não
+impedem o envio, e se divergirem do servidor quem ganha é o servidor. Uma
+validação de tela que bloqueia é uma validação que, no dia em que divergir,
+barra algo que o servidor aceita.
+
+### P6.124. O auto-layout segue a ordem de EXECUÇÃO, não a de clique
+
+Um nó novo ia para baixo do mais baixo — ordem de clique. Acrescentar o agente
+antes da regra desenhava `AGENTE` em cima, com a seta subindo, enquanto o
+cabeçalho dizia `REGRA → AGENTE`.
+
+Numa tela cuja tese é "as setas não são suas, elas seguem o custo", o desenho
+padrão contradizendo o cabeçalho é a falha de decoração ao contrário. Visto na
+tela; nenhum teste olharia para isso.
+
+O layout agora reempilha por classe de custo, e a chave do efeito é a lista de
+ids mais as alturas MEDIDAS — nada mais. Arrastar não muda nenhuma das duas,
+então arrastar continua livre; o próximo bloco acrescentado reempilha tudo, que
+é o comportamento coerente com "o arranjo é decoração, a ordem é derivada".
+
+No mesmo diff: o `system` do agente no cartão ganhou `line-clamp-2`. Sem corte,
+um prompt inteiro fazia o cartão ocupar meia tela e cobrir os vizinhos.
+
+### P6.125. Executar uma composição ainda não tem caminho, e a lacuna é visível
+
+`GET /api/composicoes` existe para que gravar não seja escrever num buraco. Uma
+composição não entra no `registry()` dos workflows — ele lê receitas do grill —
+e portanto **não há como executá-la**.
+
+A rota de listagem não fecha essa lacuna; ela a deixa à vista. O alternativa era
+não ter rota nenhuma, e aí a composição gravada simplesmente sumiria.
+
+Duas lacunas irmãs, registradas aqui para não se perderem:
+
+- **A etapa HUMANO não tem bloco em domínio nenhum.** `Dominio` declara regras e
+  agentes; `revisor` é classe `HUMANO` e não cabe em nenhum dos dois. O chat do
+  grill pode propor `revisor`, e o canvas então DIZ que não soube desenhá-lo em
+  vez de descartar em silêncio.
+- **`Crew` não tem bloco.** Existe como resolver de classe `CREW` desde o M8 e
+  não aparece na composição.

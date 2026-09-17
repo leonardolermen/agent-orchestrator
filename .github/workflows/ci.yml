@@ -74,6 +74,48 @@ jobs:
       - name: ruff check
         run: ruff check src tests
 
+  canvas:
+    name: o bundle commitado bate com a fonte
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web-app/package-lock.json
+
+      - name: Instalar
+        working-directory: web-app
+        run: npm ci
+
+      # O Vite não checa tipos — ele transpila com esbuild e segue. Sem este
+      # passo, um erro de tipo vira um bundle que builda e quebra na tela.
+      - name: Typecheck
+        working-directory: web-app
+        run: npx tsc --noEmit
+
+      # O bundle de `web/compor/` é COMMITADO, porque o pacote é Python e a
+      # instalação por pip não roda npm. O preço disso é poder divergir da
+      # fonte: alguém edita `web-app/src`, esquece de buildar, e os testes
+      # continuam verdes contra um bundle velho.
+      #
+      # Este passo é o que cobra o preço. `npm ci` fixa as versões pelo
+      # lockfile e o build do Vite é determinístico para a mesma entrada —
+      # então qualquer diferença aqui é fonte não buildada.
+      - name: Rebuildar e comparar
+        working-directory: web-app
+        run: npm run build
+
+      - name: O diff tem de ser vazio
+        run: |
+          if ! git diff --exit-code --stat web/compor; then
+            echo "::error::o bundle em web/compor/ não bate com web-app/src."
+            echo "::error::rode: npm --prefix web-app run build && git add web/compor"
+            exit 1
+          fi
+
   conciliador:
     name: o número que o produto reporta
     runs-on: ubuntu-latest

@@ -4,6 +4,8 @@ Os schemas são construídos A PARTIR dos objetos do domínio, nunca escritos à
 mão em paralelo a eles — ver o teste anti-drift.
 """
 
+from typing import Annotated, Literal
+
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from orchestrator.kernel.definition import Stage, WorkflowDefinition
@@ -183,3 +185,213 @@ def workflow_json(definicao: WorkflowDefinition) -> WorkflowJSON:
         name=definicao.name,
         stages=[stage_json(s) for s in definicao.stages],
     )
+
+
+# ---------------------------------------------------------------------------
+# Composição: o que o canvas de autoria precisa ver e enviar.
+#
+# A propriedade que faz este canvas ser seguro está do lado do servidor, não do
+# desenho: a ORDEM da cascata não é um campo. Quem ordena é `Stage.ordered()`,
+# por `CostClass`, e não existe entrada que a inverta. O canvas escolhe QUAIS
+# resolvers entram; a ordem em que rodam é derivada.
+#
+# É a diferença entre uma tela que desenha um fluxo e uma tela que desenha o
+# fluxo QUE VAI RODAR — o §3.5 chama a primeira de decoração e a nomeia como
+# modo de falha.
+# ---------------------------------------------------------------------------
+
+
+class ParametroJSON(BaseModel):
+    nome: str
+    default: int
+    descricao: str
+
+
+class EntradaCatalogoJSON(BaseModel):
+    nome: str
+    cost_class: str
+    resumo: str
+    parametros: list[ParametroJSON]
+    ferramentas: list[str] = Field(default_factory=list)
+    # `None` para resolver determinístico. A tela usa a AUSÊNCIA para não
+    # desenhar uma linha de modelo onde não há modelo — dizer "modelo: —" num
+    # resolver de regra sugeriria que houve uma escolha.
+    modelo_padrao: str | None = None
+
+
+class ResolverReceitaJSON(BaseModel):
+    nome: str
+    parametros: dict[str, int] = Field(default_factory=dict)
+
+
+class ReceitaRequest(BaseModel):
+    """Uma cascata composta na tela.
+
+    Sem campo de ordem, de propósito — ver o comentário acima. E sem
+    `gerado_em`: o relógio é do servidor, porque um timestamp vindo do cliente
+    permitiria gravar uma receita "criada" antes de outra que a antecedeu.
+    """
+
+    id: str
+    nome: str
+    justificativa: str = ""
+    resolvers: list[ResolverReceitaJSON] = Field(min_length=1)
+
+    @field_validator("id")
+    @classmethod
+    def _id_valido(cls, v: str) -> str:
+        from orchestrator.grill.receita import validar_id
+
+        # A MESMA validação que o grill usa. Uma cópia aqui divergiria na
+        # primeira mudança, e o sintoma seria uma receita aceita pela tela e
+        # recusada pelo disco.
+        validar_id(v)
+        return v
+
+
+class AmbienteJSON(BaseModel):
+    """O ambiente da execução. Sem segredo nenhum dentro.
+
+    `tem_chave` é booleano de propósito: a tela precisa saber se a entrevista
+    vai funcionar, e não precisa — nunca — do valor. Um campo `chave: str` aqui
+    seria a chave no JSON, no cache do navegador e no print da conversa.
+    """
+
+    modelo_padrao: str
+    tem_chave: bool
+    seed: int
+    n: int
+    n_max: int
+    taxa_divergencia: float
+
+
+# ---------------------------------------------------------------------------
+# Domínios: o que a plataforma sabe fazer, e para que tipo de trabalho.
+#
+# É o que tira o catálogo da conciliação. Antes havia UMA lista de resolvers —
+# a de conciliação — e a tela não tinha como oferecer outra coisa. Agora a
+# pergunta que a tela faz primeiro é "que trabalho você quer orquestrar", e a
+# paleta segue dessa resposta.
+# ---------------------------------------------------------------------------
+
+
+class FerramentaJSON(BaseModel):
+    nome: str
+    descricao: str
+
+
+class AgenteDeclaradoJSON(BaseModel):
+    """Um agente como DADO. Tudo aqui é editável na tela.
+
+    O que NÃO está aqui: `units`, `parse` e `abstain`. Eles deixaram de ser
+    funções — viraram `kind`, `prompt`, `tipos` e `abstem_com`.
+    """
+
+    name: str
+    system: str
+    kind: str
+    prompt: str
+    tipos: list[str]
+    abstem_com: str
+    ferramentas: list[str]
+    max_turns: int
+    budget_microcents: int
+
+
+class RegraJSON(BaseModel):
+    """Um bloco determinístico. O que a tela ajusta são os PARÂMETROS.
+
+    Sem `prompt`, sem `tipos`, sem ferramentas — uma regra não fala com modelo.
+    A ausência desses campos no schema é o que impede a tela de oferecer edição
+    que o construtor não aceita.
+    """
+
+    nome: str
+    cost_class: str
+    resumo: str
+    parametros: list[ParametroJSON]
+
+
+class DominioJSON(BaseModel):
+    id: str
+    nome: str
+    kinds: list[str]
+    ferramentas: list[FerramentaJSON]
+    # Os blocos, separados por natureza. Regra e agente NÃO vão na mesma lista:
+    # o que a tela edita em cada um é diferente, e uma lista só obrigaria a
+    # inspecionar o tipo em cada linha de render.
+    regras: list[RegraJSON]
+    agentes: list[AgenteDeclaradoJSON]
+
+
+# ---------------------------------------------------------------------------
+# Composição: o formato GERAL, que a `Receita` não sabia carregar.
+#
+# `ReceitaRequest.resolvers` é uma lista de NOMES do catálogo. Funciona enquanto
+# tudo que se compõe já existe pronto — e um agente declarado NÃO existe pronto:
+# ele nasce na composição, com prompt, vocabulário e ferramentas próprios.
+#
+# Por isso o bloco é uma UNIÃO DISCRIMINADA e não um dicionário com campos
+# opcionais. Um `parametros: dict[str, int] | None` ao lado de um `prompt: str |
+# None` aceitaria os quatro cruzamentos, dois dos quais não significam nada — e
+# a recusa deles viraria código de validação escrito à mão. Com `tipo` como
+# discriminador, o Pydantic recusa antes do handler rodar, e a mensagem nomeia
+# qual dos dois formatos ele esperava.
+# ---------------------------------------------------------------------------
+
+
+class BlocoRegraJSON(BaseModel):
+    tipo: Literal["regra"]
+    nome: str
+    parametros: dict[str, int] = Field(default_factory=dict)
+
+
+class BlocoAgenteJSON(BaseModel):
+    tipo: Literal["agente"]
+    declaracao: AgenteDeclaradoJSON
+
+
+BlocoJSON = Annotated[BlocoRegraJSON | BlocoAgenteJSON, Field(discriminator="tipo")]
+
+
+class ComposicaoRequest(BaseModel):
+    """Uma cascata de QUALQUER domínio, composta na tela.
+
+    Sem campo de ordem, pelo mesmo motivo de `ReceitaRequest`: quem ordena é
+    `Stage.ordered()`, por classe de custo. Sem `gerado_em`: o relógio é do
+    servidor. Sem `version`: ela é derivada do conteúdo, e aceitá-la do cliente
+    deixaria duas composições diferentes alegarem a mesma.
+    """
+
+    id: str
+    nome: str
+    dominio: str
+    justificativa: str = ""
+    blocos: list[BlocoJSON] = Field(min_length=1)
+
+    @field_validator("id")
+    @classmethod
+    def _id_valido(cls, v: str) -> str:
+        from orchestrator.grill.receita import validar_id
+
+        # A MESMA validação do disco, pelo mesmo motivo de `ReceitaRequest`: uma
+        # cópia aqui divergiria, e o sintoma seria uma composição aceita pela
+        # tela e recusada na gravação.
+        validar_id(v)
+        return v
+
+
+class ComposicaoResumoJSON(BaseModel):
+    """Uma composição em disco.
+
+    `blocos` traz os NOMES e não a contagem: "3 blocos" não distingue uma
+    cascata que começa numa regra barata de uma que começa direto no modelo, e
+    essa distinção é a tese do produto.
+    """
+
+    id: str
+    nome: str
+    dominio: str
+    version: str
+    gerado_em: str
+    blocos: list[str]
