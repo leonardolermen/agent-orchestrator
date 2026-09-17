@@ -131,9 +131,14 @@ def test_o_catalogo_VALIDA_CONSTRUINDO_cada_agente():
     """
     from orchestrator.agent.declarado import AgenteDeclarado
 
+    # `max_turns=0` NÃO serve de fixture: `AgenteDeclarado.__post_init__` já
+    # recusa isso ao DECLARAR, antes de `Catalogo` entrar em cena — o teste
+    # passaria provando a guarda errada. Ferramenta inexistente é o caso que
+    # `AgenteDeclarado` não tem como ver sozinho (ele não conhece registro
+    # nenhum), e que só `construir_agente` descobre.
     quebrado = AgenteDeclarado(
-        name="sem_turno", system="s", kind="k", prompt="{x}",
-        tipos=("A",), abstem_com="NAO_SEI", max_turns=0,
+        name="ferramenta_fantasma", system="s", kind="k", prompt="{x}",
+        tipos=("A",), abstem_com="NAO_SEI", ferramentas=("nao_existe",),
     )
 
     with pytest.raises(ValueError):
