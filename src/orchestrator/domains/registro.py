@@ -29,11 +29,15 @@ segundo roda sobre um pool que o primeiro nem enxerga. `Dominio.kinds` é o que
 torna isso verificável em vez de convenção.
 """
 
+from dataclasses import dataclass
+
 from orchestrator.agent.declarado import (
     AgenteDeclarado,
+    ClienteDeValidacao,
     Dominio,
     ParametroDeRegra,
     RegraDisponivel,
+    construir_agente,
 )
 from orchestrator.agent.tools.registry import ToolRegistry
 from orchestrator.conciliacao.ferramentas import catalogo_de_ferramentas
@@ -47,6 +51,64 @@ from orchestrator.kernel.cost import CostClass
 from orchestrator.matching.exact import ExactMatcher
 from orchestrator.matching.grouping import GroupingMatcher
 from orchestrator.matching.tolerance import ToleranceMatcher
+from orchestrator.review.fila import Fila
+from orchestrator.review.revisor import RevisorHumano
+
+
+@dataclass(frozen=True)
+class Catalogo:
+    """Tudo que dá para compor, junto, sem agrupamento.
+
+    **Por que sem `kinds`.** O `Dominio` agrupava por `kind` porque "uma
+    cascata com um resolver de conciliação e um de compras não é ruim — é
+    vazia de sentido, porque o segundo roda sobre um pool que o primeiro nem
+    enxerga". Continua verdade, e a fatia do grafo passou a dizer isso melhor:
+    `Stage.consome`/`Stage.produz` declara a fiação POR DEGRAU e
+    `WorkflowDefinition.__post_init__` recusa um grafo cujos kinds não
+    conectam. Aquilo valida o grafo que vai rodar; isto validava uma partição
+    de catálogo. O agrupamento é resto.
+
+    **O `revisor` mora aqui, e o nome do tipo mente um pouco.** Ele é classe
+    `HUMANO`, não regra. `RegraDisponivel` descreve "bloco determinístico com
+    parâmetros ajustáveis", o que serve de forma, não de nome. Ele vivia só no
+    catálogo do grill, e `Dominio` nenhum o carregava — a lacuna estava
+    registrada em `App.tsx`. Fundir sem ele perderia o degrau que FECHA a
+    cascata.
+    """
+
+    ferramentas: ToolRegistry
+    regras: tuple[RegraDisponivel, ...] = ()
+    agentes: tuple[AgenteDeclarado, ...] = ()
+
+    def __post_init__(self) -> None:
+        # Guarda 1, migrada de `Dominio.__post_init__` e mais perigosa aqui: a
+        # composição indexa bloco por NOME, e dois iguais fariam a cascata
+        # depender de quem foi procurado primeiro. Num catálogo plano a colisão
+        # deixa de ser possível só dentro de um domínio.
+        nomes = [r.nome for r in self.regras] + [a.name for a in self.agentes]
+        repetidos = sorted({n for n in nomes if nomes.count(n) > 1})
+        if repetidos:
+            raise ValueError(f"catálogo com nome repetido entre blocos: {repetidos}")
+        # Guarda 2, também migrada: VALIDAR É CONSTRUIR. Sem isto, uma
+        # declaração inválida só falha ao EXECUTAR — depois de a pessoa ter
+        # montado a cascata inteira e clicado em rodar.
+        for a in self.agentes:
+            construir_agente(a, ClienteDeValidacao(), self.ferramentas)
+
+    def bloco(self, nome: str) -> "RegraDisponivel | AgenteDeclarado | None":
+        """O bloco com este nome, venha ele de qual lista vier.
+
+        Existe porque quem compõe conhece o NOME, não a natureza: o
+        entrevistador recebe "L2" do modelo e a tela recebe "L2" de um clique,
+        e nenhum dos dois deveria precisar saber em que lista procurar.
+        """
+        for r in self.regras:
+            if r.nome == nome:
+                return r
+        for a in self.agentes:
+            if a.name == nome:
+                return a
+        return None
 
 
 def _param(cls: type, nome: str, descricao: str) -> ParametroDeRegra:
@@ -243,3 +305,32 @@ def dominio(id: str) -> Dominio:
     if id not in DOMINIOS:
         raise KeyError(f"domínio desconhecido: {id!r}. disponíveis: {sorted(DOMINIOS)}")
     return DOMINIOS[id]
+
+
+def _todas_as_ferramentas() -> ToolRegistry:
+    """Um registro com as ferramentas de todas as origens.
+
+    `register` já recusa nome repetido, então uma colisão entre origens falha
+    na importação em vez de uma das duas ganhar em silêncio. `contexto=None`
+    porque catálogo NÃO executa: quem executa chama `com_contexto`.
+    """
+    junto = ToolRegistry(contexto=None)
+    for origem in (catalogo_de_ferramentas(), ferramentas_swe()):
+        for nome in origem.names():
+            junto.register(origem.spec(nome))
+    return junto
+
+
+# O revisor: o degrau HUMANO que fecha a cascata. Ver o docstring de `Catalogo`.
+_REVISOR = RegraDisponivel(
+    nome="revisor",
+    cost_class=CostClass.HUMANO,
+    resumo="a decisão humana que fecha a cascata",
+    construir=lambda p: RevisorHumano(fila=Fila.vazia()),
+)
+
+CATALOGO = Catalogo(
+    ferramentas=_todas_as_ferramentas(),
+    regras=(*CONCILIACAO.regras, *PROCUREMENT.regras, _REVISOR),
+    agentes=(*CONCILIACAO.agentes, *SWE.agentes, *PROCUREMENT.agentes),
+)

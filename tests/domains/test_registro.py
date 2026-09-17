@@ -9,7 +9,9 @@ import pytest
 
 from orchestrator.agent.declarado import AgenteDeclarado, Dominio, construir_agente
 from orchestrator.agent.llm import FakeLLMClient
-from orchestrator.domains.registro import DOMINIOS, dominio
+from orchestrator.agent.tools.registry import ToolRegistry
+from orchestrator.domains.registro import CATALOGO, DOMINIOS, Catalogo, dominio
+from orchestrator.kernel.cost import CostClass
 
 
 def test_os_TRES_dominios_se_declaram():
@@ -106,3 +108,96 @@ def test_um_dominio_NOVO_nao_precisa_de_codigo_de_agente():
     agente = construir_agente(novo.agentes[0], FakeLLMClient([]))
 
     assert agente.name == "classificador"
+
+
+def test_o_catalogo_e_PLANO_e_traz_tudo_junto():
+    """Um catálogo só, sem agrupamento. É o quadro em branco do §0.1.
+
+    As contagens vêm das três origens somadas: 3 regras de conciliação + 2 de
+    compras + o `revisor`, e 1 agente de cada domínio.
+    """
+    nomes_de_regra = {r.nome for r in CATALOGO.regras}
+
+    assert {"L1", "L2", "L3", "preferido", "anteriores"} <= nomes_de_regra
+    assert {a.name for a in CATALOGO.agentes} == {"investigador", "triador", "buscador"}
+
+
+def test_o_catalogo_carrega_o_degrau_HUMANO():
+    """O `revisor` existia só no catálogo do grill e em `Dominio` nenhum.
+
+    Fundir os dois sem ele perderia o degrau que FECHA a cascata — e a
+    invariante "proposta não resolve" depende de existir alguém que resolva.
+    """
+    revisor = next(r for r in CATALOGO.regras if r.nome == "revisor")
+
+    assert revisor.cost_class is CostClass.HUMANO
+
+
+def test_as_ferramentas_dos_TRES_dominios_estao_no_MESMO_registro():
+    """"Todas as nossas tools disponíveis pra ele" — o pedido, virado teste."""
+    nomes = CATALOGO.ferramentas.names()
+
+    assert "contar_palavras" in nomes  # veio do swe
+    assert len(nomes) >= 6  # as 5 da conciliação mais a do swe
+
+
+def test_o_catalogo_RECUSA_bloco_com_nome_repetido():
+    """A guarda que migrou de `Dominio.__post_init__`, e que fica MAIS
+    perigosa aqui.
+
+    Antes a colisão só podia acontecer dentro de um domínio; num catálogo
+    plano ela pode acontecer entre quaisquer dois blocos do sistema. A
+    composição indexa bloco por nome, e dois iguais fariam a cascata depender
+    de quem foi procurado primeiro.
+    """
+    from orchestrator.agent.declarado import AgenteDeclarado, RegraDisponivel
+
+    regra = RegraDisponivel(
+        nome="colide", cost_class=CostClass.REGRA, resumo="x",
+        construir=lambda p: None,
+    )
+    agente = AgenteDeclarado(
+        name="colide", system="s", kind="k", prompt="{x}",
+        tipos=("A",), abstem_com="NAO_SEI",
+    )
+
+    with pytest.raises(ValueError, match="nome repetido"):
+        Catalogo(
+            ferramentas=ToolRegistry([], contexto=None),
+            regras=(regra,),
+            agentes=(agente,),
+        )
+
+
+def test_o_catalogo_VALIDA_CONSTRUINDO_cada_agente():
+    """"Validar é construir" — a outra guarda que migrou.
+
+    Sem ela, uma declaração inválida só falharia ao EXECUTAR, que é depois de
+    a pessoa ter montado a cascata inteira e clicado em rodar.
+
+    `max_turns=0` não serve de fixture aqui: `AgenteDeclarado.__post_init__`
+    já recusa isso na hora de DECLARAR, antes de `Catalogo` entrar em cena —
+    o que provaria a guarda errada. `ferramentas` inexistente é o caso que
+    `AgenteDeclarado` não tem como enxergar sozinho (ele não conhece nenhum
+    registro), e só `construir_agente` — chamado por `Catalogo.__post_init__`
+    — descobre.
+    """
+    from orchestrator.agent.declarado import AgenteDeclarado
+
+    quebrado = AgenteDeclarado(
+        name="ferramenta_fantasma", system="s", kind="k", prompt="{x}",
+        tipos=("A",), abstem_com="NAO_SEI", ferramentas=("nao_existe",),
+    )
+
+    with pytest.raises(ValueError):
+        Catalogo(
+            ferramentas=ToolRegistry([], contexto=None),
+            regras=(),
+            agentes=(quebrado,),
+        )
+
+
+def test_bloco_acha_por_nome_em_qualquer_das_duas_listas():
+    assert CATALOGO.bloco("L1") is not None
+    assert CATALOGO.bloco("triador") is not None
+    assert CATALOGO.bloco("nao_existe") is None
