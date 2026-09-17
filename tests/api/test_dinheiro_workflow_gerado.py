@@ -55,7 +55,9 @@ def test_executar_workflow_com_agente_SEM_CHAVE_responde_409(tmp_path, monkeypat
 
     resposta = cliente.post(
         "/api/workflows/pago/runs",
-        json={"fonte": {"tipo": "sintetica", "seed": 1, "n": 60, "taxa_divergencia": 0.15}},
+        # COM teto: ele e exigencia do PEDIDO e e conferida antes do 409.
+        json={"fonte": {"tipo": "sintetica", "seed": 1, "n": 60, "taxa_divergencia": 0.15},
+              "teto_microcents": 1_000_000},
     )
 
     assert resposta.status_code == 409
@@ -115,7 +117,8 @@ def test_COM_chave_o_workflow_com_agente_deixa_de_ser_recusado(tmp_path, monkeyp
 
     resposta = cliente.post(
         "/api/workflows/pago/runs",
-        json={"fonte": {"tipo": "sintetica", "seed": 1, "n": 60, "taxa_divergencia": 0.15}},
+        json={"fonte": {"tipo": "sintetica", "seed": 1, "n": 60, "taxa_divergencia": 0.15},
+              "teto_microcents": 1_000_000},
     )
 
     assert resposta.status_code == 200, resposta.text

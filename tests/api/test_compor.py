@@ -421,7 +421,10 @@ def test_cascata_PAGA_composta_pela_tela_e_recusada_SEM_CHAVE(monkeypatch):
 
     r = cliente.post(
         "/api/workflows/com-agente/runs",
-        json={"fonte": {"tipo": "sintetica", "seed": 1, "n": 60}},
+        # COM teto: ele e exigencia do PEDIDO e e conferida antes, entao um
+        # pedido sem ele levaria 422 e este teste nao veria o 409.
+        json={"fonte": {"tipo": "sintetica", "seed": 1, "n": 60},
+              "teto_microcents": 1_000_000},
     )
 
     assert r.status_code == 409

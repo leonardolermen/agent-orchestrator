@@ -23,16 +23,23 @@ compunha o que ela mesma não conseguia rodar.
 hospeda.** As três guardas abaixo são o que torna isso aceitável, são as mesmas
 de `api/entrevista.py`, e nenhuma é opcional:
 
-**Guarda 1 — teto por REQUISIÇÃO.** `RunRequest.teto_microcents` vira um
-`ClienteComTeto` (`agent/teto.py`) que toda chamada paga da execução atravessa.
-`None` não é "sem teto": é o teto do próprio agente
-(`AgentSpec.budget_total_microcents`), e não existe valor que signifique
-ilimitado.
+**Guarda 1 — teto por REQUISIÇÃO, e ele é OBRIGATÓRIO aqui.**
+`RunRequest.teto_microcents` vira um `ClienteComTeto` (`agent/teto.py`) que toda
+chamada paga da execução atravessa. Pela web, com agente, omiti-lo é 422: a
+guarda inteira é *"gasta com teto, e o teto é dito ANTES"*, e um pedido que o
+omite não disse teto nenhum — ele herda o do agente, que são US$ 4,00 por
+requisição, numa rota sem autenticação e sem cache que qualquer F5 dispara de
+novo. Herdar em silêncio é o fallback que a primeira regra do projeto proíbe.
+(No schema `None` continua válido, para a CLI e para quem chama a biblioteca, e
+lá ele significa o teto do próprio agente — nunca ilimitado.)
 
-**Guarda 2 — o custo volta em CADA desfecho.** No caminho feliz, em
-`RunJSON.custo_microcents` e no `RunStore`. No caminho de erro, no corpo do 500
-— porque gasto que não aparece na tela é gasto que ninguém revisa, e uma
-exceção que leva o número embora é a forma mais silenciosa de queimar dinheiro.
+**Guarda 2 — o custo volta em CADA desfecho, e o DESFECHO também.** No caminho
+feliz, `RunJSON` leva `custo_microcents`, `estado`, `propostas_por_tipo`,
+`falhas` e `teto_atingido`, e o run vai para o `RunStore`. No caminho de erro, o
+custo vai no corpo do 500. Gasto que não aparece na tela é gasto que ninguém
+revisa — e "não achamos nada", "paramos no teto" e "a API falhou" precisam ser
+três respostas diferentes, porque `agent/conversa.py` as faz virar a mesma
+abstenção.
 
 **Guarda 3 — sem chave, recusa legível.** Sem `ANTHROPIC_API_KEY` a cascata com
 agente é recusada com 409 ANTES de executar, em vez de o SDK levantar no meio
@@ -45,6 +52,7 @@ há chave. Desarmar a tranca é ato explícito, e só acontece nesse ponto.
 """
 
 import os
+from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
@@ -97,6 +105,7 @@ from orchestrator.grill.registro import gravar_receita, listar_receitas
 from orchestrator.kernel.cost import Cost, CostClass
 from orchestrator.kernel.definition import WorkflowDefinition
 from orchestrator.kernel.event import EventBus
+from orchestrator.kernel.resolution import TraceKind
 from orchestrator.kernel.run import RunState
 from orchestrator.kernel.work import WorkSet
 from orchestrator.metrics import evaluate
@@ -664,6 +673,31 @@ def _executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
 
     cliente: ClienteComTeto | None = None
     if tem_agente:
+        # Guarda 1, a metade que faltava: pela WEB, com agente, o teto é
+        # OBRIGATÓRIO. Antes do 409 porque é erro do PEDIDO, não do ambiente.
+        #
+        # A guarda inteira é "gasta com teto, E O TETO É DITO ANTES". Um pedido
+        # que omite `teto_microcents` não disse teto nenhum: ele HERDA o do
+        # agente, que é 400.000.000 µ¢ — US$ 4,00 por requisição — e herdar em
+        # silêncio é exatamente o fallback que a primeira regra deste projeto
+        # proíbe. Sem isto, `POST /api/workflows/<pago>/runs` com corpo `{}`,
+        # sem autenticação e sem cache, é uma torneira de US$ 4 por F5.
+        #
+        # `None` continua VÁLIDO no schema, e de propósito: para a CLI e para
+        # quem chama a biblioteca, "use o teto do agente" é uma escolha
+        # legítima feita por quem já sabe qual é. O que não é legítimo é um
+        # cliente HTTP anônimo fazer essa escolha sem escrevê-la.
+        if pedido.teto_microcents is None:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"o workflow {workflow_id!r} tem etapa paga: informe "
+                    f"`teto_microcents` (micro-centavos de USD, 1e-8 USD cada) "
+                    f"neste pedido. executar pela web gasta COM TETO, e o teto "
+                    f"é dito antes — omiti-lo herdaria em silêncio o do agente, "
+                    f"que é generoso por ser um default."
+                ),
+            )
         # Guarda 3. ANTES de executar, e não no meio: sem isto o SDK levantaria
         # no primeiro turno com o pool já pela metade, e o que a pessoa veria
         # seria um 500 sobre um problema que tem conserto e nome.
@@ -824,6 +858,23 @@ def _executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
             rate=(total - resolvidos) / total if total else 0.0,
         ),
         custo_microcents=run.custo_total_microcents(modelo),
+        # O DESFECHO, e ele existe porque três coisas diferentes chegavam aqui
+        # com a mesma cara: "o modelo não achou nada", "paramos no teto" e "a
+        # API falhou". As duas últimas viram abstenção pela captura estreita de
+        # `agent/conversa.py` — que é o comportamento certo para o laço, porque
+        # uma queda de rede não pode derrubar um fechamento por causa de um
+        # item — mas o RUN precisa dizer o que de fato aconteceu com ele.
+        #
+        # Os três números são CONTADOS, cada um na sua origem, e nenhum é
+        # derivado dos outros: `estado` vem do motor, `propostas`/`falhas` do
+        # que o motor devolveu, `teto_atingido` do embrulho que recusou. Uma
+        # subtração entre eles seria o join frágil de sempre.
+        estado=run.state.value,
+        propostas_por_tipo=Counter(p.tipo for p in run.proposals),
+        falhas=sum(
+            1 for p in run.proposals if any(e.kind is TraceKind.ERRO for e in p.trace)
+        ),
+        teto_atingido=cliente is not None and cliente.recusas > 0,
         contra_gabarito=medido,
     )
 

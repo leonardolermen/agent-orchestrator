@@ -176,6 +176,45 @@ class RunJSON(BaseModel):
     por_resolver: list[ResolverRunJSON]
     gap: GapJSON
     custo_microcents: int
+    # O ESTADO do run, de `RunState`. Já existia no `Run` e em `/api/runs`, e
+    # não existia aqui: a resposta do POST — a que a tela lê — não dizia se o
+    # run terminou, parou no teto de rondas ou está esperando gente.
+    #
+    # Um run que PAROU não pode ser lido como um que terminou, e num endpoint
+    # que gasta essa diferença é o que decide se vale tentar de novo.
+    estado: str
+    # As PROPOSTAS, contadas por tipo. Um agente nunca resolve — `Agent.resolve`
+    # só preenche `proposals`, por construção —, então numa cascata só de agente
+    # `resolvidos` é 0 e `gap.items` é o pool inteiro, e sem este campo a
+    # resposta era indistinguível de uma execução que não fez nada.
+    #
+    # Por TIPO e não só o total, porque o total não separa as duas coisas que
+    # mais importam saber de um agente: `{"BUG": 3}` é um agente que
+    # classificou, `{"NAO_SEI": 3}` é um agente que absteve em tudo, e os dois
+    # dão o mesmo `3`. Abstenção é resposta legítima — não saber é resposta —,
+    # mas é uma resposta DIFERENTE, e num endpoint que cobra por ela a diferença
+    # é o que decide se o dinheiro comprou alguma coisa.
+    #
+    # `sum(propostas_por_tipo.values())` é o total, e por isso ele não existe
+    # como campo à parte: dois números para a mesma contagem são dois números
+    # que podem divergir.
+    propostas_por_tipo: dict[str, int]
+    # Quantas dessas propostas terminaram em ERRO registrado no trace
+    # (`TraceKind.ERRO`): falha na chamada ao modelo, teto desta requisição
+    # incluído. CONTADAS, não inferidas.
+    #
+    # `falhas == 0` com `propostas > 0` significa que o modelo respondeu sobre
+    # todos os itens — inclusive para dizer que não sabe, que é resposta e não
+    # falha.
+    falhas: int
+    # O teto DESTA requisição recusou ao menos uma chamada. É o que separa
+    # "paramos no teto" de "a API falhou", que sem ele são o mesmo `falhas > 0`:
+    # os dois viram abstenção pela captura estreita de `agent/conversa.py`, com
+    # o mesmo marcador e o mesmo texto.
+    #
+    # `False` numa cascata sem agente é MEDIDO: não havia chamada paga para
+    # recusar.
+    teto_atingido: bool
     # AUSENTE, não zero. Publicar `0.0` sobre uma fonte sem verdade seria dizer
     # "errou tudo" quando o certo é "não há com o que comparar".
     contra_gabarito: MedidoJSON | None = None

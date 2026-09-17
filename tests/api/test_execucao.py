@@ -959,7 +959,11 @@ def test_sem_chave_a_execucao_com_agente_e_recusada_com_MOTIVO(monkeypatch):
     monkeypatch.setattr(api_app, "_tem_chave", lambda: False)
     _registrar(monkeypatch, "com-agente", _fabrica_com_agentes(_declarado()))
 
-    r = cliente.post("/api/workflows/com-agente/runs", json={})
+    # COM teto: o teto é exigência do PEDIDO e é conferida antes, então um
+    # pedido sem ele levaria 422 e este teste não chegaria a observar o 409.
+    r = cliente.post(
+        "/api/workflows/com-agente/runs", json={"teto_microcents": 1_000_000}
+    )
 
     assert r.status_code == 409, r.text
     assert "chave" in r.json()["detail"].lower()
@@ -1038,14 +1042,58 @@ def test_o_teto_do_pedido_PARA_o_gasto(tmp_path, monkeypatch):
     assert r.json()["custo_microcents"] == _POR_CHAMADA > 100_000
 
 
-def test_teto_AUSENTE_cai_no_teto_do_AGENTE_e_nunca_em_ilimitado(tmp_path, monkeypatch):
-    """`teto_microcents: None` NAO e "sem teto".
+def test_pedido_com_agente_SEM_teto_e_RECUSADO_pela_web(monkeypatch):
+    """"Gasta com teto, E O TETO É DITO ANTES" — a segunda metade é a regra.
 
-    O schema já diz que `None` significa o teto do próprio agente
-    (`AgentSpec.budget_total_microcents`) e que "não existe valor que signifique
-    sem teto". Aqui isso é OBSERVADO: cinco issues, um agente com teto total de
-    200.000 µ¢, pedido sem `teto_microcents` — e o gasto para em duas chamadas,
-    não em cinco.
+    Um pedido que omite `teto_microcents` não disse teto nenhum: ele HERDA o do
+    agente, que é 400.000.000 µ¢ = **US$ 4,00 por requisição**. Sem esta guarda,
+    `POST /api/workflows/<pago>/runs` com corpo `{}`, sem autenticação, sem
+    cache e sem limite de taxa, é uma torneira de US$ 4 por F5 — e a herança
+    silenciosa é exatamente o fallback que a primeira regra do projeto proíbe.
+
+    A recusa é 422 e não 409: falta um campo do PEDIDO. E vem ANTES da guarda de
+    chave, pela mesma ordem que o resto desta rota segue — erro do pedido antes
+    de erro do ambiente.
+    """
+    import orchestrator.api.app as api_app
+
+    monkeypatch.setattr(api_app, "_tem_chave", lambda: True)
+    _registrar(monkeypatch, "com-agente", _fabrica_com_agentes(_declarado()))
+
+    r = cliente.post("/api/workflows/com-agente/runs", json={})
+
+    assert r.status_code == 422, r.text
+    # A recusa diz O QUE MANDAR, com a unidade. Uma recusa que não diz isso
+    # manda a pessoa adivinhar entre dólar, centavo e micro-centavo.
+    assert "teto_microcents" in r.json()["detail"]
+    assert "micro-centavos" in r.json()["detail"]
+
+
+def test_o_teto_AUSENTE_continua_valido_para_quem_NAO_e_a_web(monkeypatch):
+    """A exigência é da BORDA HTTP, não do schema nem da biblioteca.
+
+    `RunRequest.teto_microcents` continua aceitando `None`, e `ClienteComTeto`
+    continua traduzindo `None` como "o teto do agente" — para a CLI e para quem
+    chama a biblioteca, escolher o teto do agente é escolha legítima de quem já
+    sabe qual é. O que não é legítimo é um cliente HTTP anônimo fazer essa
+    escolha sem escrevê-la.
+
+    E uma cascata SEM agente não precisa de teto nenhum, porque não há o que
+    limitar: exigi-lo ali seria cerimônia sobre uma execução que não gasta.
+    """
+    from orchestrator.api.schemas import RunRequest
+
+    assert RunRequest().teto_microcents is None
+    assert cliente.post("/api/workflows/conciliacao/runs", json={}).status_code == 200
+
+
+def test_um_teto_GENEROSO_nao_desliga_o_teto_do_AGENTE(tmp_path, monkeypatch):
+    """Não existe valor que signifique "sem teto" — nem um valor enorme.
+
+    Cinco issues, um agente com teto total de 200.000 µ¢, e um teto de pedido
+    mil vezes maior. O gasto para em DUAS chamadas: o teto do agente continua
+    operante por baixo do teto da requisição, e os dois são pisos um do outro,
+    nunca substituição.
     """
     _csv_de_issues(tmp_path, monkeypatch, linhas=5)
     fake = _cliente_falso(monkeypatch, [_resposta()] * 5)
@@ -1055,12 +1103,17 @@ def test_teto_AUSENTE_cai_no_teto_do_AGENTE_e_nunca_em_ilimitado(tmp_path, monke
         _fabrica_com_agentes(_declarado(budget_total_microcents=200_000)),
     )
 
-    r = cliente.post("/api/workflows/com-agente/runs", json={"fonte": _FONTE_ISSUES})
+    r = cliente.post(
+        "/api/workflows/com-agente/runs",
+        json={"fonte": _FONTE_ISSUES, "teto_microcents": 200_000_000},
+    )
 
     assert r.status_code == 200, r.text
     # 2 chamadas: a 3ª encontra 350.000 > 200.000 e abstém sem chamar o modelo.
     assert len(fake.chamadas) == 2
     assert r.json()["custo_microcents"] == 2 * _POR_CHAMADA
+    # E quem parou foi o AGENTE, não o teto do pedido — que nem chegou perto.
+    assert r.json()["teto_atingido"] is False
 
 
 def test_o_embrulho_de_teto_nao_inventa_ilimitado():
@@ -1107,7 +1160,10 @@ def test_um_run_que_GASTOU_e_FALHOU_devolve_quanto_gastou(tmp_path, monkeypatch)
         ),
     )
 
-    r = cliente.post("/api/workflows/com-agente/runs", json={"fonte": _FONTE_ISSUES})
+    r = cliente.post(
+        "/api/workflows/com-agente/runs",
+        json={"fonte": _FONTE_ISSUES, "teto_microcents": 10_000_000},
+    )
 
     assert r.status_code == 500, r.text
     detalhe = r.json()["detail"]
@@ -1146,12 +1202,17 @@ def test_um_run_que_GASTOU_e_deu_certo_fica_no_HISTORICO_com_o_custo(
     _registrar(monkeypatch, "com-agente", _fabrica_com_agentes(_declarado()))
 
     corpo = cliente.post(
-        "/api/workflows/com-agente/runs", json={"fonte": _FONTE_ISSUES}
+        "/api/workflows/com-agente/runs",
+        json={"fonte": _FONTE_ISSUES, "teto_microcents": 10_000_000},
     ).json()
 
     (resumo,) = cliente.get("/api/runs", params={"workflow_id": "com-agente"}).json()
     assert resumo["microcents"] == corpo["custo_microcents"] == 2 * _POR_CHAMADA
+    # `proposed == 2` sozinho valeria igual para um agente que absteve nas duas
+    # — abstenção É uma `Proposal`. O que ele diz é o que separa as duas.
     assert resumo["proposed"] == 2
+    assert corpo["propostas_por_tipo"] == {"BUG": 2}
+    assert corpo["falhas"] == 0
 
 
 # -- a ordem entre o 409 e o 422 -------------------------------------------
@@ -1256,6 +1317,14 @@ def test_um_CSV_de_issues_roda_no_TRIADOR_composto_pela_WEB(tmp_path, monkeypatc
     (linha,) = corpo["por_resolver"]
     assert (linha["name"], linha["cost_class"]) == ("triador", "AGENTE")
     assert linha["microcents"] == corpo["custo_microcents"] == 3 * _POR_CHAMADA
+    # E o agente CLASSIFICOU as três — não abstém em nenhuma, e nenhuma chamada
+    # falhou. Sem estas duas linhas o teste passaria igual com um triador que
+    # respondesse "NAO_SEI" em tudo ou com a API caída, porque abstenção também
+    # é `Proposal`: seria a fatia declarando vitória sobre o próprio objetivo
+    # com um agente que não entregou nada.
+    assert corpo["propostas_por_tipo"] == {"BUG": 3}
+    assert corpo["falhas"] == 0
+    assert corpo["teto_atingido"] is False
     # Agente PROPÕE, nunca resolve: a lacuna continua inteira, e é isso que
     # manda as três issues para a revisão humana.
     assert corpo["resolvidos"] == 0
@@ -1341,7 +1410,10 @@ def test_a_politica_economica_continua_INERTE_com_o_409_fora(tmp_path, monkeypat
     _csv_de_issues(tmp_path, monkeypatch, linhas=1)
     _cliente_falso(monkeypatch, [_resposta()])
 
-    r = cliente.post("/api/workflows/triagem-web/runs", json={"fonte": _FONTE_ISSUES})
+    r = cliente.post(
+        "/api/workflows/triagem-web/runs",
+        json={"fonte": _FONTE_ISSUES, "teto_microcents": 10_000_000},
+    )
 
     assert r.status_code == 200, r.text
     assert vistos.get("policy") is None
@@ -1374,4 +1446,182 @@ def test_a_tranca_de_REDE_da_suite_e_ALTA_e_nao_engolida(tmp_path, monkeypatch):
     # `conversar` a capturaria, o POST devolveria 200, e este `raises` falharia
     # — que e exatamente o sinal que se quer.
     with pytest.raises(BaseException, match="falar com o modelo de verdade"):
-        cliente.post("/api/workflows/com-agente/runs", json={"fonte": _FONTE_ISSUES})
+        cliente.post(
+            "/api/workflows/com-agente/runs",
+            json={"fonte": _FONTE_ISSUES, "teto_microcents": 10_000_000},
+        )
+
+
+# -- os TRES desfechos, que eram um so ---------------------------------------
+#
+# `agent/conversa.py` captura a falha da chamada ao modelo e a transforma em
+# abstencao — comportamento CERTO para o laco, porque uma queda de rede nao pode
+# derrubar um fechamento por causa de um item. O preco e que, do lado de fora,
+# "o modelo nao achou nada", "paramos no teto" e "a API falhou" chegavam com a
+# mesma cara: 200, `resolvidos: 0`, `gap` inteiro, e nada dizendo o que houve.
+#
+# Num endpoint que GASTA, essa e a diferenca que decide se vale tentar de novo.
+
+
+def _corpo_com_agente(monkeypatch, tmp_path, respostas, *, teto=10_000_000, linhas=3):
+    _csv_de_issues(tmp_path, monkeypatch, linhas=linhas)
+    _cliente_falso(monkeypatch, respostas)
+    _registrar(monkeypatch, "com-agente", _fabrica_com_agentes(_declarado()))
+    r = cliente.post(
+        "/api/workflows/com-agente/runs",
+        json={"fonte": _FONTE_ISSUES, "teto_microcents": teto},
+    )
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_desfecho_o_modelo_RESPONDEU_em_todos_os_itens(tmp_path, monkeypatch):
+    """Desfecho 1: deu certo. O agente classificou as tres issues."""
+    corpo = _corpo_com_agente(monkeypatch, tmp_path, [_resposta("BUG")] * 3)
+
+    assert corpo["propostas_por_tipo"] == {"BUG": 3}
+    assert corpo["falhas"] == 0
+    assert corpo["teto_atingido"] is False
+    assert corpo["estado"] == "concluido"
+
+
+def test_desfecho_o_modelo_ABSTEVE_em_todos_os_itens(tmp_path, monkeypatch):
+    """Desfecho 2: nao achou nada — e isso NAO e falha.
+
+    Nao saber e resposta, e o agente a deu em todos os itens. `falhas == 0` diz
+    que o modelo respondeu; `propostas_por_tipo` diz o que ele respondeu. Sem o
+    segundo campo, este desfecho e o de cima sao byte a byte iguais.
+    """
+    corpo = _corpo_com_agente(monkeypatch, tmp_path, [_resposta("NAO_SEI")] * 3)
+
+    assert corpo["propostas_por_tipo"] == {"NAO_SEI": 3}
+    assert corpo["falhas"] == 0
+    assert corpo["teto_atingido"] is False
+
+
+def test_desfecho_a_API_FALHOU_e_isso_NAO_e_abstencao_do_modelo(tmp_path, monkeypatch):
+    """Desfecho 3: a API caiu, e o run precisa dizer isso.
+
+    O rotulo da proposta e o mesmo `NAO_SEI` do teste acima — `agent/conversa.py`
+    desiste pelo caminho da abstencao, de proposito. `falhas` e o que separa os
+    dois, e ele e CONTADO no trace (`TraceKind.ERRO`), nao inferido.
+    """
+    import orchestrator.api.app as api_app
+    from orchestrator.agent.teto import ClienteComTeto
+
+    _csv_de_issues(tmp_path, monkeypatch, linhas=3)
+
+    class _CaiSempre:
+        model = "claude-opus-5"
+
+        def complete(self, system, messages, tools):
+            raise ConnectionError("a rede caiu")
+
+    monkeypatch.setattr(api_app, "_tem_chave", lambda: True)
+    monkeypatch.setattr(
+        api_app,
+        "_cliente_de_execucao",
+        lambda teto: ClienteComTeto(_CaiSempre(), teto_microcents=teto),
+    )
+    _registrar(monkeypatch, "com-agente", _fabrica_com_agentes(_declarado()))
+
+    corpo = cliente.post(
+        "/api/workflows/com-agente/runs",
+        json={"fonte": _FONTE_ISSUES, "teto_microcents": 10_000_000},
+    ).json()
+
+    assert corpo["propostas_por_tipo"] == {"NAO_SEI": 3}
+    assert corpo["falhas"] == 3
+    # E NAO foi o teto: a distincao inteira desta guarda.
+    assert corpo["teto_atingido"] is False
+    assert corpo["custo_microcents"] == 0
+
+
+def test_desfecho_PAROU_NO_TETO_nao_se_confunde_com_falha_de_API(tmp_path, monkeypatch):
+    """Desfecho 4, e o que motivou o campo: `teto_microcents: 0`.
+
+    Antes deste campo, um teto de 0 devolvia 200, `resolvidos: 0`, `gap` inteiro,
+    `custo_microcents: 0`, ZERO chamadas ao modelo, a palavra "teto" em lugar
+    nenhum do corpo, e o run gravado como `concluido`. Era indistinguivel de uma
+    cascata que rodou e nao achou nada — sobre um pedido que explicitamente
+    mandou nao gastar.
+
+    `teto_atingido` vem do PROPRIO embrulho que recusou (`ClienteComTeto.recusas`),
+    contado na origem. Inferi-lo por subtracao entre `falhas` e outra coisa seria
+    o join fragil de sempre.
+    """
+    corpo = _corpo_com_agente(monkeypatch, tmp_path, [_resposta()] * 3, teto=0)
+
+    assert corpo["teto_atingido"] is True
+    assert corpo["falhas"] == 3
+    assert corpo["custo_microcents"] == 0
+    assert corpo["propostas_por_tipo"] == {"NAO_SEI": 3}
+
+
+def test_uma_cascata_SEM_agente_reporta_os_tres_campos_como_MEDIDOS(monkeypatch):
+    """Zero e `False` aqui sao fatos, nao ausencia disfarcada de numero.
+
+    Sem agente nao ha chamada paga para falhar nem para o teto recusar, e
+    `propostas_por_tipo` vazio e o que a conciliacao so de regras de fato
+    produz.
+    """
+    corpo = cliente.post("/api/workflows/conciliacao/runs", json={}).json()
+
+    assert corpo["propostas_por_tipo"] == {}
+    assert corpo["falhas"] == 0
+    assert corpo["teto_atingido"] is False
+    # O estado do run passa a aparecer na resposta do POST, e nao so em
+    # `/api/runs`: a conciliacao tem degrau HUMANO e sobra pool, entao ela
+    # ESPERA alguem — que e diferente de ter terminado.
+    assert corpo["estado"] == "aguardando_humano"
+
+
+def test_o_ESTADO_do_POST_e_o_MESMO_que_o_historico_guarda():
+    """Um campo novo na projecao nao pode ser uma segunda verdade.
+
+    `/runs` e `/api/runs` passam a devolver o estado do mesmo run, e se um dia
+    eles divergirem sera porque alguem calculou um dos dois em vez de ler.
+    """
+    corpo = cliente.post("/api/workflows/conciliacao/runs", json={}).json()
+
+    (resumo,) = cliente.get("/api/runs", params={"workflow_id": "conciliacao"}).json()
+    assert resumo["state"] == corpo["estado"]
+    assert resumo["input_ref"] == corpo["input_ref"]
+
+
+# -- o teto negativo, que nao tinha teste -----------------------------------
+
+
+def test_teto_NEGATIVO_e_recusado_na_construcao_do_embrulho():
+    """A guarda existia e nada a exercitava: trocar a condicao por `if False:`
+    deixava a suite inteira verde.
+
+    Um teto negativo nasce estourado — a primeira comparacao ja recusa —, entao
+    TODO item abstem sem nunca chamar o modelo. Sem esta recusa isso pareceria
+    um agente funcionando com orcamento zerado, em vez da configuracao invalida
+    que e. Mesma guarda de `Agent.__post_init__` e de `Budget.__post_init__`.
+    """
+    from orchestrator.agent.llm import FakeLLMClient
+    from orchestrator.agent.teto import ClienteComTeto
+
+    with pytest.raises(ValueError, match="negativo"):
+        ClienteComTeto(FakeLLMClient([]), teto_microcents=-1)
+
+    # E as duas vizinhas continuam valendo, para que a recusa seja do SINAL e
+    # nao de "qualquer numero pequeno".
+    assert ClienteComTeto(FakeLLMClient([]), teto_microcents=0).teto_microcents == 0
+    assert ClienteComTeto(FakeLLMClient([])).teto_microcents is None
+
+
+def test_teto_negativo_tambem_e_recusado_pelo_SCHEMA_antes_da_rota():
+    """A mesma recusa um nivel acima, onde ela vira 422 em vez de 500.
+
+    As duas existem de proposito: o schema protege a BORDA HTTP, e o embrulho
+    protege todo chamador — CLI e biblioteca incluidos, que nao passam pelo
+    Pydantic.
+    """
+    r = cliente.post(
+        "/api/workflows/conciliacao/runs", json={"teto_microcents": -1}
+    )
+
+    assert r.status_code == 422, r.text

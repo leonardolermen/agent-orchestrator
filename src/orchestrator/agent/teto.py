@@ -74,6 +74,17 @@ class ClienteComTeto:
         # com uma tabela de preços e cobraria com outra.
         self.model = interno.model
         self.gasto = Cost.zero()
+        # Quantas chamadas este teto RECUSOU. Contado aqui e em lugar nenhum
+        # mais, porque aqui é onde a recusa acontece.
+        #
+        # Sem este número, parar no teto e a API cair são o MESMO desfecho para
+        # quem lê a resposta: os dois viram abstenção por `agent/conversa.py`,
+        # com o mesmo `TraceKind.ERRO` e o mesmo texto. "Não achamos nada",
+        # "paramos no teto" e "a API falhou" são três coisas diferentes, e num
+        # endpoint que gasta a diferença é o que decide se vale a pena tentar de
+        # novo. Inferir uma da outra por subtração seria um join frágil; contar
+        # na origem não é.
+        self.recusas = 0
 
     def gasto_microcents(self) -> int:
         """O gasto acumulado, em micro-centavos do modelo deste cliente.
@@ -92,6 +103,7 @@ class ClienteComTeto:
     ) -> LLMResponse:
         gasto = self.gasto_microcents()
         if self.teto_microcents is not None and gasto >= self.teto_microcents:
+            self.recusas += 1
             raise TetoDaExecucaoEstourado(
                 f"teto desta execução esgotado: {gasto} µ¢ gastos de um teto de "
                 f"{self.teto_microcents} µ¢"
