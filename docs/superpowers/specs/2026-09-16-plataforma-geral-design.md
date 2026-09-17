@@ -1,7 +1,10 @@
 # Plataforma geral: qualquer trabalho, orquestrado com custo
 
 **Data:** 2026-09-16
-**Estado:** proposta
+**Estado:** ENTREGUE PARCIALMENTE — G1 (catálogo por domínio no canvas, agente
+editável na tela). Pendentes: G2 ferramentas declarativas, G3 regras genéricas,
+G4 fontes, G5 arquiteto generalizado, G6 MCP consumido, **G7 o laço de
+promoção** (o marco que importa), G8 ação, G9 custo externo.
 **Antecessor:** `2026-09-16-runtime-de-orquestracao-design.md` (M0–M8 entregues)
 
 ---

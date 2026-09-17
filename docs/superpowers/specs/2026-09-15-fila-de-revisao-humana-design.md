@@ -1,7 +1,8 @@
 # Fila de Revisão Humana — Documento de Design
 
 **Data:** 2026-09-15
-**Status:** ✅ **APROVADO — construção autorizada**
+**Estado:** ENTREGUE. `review/` mais `/fila.html`; o `RevisorHumano` é o resolver
+de classe `HUMANO` que fecha a cascata de conciliação.
 **Escopo:** a terceira classe de custo da cascata, e a primeira superfície que muta estado
 **Spec pai:** [`2026-09-14-agent-orchestrator-design.md`](2026-09-14-agent-orchestrator-design.md)
 **Spec irmão:** [`2026-09-14-composicao-de-workflows-design.md`](2026-09-14-composicao-de-workflows-design.md)

@@ -1,7 +1,8 @@
 # Cascata de Resolução e Canvas Read-Only — Documento de Design
 
 **Data:** 2026-09-15
-**Status:** ✅ **APROVADO — construção autorizada**
+**Estado:** ENTREGUE. A cascata é `Stage.ordered()` por `CostClass`, e o canvas
+read-only virou canvas em React/React Flow numa fatia posterior.
 **Escopo:** primeira fatia da plataforma de composição (V3)
 **Spec pai:** [`2026-09-14-agent-orchestrator-design.md`](2026-09-14-agent-orchestrator-design.md)
 **Spec irmão:** [`2026-09-14-composicao-de-workflows-design.md`](2026-09-14-composicao-de-workflows-design.md)

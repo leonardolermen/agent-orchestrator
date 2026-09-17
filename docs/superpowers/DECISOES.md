@@ -1,16 +1,21 @@
-# Decisões tomadas durante a execução do plano
+# Decisões tomadas durante a execução dos planos
 
-**Data:** 2026-09-14
-**Plano:** [`2026-09-14-nucleo-deterministico.md`](plans/2026-09-14-nucleo-deterministico.md)
-**Spec:** [`2026-09-14-agent-orchestrator-design.md`](specs/2026-09-14-agent-orchestrator-design.md)
+**Início:** 2026-09-14 · **Última entrada:** 2026-09-17
+**Specs:** [`specs/`](specs/)
 
-A execução deste plano foi delegada a subagentes, com revisão independente por
-tarefa. Ao longo dela foram tomadas **26 decisões sem consulta prévia**: conflitos
-entre o plano e o que a revisão encontrou, ambiguidades que teriam parado o
-trabalho, e defeitos descobertos no próprio plano.
+Registro cumulativo, append-only, de toda fatia executada até aqui — do núcleo
+determinístico à execução como grafo. Cada fatia foi delegada a subagentes, com
+revisão independente por tarefa, e as decisões abaixo são as que foram tomadas
+**sem consulta prévia**: conflitos entre o plano e o que a revisão encontrou,
+ambiguidades que teriam parado o trabalho, e defeitos descobertos nos próprios
+planos.
 
-Cada uma traz a alternativa rejeitada e o custo de estar errada, para que possam
-ser revistas individualmente. Nenhuma foi omitida.
+Cada uma traz a alternativa rejeitada e **o custo de estar errada**, para que
+possam ser revistas individualmente. Nenhuma foi omitida.
+
+Os planos de implementação que originaram estas decisões foram removidos depois
+de executados — eram andaime passo-a-passo cuja saída é o código. O git os
+guarda; o que sobrevive aqui é o POR QUÊ, que o código não registra sozinho.
 
 ---
 

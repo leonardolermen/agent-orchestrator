@@ -1,7 +1,11 @@
 # Execução como grafo: o pool que transforma
 
 **Data:** 2026-09-17
-**Estado:** proposta
+**Estado:** ENTREGUE PARCIALMENTE — X1–X6 (kernel, motor, `Tarefa`, domínio
+`redacao`). Pendentes X7–X8: `AgenteDeclarado.produz`, `Composicao.etapas`,
+`declarar_etapa` no entrevistador e o canvas com arestas derivadas.
+**Correções pós-entrega:** §6.1 e §11 foram revisadas — ver as notas datadas
+lá dentro. A guarda de beco sem saída não exige humano, e isso está dito.
 **Antecessor:** `2026-09-16-plataforma-geral-design.md`
 
 ---
@@ -462,7 +466,7 @@ registrou ter acontecido por oito PRs.
 |---|---|---|
 | Laço infinito | run roda para sempre trocando kind | `max_rondas` obrigatório; `RunState.LIMITE_DE_RONDAS` explícito |
 | `Tarefa` vira porta dos fundos | alguém transforma quando devia propor; o humano some da cascata | **PARCIAL** — beco sem saída recusado no build e `entrega` declarada cobrem kind órfão; resolver sem produzir e resolver id alheio falham alto em `Tarefa.resolve`. O humano sumir da cascata NÃO é coberto: ver §6.1 revisada |
-| Explosão de kinds | vinte kinds e ninguém sabe quem alimenta quem | `WorkflowDefinition` recusa beco sem saída; canvas desenha o grafo derivado |
+| Explosão de kinds | vinte kinds e ninguém sabe quem alimenta quem | **PARCIAL.** `WorkflowDefinition` recusa beco sem saída, mas a guarda fica INERTE assim que um único stage omite `consome` (é curinga, vê o pool inteiro). Declarar `consome` em todos os stages é o que compra a checagem. O canvas desenha o grafo derivado. |
 | Confundir os dois eixos | alguém ordena stages por custo e escreve antes de pesquisar | §5.1 vira docstring e teste |
 | Tese de custo perde sentido | pipeline linear sem competição, e o pitch some | §9, dita em voz alta e no README |
 | Regressão nos 3 domínios | um default errado quebra conciliação | §8: os 844 testes não podem ser tocados |

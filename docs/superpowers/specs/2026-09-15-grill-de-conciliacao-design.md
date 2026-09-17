@@ -1,7 +1,10 @@
 # Grill de Conciliação — Documento de Design
 
 **Data:** 2026-09-15
-**Status:** 🟡 aguardando revisão do dono
+**Estado:** ENTREGUE. `grill/` mais o comando `orchestrator-grill`.
+**Limite conhecido:** o `CATALOGO` do entrevistador ainda é o cardápio da
+conciliação — generalizá-lo é trabalho pendente (§3 e §9 do spec de plataforma
+geral).
 **Escopo:** de uma descrição em prosa a uma `WorkflowDefinition` executável, via entrevista
 **Spec pai:** [`2026-09-14-agent-orchestrator-design.md`](2026-09-14-agent-orchestrator-design.md)
 **Spec irmão:** [`2026-09-14-composicao-de-workflows-design.md`](2026-09-14-composicao-de-workflows-design.md)

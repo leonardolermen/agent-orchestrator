@@ -186,9 +186,14 @@ class SpanCollector:
     def trace(self, run: Run | None = None) -> Trace:
         """A árvore. Com o `Run`, inclui o detalhe por item.
 
-        O detalhe vem de `Proposal.trace`, e não do stream, pela razão do
-        docstring do módulo. `Trace` não sabe a diferença — quem lê um span de
-        `llm` não precisa saber se ele foi emitido ou derivado.
+        O detalhe vem de DOIS lugares, e não do stream, pela razão do docstring
+        do módulo: `Proposal.trace`, para quem propõe, e
+        `Resolution.evidence["trace"]`, para quem TRANSFORMA — uma cascata só de
+        `Tarefa` não produz proposta nenhuma, e sem a segunda fonte um pipeline
+        inteiro ficaria sem detalhe por item.
+
+        `Trace` não sabe a diferença — quem lê um span de `llm` não precisa
+        saber se ele foi emitido ou derivado, nem de qual das duas fontes veio.
         """
         spans = list(self._spans)
         if run is not None:
@@ -272,10 +277,19 @@ class SpanCollector:
     def _transformador(self, nome: str) -> str | None:
         """O span do resolver que resolveu, por NOME.
 
-        Sem a aproximação que `_propositor` precisa: `Resolution.produced_by`
-        carrega a proveniência, e `Proposal` não carrega nada equivalente. O
-        último span com esse nome, porque com aresta de volta o mesmo resolver
-        roda em mais de uma ronda.
+        `Resolution.produced_by` carrega a proveniência, então aqui não existe a
+        ambiguidade de QUAL RESOLVER que `_propositor` precisa adivinhar.
+
+        **Mas existe outra, e ela é declarada.** `produced_by` diz qual resolver,
+        não qual INVOCAÇÃO dele: com aresta de volta o mesmo resolver roda em
+        mais de uma ronda, e `Resolution` não carrega a ronda. Pegar o último
+        span com esse nome faz toda resolução da ronda 1 pendurar no span da
+        ronda 2. A árvore fica mal pendurada, não errada — nenhum span some — e
+        fechar isso exige a ronda dentro da `Resolution`, o que é mudança de
+        kernel por um ganho de apresentação.
+
+        Declarado aqui em vez de escondido: o defeito que este repositório trata
+        como grave é o comentário que afirma mais do que o código faz.
         """
         candidatos = [
             s for s in self._spans if s.kind is SpanKind.RESOLVER and s.name == nome
