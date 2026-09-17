@@ -10,11 +10,14 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from orchestrator.agent.declarado import AgenteDeclarado, RegraDisponivel, construir_agente
 from orchestrator.agent.llm import LLMClient
 from orchestrator.conciliacao.ferramentas import ToolContext
-from orchestrator.grill.catalogo import CATALOGO, ClienteAusente
+from orchestrator.domains.registro import CATALOGO
+from orchestrator.grill.catalogo import ClienteAusente
 from orchestrator.kernel.definition import Stage, WorkflowDefinition
 from orchestrator.review.fila import Fila
+from orchestrator.review.revisor import RevisorHumano
 
 PADRAO_ID = re.compile(r"^[a-z][a-z0-9-]{2,39}$")
 ID_RESERVADOS = frozenset({"conciliacao"})
@@ -108,13 +111,25 @@ def construir(
     if not receita.resolvers:
         raise ValueError("a cascata precisa de pelo menos um resolver")
 
+    # `com_contexto` liga o registro PLANO (todas as origens fundidas) aos
+    # dados desta execução — o mesmo passo que `construir_composicao` faz por
+    # domínio. Aqui é o registro inteiro porque a receita, ao contrário de uma
+    # composição, não carrega qual domínio ela é: seus blocos podem vir de
+    # qualquer um.
+    ferramentas = CATALOGO.ferramentas.com_contexto(context)
+
     vistos: set[str] = set()
     resolvers = []
     for item in receita.resolvers:
-        entrada = CATALOGO.get(item.nome)
+        entrada = CATALOGO.bloco(item.nome)
         if entrada is None:
+            # Import adiado: `ferramentas.py` importa `ResolverReceita` DESTE
+            # módulo, então um import no topo formaria um ciclo. A função só
+            # é chamada aqui dentro, nunca no carregamento do módulo.
+            from orchestrator.grill.ferramentas import _nomes_disponiveis
+
             raise ValueError(
-                f"resolver desconhecido: {item.nome!r}. disponíveis: {sorted(CATALOGO)}"
+                f"resolver desconhecido: {item.nome!r}. disponíveis: {_nomes_disponiveis()}"
             )
         if item.nome in vistos:
             raise ValueError(
@@ -123,17 +138,41 @@ def construir(
             )
         vistos.add(item.nome)
 
-        conhecidos = {p.nome for p in entrada.parametros}
-        desconhecidos = sorted(set(item.parametros) - conhecidos)
-        if desconhecidos:
-            raise ValueError(
-                f"parâmetro desconhecido para {item.nome!r}: {desconhecidos}. "
-                f"aceitos: {sorted(conhecidos)}"
-            )
-
-        resolvers.append(
-            entrada.construir(dict(item.parametros), fila=fila, cliente=cliente, context=context)
-        )
+        if isinstance(entrada, RegraDisponivel):
+            conhecidos = {p.nome for p in entrada.parametros}
+            desconhecidos = sorted(set(item.parametros) - conhecidos)
+            if desconhecidos:
+                raise ValueError(
+                    f"parâmetro desconhecido para {item.nome!r}: {desconhecidos}. "
+                    f"aceitos: {sorted(conhecidos)}"
+                )
+            if entrada.nome == "revisor":
+                # O único bloco HUMANO do catálogo plano, e o único cujo
+                # comportamento depende de algo que não é parâmetro: a fila de
+                # decisões já tomadas. `RegraDisponivel.construir` tem
+                # assinatura UNIFORME `(parametros) -> Resolver` (Task 1, sem
+                # `fila`/`cliente`/`context`) — de propósito, para não abrir
+                # uma segunda via de configuração por fora dos parâmetros. É
+                # por isso que o degrau humano é montado aqui, direto, e não
+                # via `entrada.construir`: sem este desvio, `fila` — que
+                # `workflows.py` liga ao contexto real de revisão — chegaria
+                # até aqui e morreria sem efeito, e toda receita gerada pelo
+                # chat reviraria sempre uma fila vazia.
+                resolvers.append(RevisorHumano(fila=fila))
+            else:
+                resolvers.append(entrada.construir(dict(item.parametros)))
+        else:
+            assert isinstance(entrada, AgenteDeclarado)  # a Catalogo só tem as duas formas
+            # Um agente declarado não tem parâmetro ajustável nenhum — o que
+            # ele aceita é o vocabulário fixado na declaração do domínio.
+            # Tratar qualquer parâmetro proposto como desconhecido é a MESMA
+            # guarda do ramo de regra, não uma segunda regra inventada.
+            desconhecidos = sorted(item.parametros)
+            if desconhecidos:
+                raise ValueError(
+                    f"parâmetro desconhecido para {item.nome!r}: {desconhecidos}. aceitos: []"
+                )
+            resolvers.append(construir_agente(entrada, cliente, ferramentas))
 
     return WorkflowDefinition(
         id=receita.id,

@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from orchestrator.agent.llm import ToolCall
-from orchestrator.grill.catalogo import CATALOGO
+from orchestrator.domains.registro import CATALOGO
 from orchestrator.grill.receita import ResolverReceita
 
 NOMES = ("perguntar", "propor_workflow", "fora_do_catalogo")
@@ -37,18 +37,38 @@ class Recusa:
     o_que_faltaria: str
 
 
+def _nomes_disponiveis() -> list[str]:
+    """Os nomes que o MODELO pode escolher.
+
+    Era `sorted(CATALOGO)` sobre o cardápio da conciliação — cinco nomes
+    fixos —, e é literalmente aqui que o chat aprendia que só existia
+    conciliação. Derivar do catálogo é o que faz "descreva uma triagem de
+    issues" parar de devolver uma cascata bancária.
+    """
+    return sorted([r.nome for r in CATALOGO.regras] + [a.name for a in CATALOGO.agentes])
+
+
 def _catalogo_em_texto() -> str:
-    linhas = []
-    for chave in sorted(CATALOGO):
-        e = CATALOGO[chave]
-        if e.parametros:
+    # Duas formas no catálogo plano (Task 1): `RegraDisponivel` descreve os
+    # próprios parâmetros; `AgenteDeclarado` não tem `.resumo` nem
+    # `.parametros` — o que ele aceita é o VOCABULÁRIO de tipos que decide
+    # entre, não um número ajustável. As duas entram na mesma listagem porque
+    # é dela que o modelo lê "o que existe para compor", venha de onde vier.
+    linhas: dict[str, str] = {}
+    for r in CATALOGO.regras:
+        if r.parametros:
             params = "; ".join(
-                f"{p.nome} (int, default {p.default}) — {p.descricao}" for p in e.parametros
+                f"{p.nome} (int, default {p.default}) — {p.descricao}" for p in r.parametros
             )
         else:
             params = "sem parâmetros"
-        linhas.append(f"- {e.nome} [{e.cost_class.name}]: {e.resumo}. Parâmetros: {params}")
-    return "\n".join(linhas)
+        linhas[r.nome] = f"- {r.nome} [{r.cost_class.name}]: {r.resumo}. Parâmetros: {params}"
+    for a in CATALOGO.agentes:
+        linhas[a.name] = (
+            f"- {a.name} [AGENTE]: decide entre {', '.join(a.tipos)} para itens de "
+            f"{a.kind!r}. Sem parâmetros ajustáveis."
+        )
+    return "\n".join(linhas[nome] for nome in sorted(linhas))
 
 
 def esquemas() -> list[dict[str, Any]]:
@@ -88,7 +108,7 @@ def esquemas() -> list[dict[str, Any]]:
                             "type": "object",
                             "properties": {
                                 # Do catálogo, nunca literal: ver o teste que trava isto.
-                                "nome": {"type": "string", "enum": sorted(CATALOGO)},
+                                "nome": {"type": "string", "enum": _nomes_disponiveis()},
                                 "parametros": {"type": "object"},
                             },
                             "required": ["nome"],

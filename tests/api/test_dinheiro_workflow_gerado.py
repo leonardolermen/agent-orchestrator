@@ -23,12 +23,16 @@ def _isolado(tmp_path, monkeypatch):
 
 
 def _gravar_pago(tmp_path) -> None:
+    # "investigador", não "agente": o catálogo plano (Task 3) nomeia o bloco
+    # AGENTE da conciliação pelo `Resolver.name` que ele sempre teve — o
+    # cardápio do grill é que usava a chave "agente" só para propor este
+    # mesmo bloco.
     r = Receita(
         id="pago",
         nome="Com agente",
         justificativa="j",
         gerado_em=datetime(2026, 9, 15, tzinfo=UTC),
-        resolvers=(ResolverReceita("L1", {}), ResolverReceita("agente", {})),
+        resolvers=(ResolverReceita("L1", {}), ResolverReceita("investigador", {})),
     )
     destino = tmp_path / "workflows"
     destino.mkdir(parents=True, exist_ok=True)

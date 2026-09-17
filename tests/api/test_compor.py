@@ -200,8 +200,14 @@ def test_a_receita_composta_APARECE_na_listagem_de_workflows():
 
 def test_cascata_com_AGENTE_e_marcada_como_nao_executavel_pela_API():
     """A regra que governa o módulo HTTP: nenhum endpoint gasta dinheiro. A
-    tela desabilita o botão em vez de deixar o usuário colher um 409."""
-    cliente.post("/api/receitas", json=_corpo([{"nome": "agente"}], wid="cara"))
+    tela desabilita o botão em vez de deixar o usuário colher um 409.
+
+    "investigador", não "agente": o catálogo plano (Task 3) nomeia o bloco
+    AGENTE da conciliação pelo `Resolver.name` que ele sempre teve — o
+    cardápio do grill é que usava a chave "agente" só para propor este mesmo
+    bloco.
+    """
+    cliente.post("/api/receitas", json=_corpo([{"nome": "investigador"}], wid="cara"))
 
     w = next(x for x in cliente.get("/api/workflows").json() if x["id"] == "cara")
 
@@ -267,44 +273,46 @@ def test_o_modelo_do_agente_e_PADRAO_e_nao_escolha_gravada():
     receita faria o canvas prometer algo que a receita não carrega — e é a
     diferença exata para o canvas de referência, que fixa o modelo no nó.
 
-    O `modelo_padrao` vem direto do CATÁLOGO DO GRILL, não de `/api/catalogo`:
-    esta rota passou a servir o catálogo PLANO (`domains.registro.CATALOGO`),
-    que não tem bloco "agente" nem campo de modelo — `RegraJSON` e
-    `AgenteDeclaradoJSON` nunca falam de modelo, por desenho.
+    `AgenteDeclarado.model` é `""` — string vazia, não um nome de modelo —
+    porque `construir_agente` lê `decl.model or client.model`: só o CLIENTE
+    (`--model` da CLI, nunca a receita) decide de fato. Antes desta fatia
+    (Task 3) a invariante equivalente vivia em
+    `grill.catalogo.CATALOGO["agente"].modelo_padrao`; ela migra para o
+    catálogo PLANO porque é dele que `grill.receita.construir` passou a ler o
+    bloco "investigador" — `grill.catalogo.CATALOGO` não existe mais.
     """
     from datetime import UTC, datetime
 
-    from orchestrator.grill.catalogo import CATALOGO as CATALOGO_DO_GRILL
+    from orchestrator.agent.declarado import AgenteDeclarado
+    from orchestrator.domains.registro import CATALOGO
     from orchestrator.grill.receita import Receita, ResolverReceita, para_json
 
-    assert CATALOGO_DO_GRILL["agente"].modelo_padrao == "claude-opus-5"
+    investigador = CATALOGO.bloco("investigador")
+    assert isinstance(investigador, AgenteDeclarado)
+    assert investigador.model == ""
 
     r = Receita(
         id="x", nome="x", justificativa="", gerado_em=datetime.now(UTC),
-        resolvers=(ResolverReceita(nome="agente"),),
+        resolvers=(ResolverReceita(nome="investigador"),),
     )
     # A receita SERIALIZADA não carrega modelo nenhum. É isso que o "padrão" na
     # tela está dizendo.
     assert "model" not in str(para_json(r)).lower()
 
 
-def test_resolver_DETERMINISTICO_do_grill_nao_tem_modelo_nem_ferramenta():
-    """`None` e lista vazia, não `"-"`: a AUSÊNCIA é o que diz que não houve
-    escolha de modelo.
-
-    Esta era a invariante do `EntradaCatalogo` do GRILL, checada antes via
-    `/api/catalogo` — rota que passou a servir o catálogo PLANO, cujo
-    `RegraJSON` nem tem esses campos (ver o comentário acima do handler
-    `catalogo()`). `grill.catalogo.CATALOGO` continua vivo em produção —
-    `/api/receitas` chega nele por `construir` — então a checagem migra para
-    ler o objeto direto, sem HTTP, em vez de desaparecer.
-    """
-    from orchestrator.grill.catalogo import CATALOGO as CATALOGO_DO_GRILL
-
-    for nome in ("L1", "L2", "L3", "revisor"):
-        e = CATALOGO_DO_GRILL[nome]
-        assert e.modelo_padrao is None, nome
-        assert e.ferramentas == (), nome
+# `test_resolver_DETERMINISTICO_do_grill_nao_tem_modelo_nem_ferramenta` não
+# migra — REMOVIDO por decisão explícita da Task 3, não por descuido.
+#
+# Ela provava que `EntradaCatalogo` (o valor do dict `grill.catalogo.CATALOGO`)
+# tinha `modelo_padrao=None` e `ferramentas=()` para os blocos determinísticos
+# — um campo cada, existente só porque `EntradaCatalogo` era uma forma ÚNICA
+# usada tanto para regra quanto para agente. O catálogo PLANO (Task 1) não tem
+# essa forma única: `RegraDisponivel` (as regras) não tem `modelo_padrao` nem
+# `ferramentas` — a ausência que o teste checava não é mais um VALOR que um
+# campo pode assumir, é a FORMA do tipo. Não há mais o que construir para
+# provar que ela é `None`/`()`; a pergunta que o teste fazia deixou de fazer
+# sentido, e não porque a garantia enfraqueceu — porque o tipo agora a
+# carrega estruturalmente.
 
 
 # -- o botão Run ------------------------------------------------------------
@@ -338,8 +346,12 @@ def test_cascata_GRATIS_composta_pela_tela_RODA_de_verdade():
 
 def test_cascata_PAGA_composta_pela_tela_e_recusada_pelo_SERVIDOR():
     """A tela desabilita o botão, mas quem garante é o servidor. Testado
-    forçando o POST — que é exatamente o que fiz no navegador."""
-    cliente.post("/api/receitas", json=_corpo([{"nome": "agente"}], wid="com-agente"))
+    forçando o POST — que é exatamente o que fiz no navegador.
+
+    "investigador", não "agente" — ver o comentário em
+    `test_cascata_com_AGENTE_e_marcada_como_nao_executavel_pela_API`.
+    """
+    cliente.post("/api/receitas", json=_corpo([{"nome": "investigador"}], wid="com-agente"))
 
     r = cliente.post("/api/workflows/com-agente/runs", json={"seed": 1, "n": 60})
 

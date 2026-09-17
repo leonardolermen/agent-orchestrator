@@ -23,11 +23,15 @@ def _propor() -> LLMResponse:
 
 
 def _propor_com_agente() -> LLMResponse:
+    # "investigador", não "agente": o catálogo plano (Task 3) nomeia o bloco
+    # AGENTE da conciliação pelo `Resolver.name` que ele sempre teve — o
+    # cardápio do grill é que usava a chave "agente" só para propor este
+    # mesmo bloco.
     return _chamada(
         "propor_workflow",
         nome="Acme",
         justificativa="j",
-        resolvers=[{"nome": "L1"}, {"nome": "agente"}],
+        resolvers=[{"nome": "L1"}, {"nome": "investigador"}],
     )
 
 
