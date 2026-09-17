@@ -143,6 +143,22 @@ Anti-escopo vale tanto quanto escopo:
   `construir_composicao` derivar `consome`/`produz` dos blocos a partir disso.
   Até as duas existirem, quem escreve um agente na tela é quem garante o
   `kind`.
+- **Não sabe EXECUTAR um workflow que não seja de conciliação — e ainda assim
+  devolve 200.** A paleta é o catálogo inteiro, então o chat e o canvas compõem
+  cascatas de compras (`preferido`, `anteriores`) ou de qualquer bloco novo que
+  entre. Mas o único caminho de execução que existe gera dados bancários:
+  `POST /api/workflows/{id}/runs` monta um `SyntheticSource` e chama
+  `reconcile(dataset.bank, dataset.ledger, ...)`, sempre. Uma cascata cujos
+  blocos trabalham outro `kind` roda contra um pool que ela não enxerga, e a
+  resposta é `200` com `deterministic_rate: 0.0` e lacuna de `100%` — medido,
+  não suposto. É o pior formato possível para essa falha, porque é exatamente
+  o que este projeto nomeia como o erro que ele existe para não cometer:
+  **"não achei nada" indistinguível de "não procurei"**. Um número que parece
+  medido e não é. O que fecha é uma fonte que produza os `kinds` que o workflow
+  consome — a `Source` além da sintética, §8 do spec da plataforma geral
+  (`arquivo`, `http`, `webhook`, `fila`, `agenda`). Até ela existir, o único
+  resultado de `/runs` que quer dizer alguma coisa é o de um workflow de
+  conciliação.
 
 ### A invariante mais cara, e o limite dela
 

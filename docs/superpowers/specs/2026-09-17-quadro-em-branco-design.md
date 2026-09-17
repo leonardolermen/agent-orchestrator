@@ -1,15 +1,21 @@
 # Quadro em branco: a plataforma sem domínio
 
 **Data:** 2026-09-17
-**Estado:** ENTREGUE (B1–B6). Duas lacunas continuam ABERTAS por decisão
-explícita do dono, e nenhuma das duas é silêncio: (A) a lacuna de custo da §7 —
+**Estado:** ENTREGUE (B1–B6). TRÊS lacunas continuam ABERTAS por decisão
+explícita do dono, e nenhuma das três é silêncio: (A) a lacuna de custo da §7 —
 o quadro em branco entrou antes do G3, e enquanto o G3 não entrar, trabalho
 novo começa 100% na classe AGENTE; (B) a guarda de `kind` que a §5 descreve
 como "mais forte" não tem dono para composição feita pelo canvas —
 `construir_composicao` emite um `Stage` só, com `consome`/`produz` nos
 defaults, o que desliga a checagem de beco sem saída inteira antes de ela ter
 algo para comparar. Fecha com o X7/X8 (`AgenteDeclarado.produz` + fiação em
-`construir_composicao`), fora deste plano. Ambas registradas no README.
+`construir_composicao`), fora deste plano; (C) a lacuna de ENTRADA — o único
+caminho de execução que existe gera dados bancários (`SyntheticSource` +
+`reconcile(dataset.bank, dataset.ledger, ...)` em `_executar`), então um
+workflow composto de blocos que trabalham outro `kind` roda, devolve 200 e
+reporta 0% com lacuna de 100%: um número que parece medido e não é. Fecha com
+uma fonte que produza os `kinds` do workflow — §8 do spec da plataforma geral.
+As três registradas no README.
 **Antecessor:** `2026-09-17-execucao-como-grafo-design.md` (X1–X6 entregues)
 
 ---
