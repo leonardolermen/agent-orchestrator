@@ -595,7 +595,7 @@ O bloco que hoje diz "domínio sem regra é uma cascata que começa 100% no agen
 - [ ] **Step 4: Typecheck e build**
 
 ```bash
-npx --prefix web-app tsc --noEmit
+cd web-app && npx tsc --noEmit
 npm --prefix web-app run build
 ```
 
@@ -679,7 +679,7 @@ Esperado: as duas falham — `Dominio` ainda existe e a rota ainda responde 200.
 Nesta ordem, para o interpretador apontar o que falta a cada passo:
 
 1. `api/app.py`: apagar o handler `dominios()`.
-2. `api/schemas.py`: apagar `DominioJSON`.
+2. `api/schemas.py`: apagar `DominioJSON` **e o campo `dominio` de `ComposicaoRequest`**. O segundo nao estava neste plano e foi achado pela Task 4: com o front parando de enviar `dominio` e o schema ainda exigindo, todo "Compor e validar" morreria num `422 Field required`. A Task 4 deu ao campo um default `"conciliacao"` como andaime de UMA fatia, marcado no codigo — e este e o passo que remove o andaime junto com o campo.
 3. `authoring/composicao.py`: apagar o campo `dominio` de `Composicao`, o `buscar_dominio`, e as duas validações que dependiam dele (`regra desconhecida no domínio` e `não é do domínio`). A primeira vira "bloco desconhecido no catálogo"; a segunda **some**, porque é a checagem de `kind` contra a lista do domínio que o grafo substituiu. Ajustar `para_json`/`de_json` para não escrever nem ler `dominio`.
 4. `domains/registro.py`: mover as `RegraDisponivel`/`AgenteDeclarado` de dentro de `CONCILIACAO`/`SWE`/`PROCUREMENT` para as tuplas do `CATALOGO`, verbatim, e apagar as três instâncias de `Dominio` e o `DOMINIOS`.
 5. `agent/declarado.py`: apagar a classe `Dominio` e seu `__post_init__`. **Manter** `AgenteDeclarado`, `RegraDisponivel`, `ParametroDeRegra`, `ClienteDeValidacao` e `construir_agente`.
@@ -706,7 +706,7 @@ Esperado: verde. `tests/domains/test_generalidade.py` e `test_redacao.py` **não
 - [ ] **Step 6: Build do front e commit**
 
 ```bash
-npx --prefix web-app tsc --noEmit && npm --prefix web-app run build
+cd web-app && npx tsc --noEmit && npm --prefix web-app run build
 git add -A
 git commit -m "refactor: Dominio morre — o grafo ja fazia a guarda que ele fazia"
 ```
