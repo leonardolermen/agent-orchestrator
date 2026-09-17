@@ -102,7 +102,7 @@ def test_items_e_tupla_nao_lista():
     """Imutabilidade de verdade, não só na casca.
 
     `Dataset` documenta que `frozen=True` não torna suas LISTAS imutáveis. Um
-    `WorkSet` com lista teria o mesmo buraco, e um resolver poderia mutar o
+    `WorkSet` com lista teria o mesmo buraco, e um resolver poderia mudar o
     pool por baixo do motor.
     """
     assert isinstance(_pool("a").items, tuple)
