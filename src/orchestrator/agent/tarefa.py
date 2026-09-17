@@ -5,16 +5,35 @@ isso é o tipo, não disciplina. `Tarefa` devolve `resolutions` e nunca
 `proposals`, e a pergunta óbvia é por que isso é legítimo.
 
 Não é "porque não decide". Um triador que produz `kind="urgente"` decide, e é
-assim que a ramificação funciona. A distinção é outra:
+assim que a ramificação funciona.
 
-    Uma `Tarefa` empurra o trabalho para frente DENTRO do run; nunca o
-    encerra. O item que ela produz continua no pool e ainda passa por quem
-    vier depois — inclusive um HUMANO, se a cascata tiver um. Uma `Proposal`
-    que resolvesse faria o item SAIR com um julgamento que ninguém conferiu.
+**A resposta que este módulo dava antes era maior do que os fatos.** Ela dizia
+que o item produzido "ainda passa por quem vier depois — inclusive um HUMANO,
+se a cascata tiver um", e tratava `WorkflowDefinition.__post_init__` como se
+fechasse a questão. Todo o peso estava no *se*, e a guarda não tem opinião
+nenhuma sobre ele. A restatement honesta:
 
-E isso não depende de boa vontade: `WorkflowDefinition.__post_init__` recusa
-uma definição em que um kind produzido não seja consumido por ninguém nem
-declarado em `entrega`. Beco sem saída é erro de construção.
+**O que a guarda de beco sem saída PROVA.** Nenhum kind produzido sai do grafo
+sem nome: ou algum stage o consome, ou o autor o declarou em `entrega`. Ela
+pega o kind digitado errado e o kind esquecido, que de outro modo acumulariam
+no pool para sempre, e obriga o autor a ESCREVER que um kind é terminal em vez
+de descobri-lo por acidente.
+
+**O que ela NÃO prova, e é a parte que estava sendo vendida.** Ela não exige
+humano em lugar nenhum. Não exige que o consumidor de um kind seja outra coisa
+além de mais um modelo. Não exige que uma transformação produza coisa alguma —
+isso quem passou a exigir é `_conferir`, aqui embaixo, em runtime e por item.
+Um run pode terminar na saída de um modelo, com `RunState.CONCLUIDO`, sem que
+ninguém confira nada: `domains/redacao` é exatamente essa forma, e
+`test_a_guarda_nao_exige_humano` fixa isso como limitação documentada.
+
+**A invariante que sobrevive é a literal, e só ela:** uma `Proposal` continua
+sem conseguir chegar a `WorkSet.without()` ou a `WorkSet.com()` — não existe
+assinatura por onde ela passe. A propriedade mais larga — *"o julgamento de um
+modelo nunca remove um item sem um humano confirmar"* — **não** é preservada
+pela forma do grafo. Quem a quiser tem de pôr um resolver de classe `HUMANO`
+consumindo o kind terminal; nada neste arquivo, nem no kernel, faz isso por
+ele.
 """
 
 from collections.abc import Callable
@@ -81,14 +100,19 @@ class TarefaSpec:
     # itens pode gastar até N × `budget_microcents` sem nenhum disjuntor — e
     # `Tarefa` é MAIS exposta a isso que `Agent`: ela existe para mastigar
     # pools inteiros de itens transformáveis, e uma execução descontrolada aí
-    # é conta real. Mesmo padrão e mesmo padrão de `AgentSpec`: cobre um lote
+    # é conta real. Mesmo default e mesmo padrão de `AgentSpec`: cobre um lote
     # de ~100 itens no pior caso, o que já é caro demais para um operador não
     # perceber antes de acontecer de novo.
     budget_total_microcents: int = 400_000_000
 
 
 def _abster(item_id: str, motivo: str, custo: Cost, trace: list[TraceEvent]) -> SaidaDaTarefa:
-    """Não transformou. Registra por quê e devolve o item ao pool.
+    """Não transformou: devolve o item ao pool com o motivo anexado ao rastro.
+
+    "Anexado ao rastro" é o alcance real, e é menos do que parece: quem chama
+    — `Tarefa.resolve` — descarta `saida.trace` de uma abstenção, porque
+    `ResolverOutput` não tem onde pô-lo. Ver a lacuna declarada no teto de
+    orçamento, em `Tarefa.resolve`.
 
     Não é parâmetro da spec — ao contrário de `AgentSpec.abstain`, que precisa
     do rótulo de "não sei" DO DOMÍNIO porque uma proposta de abstenção tem um
@@ -156,11 +180,28 @@ class Tarefa:
         resolucoes, produzidos, total = [], [], Cost.zero()
         for item in work.items:
             if total.microcents(self.client.model) > self.spec.budget_total_microcents:
-                # I1: estourar o teto da EXECUÇÃO é evento observável, não
-                # exceção — pula o restante do lote sem sequer chamar o
-                # modelo. Diferente de `Agent`, não há proposta a emitir
-                # aqui: o item pulado simplesmente não resolve e fica no
-                # pool, do mesmo jeito que qualquer abstenção já fica.
+                # I1: estourar o teto da EXECUÇÃO pula o restante do lote sem
+                # sequer chamar o modelo. Diferente de `Agent`, não há
+                # proposta a emitir aqui: o item pulado simplesmente não
+                # resolve e fica no pool, do mesmo jeito que qualquer
+                # abstenção já fica.
+                #
+                # **LACUNA CONHECIDA, e o comentário anterior a negava.** Ele
+                # dizia que o teto é "evento observável, não exceção". Não é:
+                # é SILENCIOSO. O `TraceEvent(OUTCOME)` que `_abster` monta
+                # morre aqui — `saida.trace` é descartado, `saida.cost` é
+                # `Cost.zero()`, e nenhum artefato do run registra que esta
+                # `Tarefa` desistiu nem por quê. Vale para as DUAS
+                # desistências: esta, e a que volta de `conversar`. Onde a
+                # abstenção de um `Agent` vira `Proposal` em `Run.proposals` e
+                # daí um span `ABSTENCAO`, a de uma `Tarefa` não vira nada.
+                #
+                # `ResolverOutput` não tem canal para isso hoje, e inventar um
+                # é desenho, não correção. O canal certo é o mesmo que
+                # `observability/collector.py` já declara como bloqueador do
+                # rastro por item: `Resolver.resolve(work, ctx)` com um
+                # contexto de execução, agendado para o M6. Até lá a lacuna
+                # fica DECLARADA aqui em vez de maquiada.
                 saida = _abster(
                     item.id, "orçamento total da execução esgotado", Cost.zero(), []
                 )
@@ -183,8 +224,44 @@ class Tarefa:
             # para o próximo degrau. Um agente que estoura não derruba o run,
             # e um item não some porque o modelo devolveu lixo.
             if saida.resolution is not None:
+                self._conferir(item, saida)
                 resolucoes.append(saida.resolution)
                 produzidos.extend(saida.produced)
         return ResolverOutput(
             resolutions=resolucoes, produced=tuple(produzidos), cost=total
         )
+
+    def _conferir(self, item: WorkItem, saida: SaidaDaTarefa) -> None:
+        """As duas metades de "transformar é resolver", impostas.
+
+        A §3.1 do spec afirma a conjunção — uma `Resolution` consumindo A **e**
+        um `produced` com B. Nada no TIPO a impunha: `SaidaDaTarefa` permite
+        `resolution` sem `produced`, e `Resolution.item_ids` é um conjunto
+        livre. As duas brechas têm o mesmo efeito, que é o pior possível aqui:
+        um item sai do pool sem que nada o substitua, por julgamento de modelo.
+
+        Falha ALTO, e não por abstenção, porque isto é erro de CONFIGURAÇÃO —
+        um `transformar` mal escrito, não um modelo que devolveu lixo. Abster
+        aqui esconderia um bug de domínio atrás de uma suíte verde, que é a
+        falha oposta e pior da que a abstenção previne.
+        """
+        if not saida.produced:
+            # Transformação que não produz nada NÃO é abstenção: abstenção é
+            # `resolution=None`, e confundir as duas faria o item desaparecer
+            # do run em silêncio.
+            raise ValueError(
+                f"{self.name!r} resolveu {item.id!r} sem produzir nada: "
+                f"transformar é resolver E produzir, nunca só resolver "
+                f"(abstenção é `resolution=None`)"
+            )
+        esperado = frozenset({item.id})
+        if saida.resolution is not None and saida.resolution.item_ids != esperado:
+            # `Tarefa` recebe UM item e resolve ESSE item. Consumir outros é um
+            # `transformar` alcançando fora do seu mandato — e `WorkSet.
+            # without()` honraria o pedido sem reclamar, porque ela descarta
+            # id que não foi perguntado sem dizer nada.
+            raise ValueError(
+                f"{self.name!r} resolveu ids fora do item que recebeu: "
+                f"esperado {sorted(esperado)}, veio "
+                f"{sorted(saida.resolution.item_ids)}"
+            )

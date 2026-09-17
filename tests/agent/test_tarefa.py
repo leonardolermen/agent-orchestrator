@@ -4,6 +4,8 @@ A simetria com `test_agent.py` é o ponto: `Agent` nunca devolve `resolutions`,
 `Tarefa` nunca devolve `proposals`, e as duas rodam o mesmo laço.
 """
 
+import pytest
+
 from orchestrator.agent.llm import FakeLLMClient, LLMResponse
 from orchestrator.agent.tarefa import SaidaDaTarefa, Tarefa, TarefaSpec
 from orchestrator.agent.tools.registry import ToolRegistry
@@ -118,6 +120,63 @@ def test_orcamento_total_interrompe_o_lote_sem_chamar_o_modelo():
 
     assert [r.item_ids for r in saida.resolutions] == [frozenset({"i1"})]
     assert len(client.chamadas) == 1
+
+
+def test_resolver_sem_produzir_e_erro_alto():
+    """A §3.1 exige a CONJUNÇÃO: consome A **e** produz B. Nada no tipo a impunha.
+
+    Uma `Tarefa` de triagem que decide "isto é spam" e devolve
+    `resolution=<x>, produced=()` faz o item sumir do run — sem produção, sem
+    ninguém depois, e com `produz=frozenset()` a guarda de construção não tem o
+    que checar. Erro de configuração, logo falha alto: abstenção é
+    `resolution=None`, e as duas não podem ser confundíveis.
+    """
+    def _nao_produz(item_id, texto, custo, trace):
+        return SaidaDaTarefa(
+            cost=custo,
+            trace=tuple(trace),
+            resolution=Resolution(
+                item_ids=frozenset({item_id}), produced_by="triador", rule="spam"
+            ),
+        )
+
+    t = Tarefa(
+        spec=_spec(transformar=_nao_produz),
+        client=FakeLLMClient([_resposta("spam")]),
+        tools=ToolRegistry([]),
+    )
+
+    with pytest.raises(ValueError, match="sem produzir nada"):
+        t.resolve(_pool())
+
+
+def test_resolver_ids_fora_do_item_recebido_e_erro_alto():
+    """Uma `Tarefa` recebe UM item e resolve ESSE item.
+
+    `WorkSet.without()` descarta qualquer id que receba, inclusive os que
+    ninguém perguntou — então um `transformar` que alcança fora do seu mandato
+    removeria três itens numa chamada de modelo, sem uma linha de erro.
+    """
+    def _come_demais(item_id, texto, custo, trace):
+        return SaidaDaTarefa(
+            cost=custo,
+            trace=tuple(trace),
+            resolution=Resolution(
+                item_ids=frozenset({item_id, "outro"}),
+                produced_by="escritor",
+                rule="escreveu",
+            ),
+            produced=(WorkItem(id=f"{item_id}+r", kind="rascunho", payload=texto),),
+        )
+
+    t = Tarefa(
+        spec=_spec(transformar=_come_demais),
+        client=FakeLLMClient([_resposta("um texto")]),
+        tools=ToolRegistry([]),
+    )
+
+    with pytest.raises(ValueError, match="ids fora do item que recebeu"):
+        t.resolve(_pool())
 
 
 def test_custo_de_varios_itens_e_somado():

@@ -284,6 +284,51 @@ compartilhado pelas duas. A diferença é o CONTRATO, imposto pelo tipo — como
 
 ### 6.1 Por que é legítimo uma `Tarefa` resolver, se um `Agent` não pode
 
+> **Revisada em 2026-09-17**, depois de a revisão do branch CONSTRUIR e RODAR
+> três workflows que passam por `WorkflowDefinition.__post_init__` e ainda
+> assim deixam o julgamento não conferido de um modelo encerrar a vida de um
+> item. O argumento original, preservado abaixo, **afirmava mais do que a
+> guarda prova**. O que mudou: o parágrafo *"O que a guarda prova, e o que
+> não"* passa a vir antes dele e a governar a leitura; o argumento original
+> fica como o raciocínio de desenho que foi, não como garantia.
+
+**O que a guarda de beco sem saída PROVA.** Uma coisa, e ela é real:
+**reachability estática no grafo de kinds.** Nenhum kind produzido sai do grafo
+sem nome — ou algum stage o consome, ou o autor o escreveu em `entrega`. Isso
+pega o kind digitado errado e o kind esquecido, que de outro modo acumulariam
+no pool para sempre, e obriga o autor a DECLARAR que um kind é terminal em vez
+de descobri-lo por acidente.
+
+**O que ela NÃO prova.** Não exige humano em lugar nenhum. Não exige que o
+consumidor de um kind seja outra coisa além de mais um modelo. Não exige que
+uma transformação produza coisa alguma — `SaidaDaTarefa(resolution=<x>,
+produced=())` era aceito, e com `produz=frozenset()` a guarda não tinha o que
+checar. E não limitava quais itens uma `Resolution` podia consumir: `Tarefa`
+passava `item.id` ao `transformar` e não conferia o que voltava, enquanto
+`WorkSet.without()` descarta em silêncio ids que ninguém perguntou.
+
+As duas últimas são erro de CONFIGURAÇÃO e passaram a falhar alto em
+`Tarefa.resolve`, por item, em runtime. As duas primeiras **permanecem**: um
+run pode terminar na saída de um modelo, com `RunState.CONCLUIDO`, sem que
+ninguém confira nada. **`domains/redacao`, como entregue, é exatamente essa
+forma** — três `Tarefa` em fila, `entrega={"texto_final"}`, zero resolver de
+classe `HUMANO`. Não é defeito do domínio; é o que a guarda permite, e agora
+está escrito.
+
+**A invariante que sobrevive é a literal, e só ela:** uma `Proposal` continua
+sem conseguir chegar a `WorkSet.without()` ou a `WorkSet.com()` — não existe
+assinatura por onde ela passe, e é isso que a §10 quer dizer com "proposta
+continua sem resolver e sem produzir". A propriedade mais larga — *"o
+julgamento de um modelo nunca remove um item sem um humano confirmar"* — **não
+é preservada pela forma do grafo**. Quem a quiser tem de pôr um resolver de
+classe `HUMANO` consumindo o kind terminal; nem o kernel nem `Tarefa` fazem
+isso por ele. `tests/runtime/test_producao.py::test_a_guarda_nao_exige_humano`
+fixa a limitação como fato da suíte.
+
+*(A partir daqui, o argumento original de 2026-09-17, mantido porque este
+repositório guarda o porquê de uma mudança — e porque ele continua sendo a
+razão de `Tarefa` existir, só não é a garantia que dizia ser.)*
+
 Não é "porque não decide". Um triador que produz `kind="urgente"` decide, e é
 assim que a ramificação da §4 funciona. A distinção honesta é outra:
 
@@ -302,6 +347,18 @@ protege o canvas não protege o código, e é o código que roda em produção.
 A regra: todo `kind` em `Stage.produz` tem de estar no `consome` de algum stage,
 ou em `entrega`. Beco sem saída é erro de construção, e falha alto — como toda
 configuração inválida neste repositório.
+
+> **Corrigida em 2026-09-17.** A regra acima lia `consome=frozenset()` como "não
+> consome nada", quando a §4 o define como **"vê o pool inteiro"**. O efeito era
+> recusar um pipeline CORRETO cujo degrau de baixo usa o default, e empurrar o
+> autor a listar kinds INTERMEDIÁRIOS em `entrega` só para conseguir construir —
+> o que faz a declaração mentir e desliga a guarda justo para esses kinds.
+> Vários testes do branch carregavam essa fiação e foram desfeitos.
+> **Um stage com `consome` vazio é consumidor curinga: nenhum kind fica órfão.**
+> O custo, dito aqui e no comentário do kernel: a guarda fica **inerte** para o
+> grafo inteiro assim que um stage usa o default. Declarar `consome` em todos os
+> stages é o que a compra de volta. Uma guarda honesta e inerte é melhor que uma
+> que recusa grafo válido e ensina o autor a mentir em `entrega`.
 
 A única exceção é declarada: `WorkflowDefinition.entrega` lista os kinds que SÃO
 a saída do run. Assim "ninguém consome isto" é afirmação do autor, nunca
@@ -404,7 +461,7 @@ registrou ter acontecido por oito PRs.
 | Risco | Sintoma | Mitigação |
 |---|---|---|
 | Laço infinito | run roda para sempre trocando kind | `max_rondas` obrigatório; `RunState.LIMITE_DE_RONDAS` explícito |
-| `Tarefa` vira porta dos fundos | alguém transforma quando devia propor; o humano some da cascata | beco sem saída recusado no build; `entrega` declarada; §6.1 |
+| `Tarefa` vira porta dos fundos | alguém transforma quando devia propor; o humano some da cascata | **PARCIAL** — beco sem saída recusado no build e `entrega` declarada cobrem kind órfão; resolver sem produzir e resolver id alheio falham alto em `Tarefa.resolve`. O humano sumir da cascata NÃO é coberto: ver §6.1 revisada |
 | Explosão de kinds | vinte kinds e ninguém sabe quem alimenta quem | `WorkflowDefinition` recusa beco sem saída; canvas desenha o grafo derivado |
 | Confundir os dois eixos | alguém ordena stages por custo e escreve antes de pesquisar | §5.1 vira docstring e teste |
 | Tese de custo perde sentido | pipeline linear sem competição, e o pitch some | §9, dita em voz alta e no README |
