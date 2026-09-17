@@ -26,21 +26,22 @@ export function NoResolver({ data, selected }: NodeProps) {
     <div
       className={[
         "w-[252px] rounded-lg border border-borda border-t-[3px] bg-white",
+        "dark:border-noite-borda dark:bg-noite-cartao",
         "shadow-sm transition-shadow",
-        cor.borda,
-        selected ? "ring-2 ring-tinta/15 shadow-lg" : "hover:shadow-md",
+        cor.bordaTopo,
+        selected ? "ring-2 ring-tinta/15 shadow-lg dark:ring-noite-tinta/20" : "hover:shadow-md",
       ].join(" ")}
     >
-      <Handle type="target" position={Position.Top} isConnectable={false} className="!bg-borda !w-1.5 !h-1.5 !border-0" />
+      <Handle type="target" position={Position.Top} isConnectable={false} className="!h-1.5 !w-1.5 !border-0 !bg-borda dark:!bg-noite-borda" />
 
       <div className="px-3 pt-2.5 pb-2">
         <div className="flex items-baseline gap-2">
-          <span className="font-semibold text-[13px] text-tinta">{entrada.nome}</span>
+          <span className="font-semibold text-[13px] text-tinta dark:text-noite-tinta">{entrada.nome}</span>
           <span className={`ml-auto text-[10px] tracking-wider font-medium ${cor.texto}`}>
             {entrada.cost_class}
           </span>
         </div>
-        <p className="mt-1 text-[11.5px] leading-snug text-neutral-600">{entrada.resumo}</p>
+        <p className="mt-1 text-[11.5px] leading-snug text-neutral-600 dark:text-noite-fraca">{entrada.resumo}</p>
       </div>
 
       {/* Modelo e ferramentas só aparecem em quem os TEM. Desenhar "modelo: —"
@@ -48,36 +49,36 @@ export function NoResolver({ data, selected }: NodeProps) {
           não há modelo nenhum no caminho. */}
       {entrada.modelo_padrao && (
         <div
-          className="flex items-center gap-2 border-t border-neutral-100 px-3 py-1.5"
+          className="flex items-center gap-2 border-t border-neutral-100 px-3 py-1.5 dark:border-noite-borda"
           title="o modelo é escolhido na execução (--model); este é o padrão"
         >
-          <span className="text-neutral-300 text-[11px]">◇</span>
-          <span className="font-mono text-[11px] text-tinta">{entrada.modelo_padrao}</span>
-          <span className="ml-auto text-[9.5px] uppercase tracking-wide text-neutral-400">
+          <span className="text-neutral-300 text-[11px] dark:text-noite-fraca">◇</span>
+          <span className="font-mono text-[11px] text-tinta dark:text-noite-tinta">{entrada.modelo_padrao}</span>
+          <span className="ml-auto text-[9.5px] uppercase tracking-wide text-neutral-400 dark:text-noite-fraca">
             padrão
           </span>
         </div>
       )}
 
       {entrada.ferramentas.map((f) => (
-        <div key={f} className="flex items-center gap-2 border-t border-neutral-100 px-3 py-1.5">
-          <span className="text-neutral-300 text-[11px]">⚒</span>
-          <span className="text-[11px] text-neutral-600">{f}</span>
+        <div key={f} className="flex items-center gap-2 border-t border-neutral-100 px-3 py-1.5 dark:border-noite-borda">
+          <span className="text-neutral-300 text-[11px] dark:text-noite-fraca">⚒</span>
+          <span className="text-[11px] text-neutral-600 dark:text-noite-fraca">{f}</span>
         </div>
       ))}
 
       {entrada.parametros.length > 0 && (
-        <div className="border-t border-neutral-100 px-3 py-1.5">
+        <div className="border-t border-neutral-100 px-3 py-1.5 dark:border-noite-borda">
           {entrada.parametros.map((p) => (
             <div key={p.nome} className="flex items-baseline gap-2 font-mono text-[10.5px]">
-              <span className="text-neutral-400">{p.nome}</span>
-              <span className="ml-auto text-tinta">{parametros[p.nome]}</span>
+              <span className="text-neutral-400 dark:text-noite-fraca">{p.nome}</span>
+              <span className="ml-auto text-tinta dark:text-noite-tinta">{parametros[p.nome]}</span>
             </div>
           ))}
         </div>
       )}
 
-      <Handle type="source" position={Position.Bottom} isConnectable={false} className="!bg-borda !w-1.5 !h-1.5 !border-0" />
+      <Handle type="source" position={Position.Bottom} isConnectable={false} className="!h-1.5 !w-1.5 !border-0 !bg-borda dark:!bg-noite-borda" />
     </div>
   );
 }

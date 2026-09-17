@@ -2521,3 +2521,94 @@ conectáveis daria à pessoa uma ferramenta que não faz nada — e uma ferramen
 que não faz nada é pior que ausência: ela promete.
 
 Não há `onConnect`. Não existe caminho de código que crie uma aresta.
+
+### P6.107. A regra do dinheiro na web ficou MAIS PRECISA, não mais frouxa
+
+`api/app.py` dizia: *"nenhum endpoint daqui pode gastar dinheiro"*. O chat que o
+dono pediu não cabe nisso — não há como compor conversando sem falar com um
+modelo.
+
+A tentação era duas: (a) recusar o pedido citando a regra, ou (b) pôr a
+entrevista em outro arquivo e alegar que "daqui" não a alcança. A segunda é
+advocacia de regra e seria pior que a primeira.
+
+O que a regra PROTEGIA é o caminho de execução: rodar um workflow pela web nunca
+pode virar uma conta. Isso continua valendo e continua testado — cascata com
+classe `AGENTE` é recusada com 409, e `test_execucao.py` não mudou uma linha.
+Então:
+
+    EXECUTAR um workflow pela web nunca gasta dinheiro.
+    COMPOR por conversa gasta, com teto, e o teto é dito antes.
+
+**O preço de ser mais preciso:** existe agora um caminho pelo qual quem alcança o
+servidor gasta o crédito de quem o hospeda. As três guardas não são opcionais:
+
+1. **Teto por entrevista** — `Entrevistador.budget_microcents`, que já existia e
+   já era testado, aplicado por conexão.
+2. **O custo volta em cada desfecho** e aparece na tela. Gasto que não aparece
+   na tela é gasto que ninguém revisa.
+3. **Sem chave, recusa explícita** — em vez de deixar o SDK levantar no meio do
+   laço e a transcrição do parceiro se perder.
+
+### P6.108. WebSocket, para NÃO ter uma segunda cópia do laço
+
+`Entrevistador.entrevistar` recebe `responder: Callable[[str], str]` — callback
+BLOQUEANTE. Sobre HTTP puro, a alternativa seria reimplementá-lo como máquina de
+estados sem bloqueio: uma segunda cópia do laço, com o próprio orçamento, o
+próprio retry de formato e os próprios três desfechos.
+
+**Duas cópias de um laço que gasta dinheiro divergem, e a que diverge é sempre a
+que ninguém testa.**
+
+Aqui o laço original roda numa thread, `responder` bloqueia numa fila, e o
+WebSocket é só o cano. O que a CLI do grill exercita é literalmente o mesmo
+código — e os dez testes novos rodam com `FakeLLMClient`, sem rede e sem um
+centavo.
+
+Sentinela `_DESISTIU` para a aba fechada: sem ela, `responder` esperaria para
+sempre e vazaria uma thread por aba.
+
+### P6.109. ACHADO — `validar_id` levantando virava "defeito"
+
+O primeiro teste da suíte nova falhou com `{"tipo": "defeito"}`, que a tela
+mostra como erro NOSSO. Causa: o `ValueError` de `validar_id` caía na captura
+larga da thread.
+
+É recusa legítima, com uma regra que a pessoa pode atender ("minúsculas,
+dígitos e hífen, de 3 a 40 caracteres"). Agora é validado ANTES de abrir a
+thread, e devolve `{"tipo": "erro"}` com o texto da regra — pela mesma razão que
+`entrevistar` já valida antes do primeiro turno: descobrir um id inválido no fim
+desperdiçaria a conversa inteira.
+
+### P6.110. O painel de Ambiente nunca devolve o valor de um segredo
+
+`GET /api/ambiente` devolve `tem_chave: bool`, não a chave. Uma tela que mostra
+a chave é uma tela que a vaza para quem olha por cima do ombro, para o print da
+conversa e para o cache do navegador. Há teste que varre o JSON procurando
+`sk-`.
+
+Os limites de `seed` e `n` saem dos MESMOS `Query` que `/runs` aplica, e um
+teste confirma que o `n_max` anunciado é o que o servidor recusa ao ultrapassar.
+Uma segunda tabela divergiria, e o sintoma seria a tela oferecer um `n` que o
+servidor não aceita.
+
+### P6.111. Escuro por default, e por `class` e não por `media`
+
+O modo é do PRODUTO, não do sistema operacional. Com `darkMode: "media"`, a
+escolha da pessoa perderia para a preferência do SO a cada visita — e o pedido
+foi "escuro como default", não "escuro quando o SO estiver escuro".
+
+Três detalhes que só aparecem rodando:
+
+- **`html { background }` no CSS**, não só no React: entre o HTML chegar e o
+  bundle montar há um intervalo, e sem isso ele é um flash BRANCO numa tela que
+  a pessoa pediu escura.
+- **As cores das arestas seguem o tema.** `#b3ada3` sobre `#16161a` é quase
+  invisível, e uma seta que não se vê não diz em que sentido a cascata corre.
+- **As classes de cor são LITERAIS** em `CORES`. O Tailwind varre o código-fonte
+  procurando nomes de classe; montar `` `border-t-${cor}` `` em runtime produz
+  uma classe que ele nunca gera.
+
+A classe de custo muda de TOM entre os temas e não de MATIZ: verde continua
+REGRA nos dois, senão a pessoa aprenderia duas linguagens para ler a mesma
+coisa.

@@ -2,15 +2,28 @@
 @tailwind components;
 @tailwind utilities;
 
-/* O React Flow desenha os controles e o minimapa com o próprio CSS; estes
-   ajustes só alinham a paleta dele com a do resto do produto. */
+/* O fundo vive no `html`, não só no React: entre o HTML chegar e o bundle
+   montar há um intervalo, e sem isto ele é um flash BRANCO numa tela que a
+   pessoa pediu escura. */
+html { background: #faf9f7; }
+html.dark { background: #16161a; color-scheme: dark; }
+
+/* O React Flow desenha controles e minimapa com o próprio CSS. Estes ajustes
+   alinham a paleta dele com a do produto nos DOIS temas — sem eles, os botões
+   de zoom ficam brancos sobre o canvas escuro. */
 .react-flow__controls-button {
   border-color: #d8d4cd;
+  background: #fff;
   fill: #6b6660;
 }
-.react-flow__minimap {
-  border-radius: 6px;
+.dark .react-flow__controls-button {
+  border-color: #32323c;
+  background: #22222a;
+  fill: #9a968f;
 }
-.react-flow__edge-text {
-  font-family: Inter, system-ui, sans-serif;
-}
+.dark .react-flow__controls-button:hover { background: #2b2b34; }
+.react-flow__edge-text { font-family: Inter, system-ui, sans-serif; }
+.react-flow__minimap { border-radius: 6px; }
+.react-flow__attribution { opacity: .5; }
+.dark .react-flow__attribution { background: transparent; }
+.dark .react-flow__attribution a { color: #9a968f; }

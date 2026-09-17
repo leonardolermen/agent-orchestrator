@@ -245,3 +245,19 @@ class ReceitaRequest(BaseModel):
         # recusada pelo disco.
         validar_id(v)
         return v
+
+
+class AmbienteJSON(BaseModel):
+    """O ambiente da execução. Sem segredo nenhum dentro.
+
+    `tem_chave` é booleano de propósito: a tela precisa saber se a entrevista
+    vai funcionar, e não precisa — nunca — do valor. Um campo `chave: str` aqui
+    seria a chave no JSON, no cache do navegador e no print da conversa.
+    """
+
+    modelo_padrao: str
+    tem_chave: bool
+    seed: int
+    n: int
+    n_max: int
+    taxa_divergencia: float

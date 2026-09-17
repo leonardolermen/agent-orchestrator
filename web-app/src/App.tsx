@@ -14,14 +14,38 @@ import "@xyflow/react/dist/style.css";
 
 import {
   api,
+  CORES,
   ErroDaApi,
   ORDEM_CLASSE,
+  type Ambiente,
   type EntradaCatalogo,
+  type Receita,
   type Run,
   type WorkflowConstruido,
 } from "./api";
+import { Chat } from "./Chat";
 import { NoResolver, type DadosDoNo } from "./NoResolver";
 import { Painel } from "./Painel";
+
+function usarTema(): [boolean, () => void] {
+  const [escuro, setEscuro] = useState(
+    () => document.documentElement.classList.contains("dark"),
+  );
+  const alternar = () => {
+    const novo = !escuro;
+    setEscuro(novo);
+    document.documentElement.classList.toggle("dark", novo);
+    // `localStorage` pode levantar (janela privada, site data bloqueado). A
+    // preferência é conveniência por visitante — perdê-la volta ao default
+    // escuro, que é o comportamento certo.
+    try {
+      localStorage.setItem("tema", novo ? "dark" : "light");
+    } catch {
+      /* sem problema: o default volta a valer */
+    }
+  };
+  return [escuro, alternar];
+}
 
 const TIPOS_DE_NO = { resolver: NoResolver };
 
@@ -47,12 +71,12 @@ export default function App() {
   const [construido, setConstruido] = useState<WorkflowConstruido | null>(null);
   const [run, setRun] = useState<Run | null>(null);
   const [rodando, setRodando] = useState(false);
+  const [ambiente, setAmbiente] = useState<Ambiente | null>(null);
+  const [escuro, alternarTema] = usarTema();
 
   useEffect(() => {
-    api
-      .catalogo()
-      .then(setCatalogo)
-      .catch((e: ErroDaApi) => setErro(e.message));
+    api.catalogo().then(setCatalogo).catch((e: ErroDaApi) => setErro(e.message));
+    api.ambiente().then(setAmbiente).catch((e: ErroDaApi) => setErro(e.message));
   }, []);
 
   const aoMudarNos = useCallback(
@@ -79,6 +103,9 @@ export default function App() {
   // cada render. Por isso arrastar um nó nunca muda o sentido da seta: ela volta
   // a apontar para o mesmo lugar, agora para cima. A regra fica visível
   // exatamente quando alguém tenta furá-la.
+  // O traço da aresta acompanha o tema: `#b3ada3` sobre `#16161a` é quase
+  // invisível, e uma seta que não se vê não diz em que sentido a cascata corre.
+  const traco = escuro ? "#4a4a56" : "#b3ada3";
   const arestas: Edge[] = useMemo(
     () =>
       emOrdem.slice(0, -1).map((a, i) => {
@@ -92,14 +119,14 @@ export default function App() {
           // A transição de classe é o momento em que a cascata age; dizer o
           // nome dela na aresta ensina a regra sem precisar de legenda.
           label: mudaDeClasse ? "o que sobrou" : undefined,
-          labelStyle: { fontSize: 10, fill: "#8f8880" },
-          labelBgStyle: { fill: "#faf9f7" },
+          labelStyle: { fontSize: 10, fill: escuro ? "#9a968f" : "#8f8880" },
+          labelBgStyle: { fill: escuro ? "#16161a" : "#faf9f7" },
           labelBgPadding: [4, 2] as [number, number],
-          style: { stroke: "#b3ada3", strokeWidth: 1.6 },
-          markerEnd: { type: "arrowclosed", color: "#b3ada3", width: 16, height: 16 } as never,
+          style: { stroke: traco, strokeWidth: 1.6 },
+          markerEnd: { type: "arrowclosed", color: traco, width: 16, height: 16 } as never,
         };
       }),
-    [emOrdem],
+    [emOrdem, escuro, traco],
   );
 
   const acrescentar = (e: EntradaCatalogo) => {
@@ -166,11 +193,11 @@ export default function App() {
   };
 
   const executar = async () => {
-    if (!construido) return;
+    if (!construido || !ambiente) return;
     setErro(null);
     setRodando(true);
     try {
-      setRun(await api.rodar(construido.id));
+      setRun(await api.rodar(construido.id, ambiente!));
     } catch (e) {
       setErro((e as ErroDaApi).message);
     } finally {
@@ -178,25 +205,64 @@ export default function App() {
     }
   };
 
+  // O chat propôs: o canvas passa a mostrar a cascata proposta. Os nós vêm do
+  // CATÁLOGO pelo nome — a receita carrega nomes e parâmetros, não cartões — e
+  // um nome que não esteja no catálogo é ignorado em vez de virar um nó vazio.
+  const aceitarProposta = (receita: Receita) => {
+    let y = 40;
+    const novos: NoDoCanvas[] = [];
+    for (const r of receita.resolvers) {
+      const entrada = catalogo.find((c) => c.nome === r.nome);
+      if (!entrada) continue;
+      const parametros: Record<string, number> = {};
+      for (const p of entrada.parametros) parametros[p.nome] = p.default;
+      novos.push({
+        id: entrada.nome,
+        type: "resolver",
+        position: { x: 0, y },
+        data: { entrada, parametros: { ...parametros, ...(r.parametros ?? {}) } },
+      });
+      y += ALTURA_CHUTE + ESPACO;
+    }
+    setNos(novos);
+    setConstruido(null);
+    setRun(null);
+  };
+
   const selecionado = nos.find((n) => n.selected)?.id ?? null;
   const classes = emOrdem.map((n) => n.data.entrada.cost_class);
 
   return (
-    <div className="flex h-screen flex-col bg-papel font-sans text-tinta">
-      <header className="flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-borda bg-white px-5 py-3">
+    <div className="flex h-screen flex-col bg-papel font-sans text-tinta dark:bg-noite-fundo dark:text-noite-tinta">
+      <header className="flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-borda bg-white px-5 py-3 dark:border-noite-borda dark:bg-noite-painel">
         <div>
           <h1 className="text-[15px] font-semibold leading-tight">Compor cascata</h1>
-          <p className="max-w-[40rem] text-[11.5px] leading-snug text-neutral-500">
+          <p className="max-w-[40rem] text-[11.5px] leading-snug text-neutral-500 dark:text-noite-fraca">
             Arraste os nós onde quiser. As <strong className="font-semibold">setas</strong> não são
             suas: elas seguem a classe de custo, do mais barato ao mais caro.
           </p>
         </div>
-        <a href="/" className="ml-auto text-[12px] text-humano hover:underline">
+        <button
+          type="button"
+          onClick={alternarTema}
+          title={escuro ? "mudar para claro" : "mudar para escuro"}
+          className="ml-auto rounded border border-borda px-2 py-1 text-[12px] text-neutral-500 transition hover:bg-neutral-50 dark:border-noite-borda dark:text-noite-fraca dark:hover:bg-noite-cartao"
+        >
+          {escuro ? "☀" : "☾"}
+        </button>
+        <a
+          href="/"
+          className="text-[12px] text-humano hover:underline dark:text-noite-humano"
+        >
           ← cascata em execução
         </a>
       </header>
 
-      <div className="grid min-h-0 flex-1 grid-cols-[1fr_20rem]">
+      <div className="grid min-h-0 flex-1 grid-cols-[19rem_1fr_20rem]">
+        <aside className="min-h-0 border-r border-borda bg-white dark:border-noite-borda dark:bg-noite-painel">
+          <Chat aoPropor={aceitarProposta} temChave={ambiente?.tem_chave ?? false} />
+        </aside>
+
         <div className="relative">
           <ReactFlow<NoDoCanvas>
             nodes={nos}
@@ -208,39 +274,41 @@ export default function App() {
             edgesFocusable={false}
             fitView
             fitViewOptions={{ padding: 0.35, maxZoom: 1 }}
-            className="bg-papel"
+            className="bg-papel dark:bg-noite-fundo"
           >
-            <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="#d8d4cd" />
+            <Background
+              variant={BackgroundVariant.Dots}
+              gap={22}
+              size={1}
+              color={escuro ? "#32323c" : "#d8d4cd"}
+            />
             <Controls showInteractive={false} />
             <MiniMap
               pannable
               zoomable
               nodeStrokeWidth={0}
-              nodeColor={(n) =>
-                ({
-                  REGRA: "#2f7a4d",
-                  AGENTE: "#a86a10",
-                  CREW: "#8a6d1f",
-                  HUMANO: "#2a5d9c",
-                })[(n.data as DadosDoNo).entrada.cost_class]
-              }
-              className="!border !border-borda !bg-white"
+              // As MESMAS cores de classe de custo, do mesmo lugar. Uma
+              // segunda tabela aqui divergiria no dia em que alguém ajustasse
+              // um tom, e o minimapa passaria a mentir sobre a classe.
+              nodeColor={(n) => CORES[(n.data as DadosDoNo).entrada.cost_class].minimapa}
+              maskColor={escuro ? "rgba(22,22,26,.7)" : "rgba(250,249,247,.7)"}
+              className="!border !border-borda !bg-white dark:!border-noite-borda dark:!bg-noite-painel"
             />
           </ReactFlow>
 
           {nos.length === 0 && (
             <div className="pointer-events-none absolute inset-0 grid place-content-center text-center">
-              <p className="text-[14px] text-neutral-400">
+              <p className="text-[14px] text-neutral-400 dark:text-noite-fraca">
                 Canvas vazio. Acrescente um resolver pela paleta →
               </p>
-              <p className="mt-1 text-[12px] text-neutral-300">
+              <p className="mt-1 text-[12px] text-neutral-300 dark:text-noite-fraca/70">
                 Uma cascata sem resolver não resolve nada.
               </p>
             </div>
           )}
 
           {nos.length > 0 && (
-            <p className="pointer-events-none absolute left-3 top-3 font-mono text-[10.5px] text-neutral-400">
+            <p className="pointer-events-none absolute left-3 top-3 font-mono text-[10.5px] text-neutral-400 dark:text-noite-fraca">
               ordem: por classe de custo ({[...new Set(classes)].join(" → ")})
             </p>
           )}
@@ -259,6 +327,8 @@ export default function App() {
           onMudarParametro={mudarParametro}
           onCompor={compor}
           onExecutar={executar}
+          ambiente={ambiente}
+          onMudarAmbiente={setAmbiente}
         />
       </div>
     </div>

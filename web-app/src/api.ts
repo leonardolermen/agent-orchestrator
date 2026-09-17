@@ -55,6 +55,24 @@ export interface Run {
   gap: { items: number; rate: number };
 }
 
+export interface Receita {
+  id: string;
+  nome: string;
+  justificativa: string;
+  resolvers: { nome: string; parametros?: Record<string, number> }[];
+}
+
+export interface Ambiente {
+  modelo_padrao: string;
+  // Booleano de propósito. A tela precisa saber se a entrevista vai funcionar,
+  // e não precisa — nunca — do valor da chave.
+  tem_chave: boolean;
+  seed: number;
+  n: number;
+  n_max: number;
+  taxa_divergencia: number;
+}
+
 export class ErroDaApi extends Error {
   constructor(
     message: string,
@@ -87,6 +105,8 @@ async function pedir<T>(url: string, init?: RequestInit): Promise<T> {
 export const api = {
   catalogo: () => pedir<EntradaCatalogo[]>("/api/catalogo"),
 
+  ambiente: () => pedir<Ambiente>("/api/ambiente"),
+
   criarReceita: (corpo: {
     id: string;
     nome: string;
@@ -99,11 +119,15 @@ export const api = {
       body: JSON.stringify(corpo),
     }),
 
-  rodar: (workflowId: string, seed = 1, n = 300) =>
+  rodar: (workflowId: string, ambiente: Pick<Ambiente, "seed" | "n" | "taxa_divergencia">) =>
     pedir<Run>(`/api/workflows/${encodeURIComponent(workflowId)}/runs`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ seed, n }),
+      body: JSON.stringify({
+        seed: ambiente.seed,
+        n: ambiente.n,
+        taxa_divergencia: ambiente.taxa_divergencia,
+      }),
     }),
 };
 
@@ -117,9 +141,40 @@ export function ordemDeExecucao<T extends { cost_class: CostClass }>(itens: T[])
   );
 }
 
-export const CORES: Record<CostClass, { borda: string; texto: string; fundo: string }> = {
-  REGRA: { borda: "border-t-regra", texto: "text-regra", fundo: "bg-regra" },
-  AGENTE: { borda: "border-t-agente", texto: "text-agente", fundo: "bg-agente" },
-  CREW: { borda: "border-t-crew", texto: "text-crew", fundo: "bg-crew" },
-  HUMANO: { borda: "border-t-humano", texto: "text-humano", fundo: "bg-humano" },
+// As classes de cor, LITERAIS. O Tailwind varre o código-fonte procurando
+// nomes de classe; montar `` `border-t-${cor}` `` em tempo de execução produz
+// uma classe que ele nunca vê e portanto nunca gera. Já custou uma tela sem
+// cor nenhuma em projeto que fez isso.
+//
+// `bordaTopo` e `bordaEsq` são campos separados em vez de um `.replace()`: com
+// duas classes por tema (clara + `dark:`), a substituição de string trocaria só
+// a primeira e a variante escura sairia na borda errada.
+export const CORES: Record<
+  CostClass,
+  { bordaTopo: string; bordaEsq: string; texto: string; minimapa: string }
+> = {
+  REGRA: {
+    bordaTopo: "border-t-regra dark:border-t-noite-regra",
+    bordaEsq: "border-l-regra dark:border-l-noite-regra",
+    texto: "text-regra dark:text-noite-regra",
+    minimapa: "#5cc48a",
+  },
+  AGENTE: {
+    bordaTopo: "border-t-agente dark:border-t-noite-agente",
+    bordaEsq: "border-l-agente dark:border-l-noite-agente",
+    texto: "text-agente dark:text-noite-agente",
+    minimapa: "#e0a447",
+  },
+  CREW: {
+    bordaTopo: "border-t-crew dark:border-t-noite-crew",
+    bordaEsq: "border-l-crew dark:border-l-noite-crew",
+    texto: "text-crew dark:text-noite-crew",
+    minimapa: "#d4b256",
+  },
+  HUMANO: {
+    bordaTopo: "border-t-humano dark:border-t-noite-humano",
+    bordaEsq: "border-l-humano dark:border-l-noite-humano",
+    texto: "text-humano dark:text-noite-humano",
+    minimapa: "#6ba4e8",
+  },
 };

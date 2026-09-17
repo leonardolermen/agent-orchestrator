@@ -1,18 +1,35 @@
 """O app HTTP do canvas.
 
-Regra que governa este módulo: NENHUM endpoint daqui pode gastar dinheiro.
-Não é uma flag a desligar — não existe caminho de código deste arquivo até o
-modelo. Ver o §5 do spec desta fatia e o teste em `tests/api/test_execucao.py`.
+**A regra que governa este módulo ficou MAIS PRECISA, não mais frouxa.**
+
+Ela era: *"nenhum endpoint daqui pode gastar dinheiro"*. O que ela protegia é o
+caminho de EXECUÇÃO — rodar um workflow pela web nunca pode virar uma conta —, e
+isso continua valendo e continua testado (`tests/api/test_execucao.py`): uma
+cascata com classe `AGENTE` é recusada com 409, e não existe caminho de código
+daqui até o modelo por `/runs`.
+
+A entrevista (`api/entrevista.py`) não executa nada: ela COMPÕE, conversando. E
+não há como compor conversando sem falar com um modelo. Então:
+
+    EXECUTAR um workflow pela web nunca gasta dinheiro.
+    COMPOR por conversa gasta, com teto, e o teto é dito antes.
+
+A exceção é UMA, mora em outro arquivo, e carrega as três guardas que a tornam
+aceitável — teto por entrevista, custo devolvido em cada desfecho, e recusa
+explícita sem chave. Ver o cabeçalho de `api/entrevista.py`.
 """
 
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, WebSocket
 from fastapi.staticfiles import StaticFiles
 
+from orchestrator.api.entrevista import conduzir
 from orchestrator.api.schemas import (
+    AmbienteJSON,
     DecisaoRequest,
     EntradaCatalogoJSON,
     FilaJSON,
@@ -30,7 +47,7 @@ from orchestrator.api.schemas import (
     workflow_json,
 )
 from orchestrator.conciliacao import reconcile
-from orchestrator.grill.catalogo import CATALOGO
+from orchestrator.grill.catalogo import CATALOGO, MODELO_INERTE
 from orchestrator.grill.receita import Receita, ResolverReceita, construir
 from orchestrator.grill.registro import gravar_receita, listar_receitas
 from orchestrator.kernel.cost import Cost, CostClass
@@ -105,6 +122,35 @@ def catalogo() -> list[EntradaCatalogoJSON]:
         )
         for e in sorted(CATALOGO.values(), key=lambda e: (e.cost_class, e.nome))
     ]
+
+
+@app.get("/api/ambiente", response_model=AmbienteJSON)
+def ambiente() -> AmbienteJSON:
+    """O que uma execução usa, e o que o servidor tem configurado.
+
+    **Nunca devolve o valor de segredo nenhum** — só se ele EXISTE. Uma tela que
+    mostra a chave é uma tela que vaza a chave para quem olhar por cima do
+    ombro, para o print da conversa e para o cache do navegador.
+
+    Os defaults saem dos MESMOS lugares que a execução lê: os limites de `seed`,
+    `n` e `taxa_divergencia` são os de `Query` em `/runs`, e o modelo é o
+    default do `AnthropicClient`. Uma segunda tabela aqui divergiria, e o
+    sintoma seria a tela oferecer um `n` que o servidor recusa.
+    """
+    return AmbienteJSON(
+        modelo_padrao=MODELO_INERTE,
+        tem_chave=bool(os.environ.get("ANTHROPIC_API_KEY")),
+        seed=1,
+        n=300,
+        n_max=5000,
+        taxa_divergencia=0.15,
+    )
+
+
+@app.websocket("/api/entrevista")
+async def entrevista(ws: WebSocket) -> None:
+    """O chat que compõe. GASTA DINHEIRO — ver `api/entrevista.py`."""
+    await conduzir(ws, gravar=lambda r: gravar_receita(r, _RAIZ_RECEITAS))
 
 
 @app.post("/api/receitas", response_model=WorkflowJSON, status_code=201)
