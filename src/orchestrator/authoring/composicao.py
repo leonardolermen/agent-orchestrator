@@ -180,7 +180,14 @@ def construir_composicao(
         if contexto is None
         else CATALOGO.ferramentas.com_contexto(contexto)
     )
-    cliente = cliente or ClienteDeValidacao()
+    # `is None`, não `or` — a MESMA disciplina de `grill.receita.construir`, que
+    # a documenta, e que esta linha contrariava. Não é teórico: o cliente que
+    # `api/app.py` passa hoje é um `ClienteComTeto`, e um `or` aqui trocaria por
+    # `ClienteDeValidacao` qualquer cliente que viesse a ser falsy — trocando um
+    # teto de verdade por um sentinela que recusa falar, o que a pessoa leria
+    # como "o agente não fez nada".
+    if cliente is None:
+        cliente = ClienteDeValidacao()
     # `is None`, não `or`: mesma disciplina de `grill.receita.construir`. `Fila`
     # não define `__bool__` nem `__len__` hoje, mas no dia em que definir um
     # `or` trocaria silenciosamente uma fila vazia EXPLÍCITA pelo default.
