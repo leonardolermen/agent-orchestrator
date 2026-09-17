@@ -1497,6 +1497,9 @@ def test_desfecho_o_modelo_ABSTEVE_em_todos_os_itens(tmp_path, monkeypatch):
     assert corpo["propostas_por_tipo"] == {"NAO_SEI": 3}
     assert corpo["falhas"] == 0
     assert corpo["teto_atingido"] is False
+    # `concluido`, e sem ressalva: o agente foi perguntado sobre as tres issues
+    # e respondeu as tres. Nao saber e resposta.
+    assert corpo["estado"] == "concluido"
 
 
 def test_desfecho_a_API_FALHOU_e_isso_NAO_e_abstencao_do_modelo(tmp_path, monkeypatch):
@@ -1535,6 +1538,21 @@ def test_desfecho_a_API_FALHOU_e_isso_NAO_e_abstencao_do_modelo(tmp_path, monkey
     # E NAO foi o teto: a distincao inteira desta guarda.
     assert corpo["teto_atingido"] is False
     assert corpo["custo_microcents"] == 0
+    # DECISAO EXPLICITA: aqui `concluido` e HONESTO, e nao uma omissao.
+    #
+    # `RunState` descreve o CICLO DE VIDA do run — a cascata percorreu o pool? —,
+    # nao a qualidade do que saiu. Com a API caida, TODO item foi tentado; a
+    # tentativa e que nao rendeu. Com o teto, item nenhum foi tentado: o run
+    # parou antes, por ordem de quem pediu. "Tentei e nao consegui" e "fui
+    # proibido de tentar" sao fatos de ciclo de vida diferentes, e so o segundo
+    # e "nao terminou".
+    #
+    # E se `falhas > 0` derrubasse o estado, uma oscilacao de rede em 1 de 300
+    # itens marcaria o run inteiro como nao-concluido, e `estado` deixaria de
+    # significar "a cascata rodou" para significar "deu tudo certo" — um juizo
+    # de qualidade que `falhas` ja reporta em numero, e que um booleano so
+    # empobrece.
+    assert corpo["estado"] == "concluido"
 
 
 def test_desfecho_PAROU_NO_TETO_nao_se_confunde_com_falha_de_API(tmp_path, monkeypatch):
@@ -1549,13 +1567,127 @@ def test_desfecho_PAROU_NO_TETO_nao_se_confunde_com_falha_de_API(tmp_path, monke
     `teto_atingido` vem do PROPRIO embrulho que recusou (`ClienteComTeto.recusas`),
     contado na origem. Inferi-lo por subtracao entre `falhas` e outra coisa seria
     o join fragil de sempre.
+
+    **E o `estado` diz isso sozinho.** A primeira versao deste campo devolvia
+    `concluido` aqui: um run que o pedido PROIBIU de trabalhar, publicado como se
+    tivesse terminado. `teto_atingido` desambiguava — para quem soubesse cruzar
+    dois campos —, e o ponto deste round e justamente que o chamador nao precise
+    deduzir o desfecho. `limite_de_custo` e irmao de `LIMITE_DE_RONDAS`, e
+    separado dele porque dizer "limite de rondas" sobre um teto de dinheiro
+    mandaria quem opera mexer em `max_rondas` para resolver um problema de
+    orcamento.
     """
     corpo = _corpo_com_agente(monkeypatch, tmp_path, [_resposta()] * 3, teto=0)
 
+    assert corpo["estado"] == "limite_de_custo"
     assert corpo["teto_atingido"] is True
     assert corpo["falhas"] == 3
     assert corpo["custo_microcents"] == 0
     assert corpo["propostas_por_tipo"] == {"NAO_SEI": 3}
+
+
+def test_o_estado_de_LIMITE_DE_CUSTO_e_o_MESMO_no_historico(tmp_path, monkeypatch):
+    """A correcao e feita no `Run`, antes de persistir — nao so na projecao.
+
+    So na projecao, `/runs` diria `limite_de_custo` e `/api/runs` diria
+    `concluido` sobre a MESMA execucao: duas verdades sobre um fato, que e
+    exatamente o defeito que este campo existe para nao cometer. Quem investiga
+    um gasto depois olha o historico, nao a resposta que passou.
+    """
+    corpo = _corpo_com_agente(monkeypatch, tmp_path, [_resposta()] * 3, teto=0)
+
+    (resumo,) = cliente.get("/api/runs", params={"workflow_id": "com-agente"}).json()
+    assert resumo["state"] == corpo["estado"] == "limite_de_custo"
+
+
+def test_o_teto_VENCE_aguardando_humano_quando_os_dois_valem(tmp_path, monkeypatch):
+    """Quando os dois se aplicam, o TETO ganha — e nao e arbitrario.
+
+    O teto e POR QUE existe lacuna; a fila humana e o sintoma. Mandar o operador
+    para a revisao esconderia a causa atras do efeito, e ele aprovaria itens sem
+    saber que o agente nem chegou a olha-los. E a mesma precedencia que o motor
+    ja usa: `LIMITE_DE_RONDAS` vence `AGUARDANDO_HUMANO` em `runtime/engine.py`.
+    """
+    from orchestrator.agent.declarado import construir_agente
+    from orchestrator.grill.catalogo import ClienteAusente
+    from orchestrator.kernel.definition import Stage, WorkflowDefinition
+    from orchestrator.review.revisor import RevisorHumano
+
+    def fabrica(ctx):
+        cliente_do_ctx = ctx.cliente if ctx.cliente is not None else ClienteAusente()
+        return WorkflowDefinition(
+            id="com-humano",
+            name="agente mais revisor",
+            stages=(
+                Stage(
+                    name="triar",
+                    cascade=(
+                        construir_agente(_declarado(), cliente_do_ctx),
+                        RevisorHumano(fila=ctx.fila),
+                    ),
+                ),
+            ),
+        )
+
+    _csv_de_issues(tmp_path, monkeypatch, linhas=3)
+    _cliente_falso(monkeypatch, [_resposta()] * 3)
+    _registrar(monkeypatch, "com-humano", fabrica)
+
+    sem_teto = cliente.post(
+        "/api/workflows/com-humano/runs",
+        json={"fonte": _FONTE_ISSUES, "teto_microcents": 10_000_000},
+    ).json()
+    com_teto = cliente.post(
+        "/api/workflows/com-humano/runs",
+        json={"fonte": _FONTE_ISSUES, "teto_microcents": 0},
+    ).json()
+
+    # A cascata TEM degrau humano e sobra pool nos dois casos, entao o motor
+    # diria `aguardando_humano` nos dois. O teto e o que muda a resposta.
+    assert sem_teto["estado"] == "aguardando_humano"
+    assert com_teto["estado"] == "limite_de_custo"
+
+
+def test_LIMITE_conhecido_o_teto_do_PROPRIO_AGENTE_nao_muda_o_estado(
+    tmp_path, monkeypatch
+):
+    """LACUNA CONHECIDA, pinada para nao virar surpresa.
+
+    `estado == limite_de_custo` cobre o teto DA REQUISICAO, que e o unico que
+    esta camada consegue observar: `ClienteComTeto` e um objeto dela e conta as
+    proprias recusas. O teto do PROPRIO AGENTE
+    (`AgentSpec.budget_total_microcents`) tambem para itens sem sequer tenta-los
+    — mesma natureza de fato —, mas ele para DENTRO de `Agent.resolve`, e nada
+    sai de la contando isso: a unica marca e um `TraceKind.OUTCOME` com
+    `detail={"motivo": "orçamento total"}`.
+
+    Nao fechei a lacuna casando essa string na camada HTTP. Um `if` sobre texto
+    em portugues dentro de um `detail` e o join fragil que este repositorio ja
+    matou seis vezes: renomear o motivo deixaria a suite verde e o estado
+    errado, em silencio. Fechar de verdade pede um contador no `Agent`, ao lado
+    do custo, e isso e mudanca no laco que gasta — fora desta fatia.
+
+    Enquanto isso, `custo_microcents` mostra o gasto e a lacuna mostra o resto.
+    Este teste falha no dia em que alguem fechar a lacuna, e e ai que ele deve
+    ser trocado por um que exija `limite_de_custo`.
+    """
+    _csv_de_issues(tmp_path, monkeypatch, linhas=5)
+    _cliente_falso(monkeypatch, [_resposta()] * 5)
+    _registrar(
+        monkeypatch,
+        "com-agente",
+        _fabrica_com_agentes(_declarado(budget_total_microcents=200_000)),
+    )
+
+    corpo = cliente.post(
+        "/api/workflows/com-agente/runs",
+        json={"fonte": _FONTE_ISSUES, "teto_microcents": 200_000_000},
+    ).json()
+
+    assert corpo["estado"] == "concluido"
+    assert corpo["teto_atingido"] is False
+    # E o gasto PAROU — a lacuna e de RELATO, nao de contencao.
+    assert corpo["custo_microcents"] == 2 * _POR_CHAMADA
 
 
 def test_uma_cascata_SEM_agente_reporta_os_tres_campos_como_MEDIDOS(monkeypatch):

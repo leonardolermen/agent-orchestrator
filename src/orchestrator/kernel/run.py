@@ -38,6 +38,22 @@ class RunState(StrEnum):
     # o trabalho não acabou, o teto é que chegou. Mesmo espírito de
     # `AGUARDANDO_HUMANO` — a lacuna é declarada, nunca escondida.
     LIMITE_DE_RONDAS = "limite_de_rondas"
+    # Bateu o teto de GASTO da execução, e itens ficaram sem sequer ser
+    # tentados. Irmão do de cima, e separado dele de propósito: os dois são
+    # "parou por um teto", mas dizer `LIMITE_DE_RONDAS` sobre um teto de
+    # dinheiro mandaria quem opera mexer em `max_rondas` para resolver um
+    # problema de orçamento.
+    #
+    # E é a distinção com `CONCLUIDO` que importa mais. Um run que o pedido
+    # PROIBIU de trabalhar não terminou: ele parou antes. `CONCLUIDO` com
+    # lacuna cheia e custo zero é a mesma mentira tranquila que
+    # `LIMITE_DE_RONDAS` existe para não contar — só que sobre dinheiro, onde
+    # ela é mais cara.
+    #
+    # Quem o atribui NÃO é o motor: o teto por requisição vive no cliente
+    # (`agent/teto.py`), que `execute()` por desenho não inspeciona. Quem sabe
+    # é a borda que o construiu — ver `api/app.py::_executar`.
+    LIMITE_DE_CUSTO = "limite_de_custo"
     CONCLUIDO = "concluido"
     FALHOU = "falhou"
     CANCELADO = "cancelado"

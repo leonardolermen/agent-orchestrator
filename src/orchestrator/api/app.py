@@ -53,6 +53,7 @@ há chave. Desarmar a tranca é ato explícito, e só acontece nesse ponto.
 
 import os
 from collections import Counter
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
@@ -746,6 +747,29 @@ def _executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
     # que um corpo estruturado que finge saber o que houve.
     try:
         run = execute(definicao, pool, input_ref=ref, bus=bus, model=modelo)
+        # O teto DESTA requisição recusou alguma chamada? Uma pergunta, um
+        # lugar, uma variável — e é ela que alimenta o `estado` E o campo
+        # `teto_atingido` da resposta. Dois cálculos para a mesma pergunta são
+        # dois cálculos que divergem, e o sintoma seria uma resposta em que os
+        # dois campos se contradizem.
+        parou_no_teto = cliente is not None and cliente.recusas > 0
+        if parou_no_teto:
+            # O MOTOR não tem como saber disto: o teto por requisição vive no
+            # cliente, e `execute()` por desenho não inspeciona cliente nenhum —
+            # da janela dele, todo item foi processado e o run CONCLUIU. Da
+            # janela de quem impôs o teto, o run parou antes de trabalhar.
+            #
+            # A correção é feita no `Run`, ANTES de persistir, e não só na
+            # projeção. Corrigir só a projeção deixaria `/runs` dizendo
+            # `limite_de_custo` e `/api/runs` dizendo `concluido` sobre a MESMA
+            # execução — duas verdades sobre um fato, que é o defeito que este
+            # próprio campo existe para não cometer.
+            #
+            # Vence `AGUARDANDO_HUMANO` quando os dois se aplicam, pela mesma
+            # precedência que o motor já usa para `LIMITE_DE_RONDAS`: o teto é
+            # POR QUE existe lacuna, e mandar o operador para a fila de revisão
+            # esconderia a causa atrás do sintoma.
+            run = replace(run, state=RunState.LIMITE_DE_CUSTO)
         # O run vai para o store ANTES de qualquer projeção para JSON: o que a
         # tela mostra é derivado, o que o store guarda é o fato.
         _run_store().save(run)
@@ -865,16 +889,18 @@ def _executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
         # uma queda de rede não pode derrubar um fechamento por causa de um
         # item — mas o RUN precisa dizer o que de fato aconteceu com ele.
         #
-        # Os três números são CONTADOS, cada um na sua origem, e nenhum é
-        # derivado dos outros: `estado` vem do motor, `propostas`/`falhas` do
-        # que o motor devolveu, `teto_atingido` do embrulho que recusou. Uma
-        # subtração entre eles seria o join frágil de sempre.
+        # Os números são CONTADOS, cada um na sua origem, e nenhum é derivado
+        # dos outros: `estado` sai do `Run` PERSISTIDO (o mesmo objeto que
+        # `/api/runs` devolve, então os dois não podem discordar),
+        # `propostas_por_tipo`/`falhas` do que o motor devolveu, e
+        # `teto_atingido` da MESMA variável que corrigiu o estado. Uma subtração
+        # entre eles seria o join frágil de sempre.
         estado=run.state.value,
         propostas_por_tipo=Counter(p.tipo for p in run.proposals),
         falhas=sum(
             1 for p in run.proposals if any(e.kind is TraceKind.ERRO for e in p.trace)
         ),
-        teto_atingido=cliente is not None and cliente.recusas > 0,
+        teto_atingido=parou_no_teto,
         contra_gabarito=medido,
     )
 

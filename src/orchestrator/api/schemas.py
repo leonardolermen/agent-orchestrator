@@ -178,10 +178,12 @@ class RunJSON(BaseModel):
     custo_microcents: int
     # O ESTADO do run, de `RunState`. Já existia no `Run` e em `/api/runs`, e
     # não existia aqui: a resposta do POST — a que a tela lê — não dizia se o
-    # run terminou, parou no teto de rondas ou está esperando gente.
+    # run terminou, parou num teto ou está esperando gente.
     #
     # Um run que PAROU não pode ser lido como um que terminou, e num endpoint
-    # que gasta essa diferença é o que decide se vale tentar de novo.
+    # que gasta essa diferença é o que decide se vale tentar de novo. Um pedido
+    # com `teto_microcents: 0` sai como `limite_de_custo`, nunca `concluido`:
+    # ler o desfecho não pode exigir que o chamador cruze dois campos e deduza.
     estado: str
     # As PROPOSTAS, contadas por tipo. Um agente nunca resolve — `Agent.resolve`
     # só preenche `proposals`, por construção —, então numa cascata só de agente
