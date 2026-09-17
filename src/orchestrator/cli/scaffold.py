@@ -184,7 +184,7 @@ def ferramentas() -> ToolRegistry:
                 input_schema=tool_schema(
                     "contar_palavras", "", {"texto": {"type": "string"}}, ["texto"]
                 ),
-                fn=lambda texto: {"palavras": len(texto.split())},
+                fn=lambda _ctx, texto: {"palavras": len(texto.split())},
             )
         ]
     )

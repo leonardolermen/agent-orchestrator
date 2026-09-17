@@ -261,3 +261,44 @@ class AmbienteJSON(BaseModel):
     n: int
     n_max: int
     taxa_divergencia: float
+
+
+# ---------------------------------------------------------------------------
+# Domínios: o que a plataforma sabe fazer, e para que tipo de trabalho.
+#
+# É o que tira o catálogo da conciliação. Antes havia UMA lista de resolvers —
+# a de conciliação — e a tela não tinha como oferecer outra coisa. Agora a
+# pergunta que a tela faz primeiro é "que trabalho você quer orquestrar", e a
+# paleta segue dessa resposta.
+# ---------------------------------------------------------------------------
+
+
+class FerramentaJSON(BaseModel):
+    nome: str
+    descricao: str
+
+
+class AgenteDeclaradoJSON(BaseModel):
+    """Um agente como DADO. Tudo aqui é editável na tela.
+
+    O que NÃO está aqui: `units`, `parse` e `abstain`. Eles deixaram de ser
+    funções — viraram `kind`, `prompt`, `tipos` e `abstem_com`.
+    """
+
+    name: str
+    system: str
+    kind: str
+    prompt: str
+    tipos: list[str]
+    abstem_com: str
+    ferramentas: list[str]
+    max_turns: int
+    budget_microcents: int
+
+
+class DominioJSON(BaseModel):
+    id: str
+    nome: str
+    kinds: list[str]
+    ferramentas: list[FerramentaJSON]
+    agentes: list[AgenteDeclaradoJSON]

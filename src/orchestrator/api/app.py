@@ -29,9 +29,12 @@ from fastapi.staticfiles import StaticFiles
 
 from orchestrator.api.entrevista import conduzir
 from orchestrator.api.schemas import (
+    AgenteDeclaradoJSON,
     AmbienteJSON,
     DecisaoRequest,
+    DominioJSON,
     EntradaCatalogoJSON,
+    FerramentaJSON,
     FilaJSON,
     GapJSON,
     ItemFilaJSON,
@@ -47,6 +50,7 @@ from orchestrator.api.schemas import (
     workflow_json,
 )
 from orchestrator.conciliacao import reconcile
+from orchestrator.domains.registro import DOMINIOS
 from orchestrator.grill.catalogo import CATALOGO, MODELO_INERTE
 from orchestrator.grill.receita import Receita, ResolverReceita, construir
 from orchestrator.grill.registro import gravar_receita, listar_receitas
@@ -121,6 +125,47 @@ def catalogo() -> list[EntradaCatalogoJSON]:
             modelo_padrao=e.modelo_padrao,
         )
         for e in sorted(CATALOGO.values(), key=lambda e: (e.cost_class, e.nome))
+    ]
+
+
+@app.get("/api/dominios", response_model=list[DominioJSON])
+def dominios() -> list[DominioJSON]:
+    """O que a plataforma sabe orquestrar, e com que blocos.
+
+    É a primeira pergunta da tela de composição. Antes ela não existia: a
+    paleta era o `CATALOGO` do grill, que é o cardápio da CONCILIAÇÃO, e por
+    isso o canvas só oferecia blocos de conciliação por seis meses de
+    desenvolvimento sem ninguém notar.
+
+    As ferramentas saem do CATÁLOGO do domínio — sem dados. Um registro ligado
+    a um `ToolContext` vazio listaria igual e executaria devolvendo nada, que é
+    a falha silenciosa que `ToolRegistry.ligado` agora torna impossível.
+    """
+    return [
+        DominioJSON(
+            id=d.id,
+            nome=d.nome,
+            kinds=list(d.kinds),
+            ferramentas=[
+                FerramentaJSON(nome=n, descricao=d.ferramentas.spec(n).description)
+                for n in d.ferramentas.names()
+            ],
+            agentes=[
+                AgenteDeclaradoJSON(
+                    name=a.name,
+                    system=a.system,
+                    kind=a.kind,
+                    prompt=a.prompt,
+                    tipos=list(a.tipos),
+                    abstem_com=a.abstem_com,
+                    ferramentas=list(a.ferramentas),
+                    max_turns=a.max_turns,
+                    budget_microcents=a.budget_microcents,
+                )
+                for a in d.agentes
+            ],
+        )
+        for d in DOMINIOS.values()
     ]
 
 

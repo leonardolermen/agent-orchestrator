@@ -116,13 +116,13 @@ class ToolContext:
 
 
 def _spec(
-    contexto: ToolContext,
     nome: str,
     descricao: str,
     props: dict[str, Any],
     obrigatorios: list[str],
 ) -> ToolSpec:
-    """Uma entrada do registro, com o método do contexto JÁ LIGADO.
+    """Uma entrada do registro. O contexto NÃO vem ligado: ele é injetado
+    pelo `ToolRegistry` na execução.
 
     `fn=getattr(contexto, nome)` é o que mata o join frágil: antes o despacho
     era `getattr(self.context, c.name)` cruzado com
@@ -139,14 +139,22 @@ def _spec(
         name=nome,
         description=descricao,
         input_schema=tool_schema(nome, descricao, props, obrigatorios),
-        fn=getattr(contexto, nome),
+        # `fn(contexto, **args)`: o contexto é injetado pelo `ToolRegistry` na
+        # EXECUÇÃO, não ligado aqui. Era `getattr(contexto, nome)`, e isso fazia
+        # o registro carregar dados — ver o comentário em `ToolSpec.fn`.
+        fn=lambda ctx, _n=nome, **kw: getattr(ctx, _n)(**kw),
         permission=ToolPermission.READ_ONLY,
     )
 
 
+def catalogo_de_ferramentas() -> ToolRegistry:
+    """As cinco ferramentas, SEM dados. Para listar, validar e montar schema."""
+    return ToolRegistry([_spec(*args) for args in _FERRAMENTAS])
+
+
 def registry_de(contexto: ToolContext) -> ToolRegistry:
-    """As cinco ferramentas do investigador de conciliação."""
-    return ToolRegistry([_spec(contexto, *args) for args in _FERRAMENTAS])
+    """As cinco ferramentas do investigador, ligadas a dados e executáveis."""
+    return catalogo_de_ferramentas().com_contexto(contexto)
 
 
 _FERRAMENTAS: list[tuple[str, str, dict[str, Any], list[str]]] = [

@@ -2710,3 +2710,60 @@ Duas saídas, e a escolha é de projeto:
 
 A (2) é mais limpa e mexe no `ToolRegistry`, que hoje tem oito chamadores. Fica
 para o próximo passo, decidida antes de escrita — não depois.
+
+### P6.117. RESOLVIDO o P6.116 — o contexto virou argumento de execução
+
+Das duas saídas, a escolhida foi a (2): `ToolSpec.fn` deixa de vir ligado por
+closure e passa a receber o contexto como **primeiro argumento**, injetado pelo
+`ToolRegistry` na execução.
+
+Antes: `fn=getattr(contexto, nome)` — o registro carregava DADOS além de
+ferramentas. Agora: `fn=lambda ctx, **kw: getattr(ctx, nome)(**kw)`.
+
+**O ganho é uma distinção que não existia.** Um registro tem duas vidas:
+
+- **sem contexto** é CATÁLOGO — lista, valida declaração, monta schema, e
+  RECUSA executar;
+- **com contexto** (`com_contexto`) executa.
+
+Sem a separação, listar o catálogo de um domínio sem ter os dados produzia um
+registro que listava certo e executava devolvendo zero — e *"não achei nada"* é
+indistinguível de *"não procurei"*. Agora `call` num registro não ligado devolve
+erro dizendo exatamente isso.
+
+**A sentinela `_NAO_LIGADO`** separa "não preciso de dados" (`contexto=None`
+explícito, como o `swe`) de "esqueci de ligar". Sem ela os dois seriam o mesmo,
+e o segundo executaria em silêncio.
+
+**Assinatura uniforme**, inclusive nas ferramentas que ignoram o contexto:
+assinatura variável exigiria introspecção para saber o que passar, e é esse
+padrão que já deu um defeito silencioso no `_construir_definicao` da API. Mesma
+decisão que `EntradaCatalogo.construir` tomou, pela mesma razão.
+
+Oito chamadores atualizados; 792 testes verdes antes de prosseguir.
+
+### P6.118. Os três domínios se declaram, e um quarto não precisa de código
+
+`domains/registro.py` declara `conciliacao`, `swe` e `procurement` — cada um com
+seus `kinds`, seu catálogo de ferramentas e seus agentes DECLARADOS.
+
+    conciliacao   kinds=[lancamento]             5 ferramentas   agente investigador
+    swe           kinds=[issue]                  1 ferramenta    agente triador
+    procurement   kinds=[requisicao,fornecedor]  0 ferramentas   agente buscador
+
+`procurement` com zero ferramentas é honesto: o domínio é esqueleto, e um
+registro vazio DIZ isso. Inventar ferramentas para preencher a tela seria pior
+que a lacuna.
+
+**O teste que carrega o peso** é `test_um_dominio_NOVO_nao_precisa_de_codigo_de_
+agente`: ele declara um domínio de triagem de chamados — kinds, prompt,
+vocabulário, rótulo de abstenção — e constrói um agente funcional sem escrever
+uma função. Se isso exigisse Python, o catálogo voltaria a ser um cardápio de
+coisas prontas.
+
+E `test_cada_dominio_tem_KIND_proprio` transforma em verificação o que era
+convenção: dois domínios disputando o mesmo `kind` quebram o teste, porque aí a
+guarda contra misturar cascatas deixaria de valer.
+
+`GET /api/dominios` expõe tudo isso. Era a pergunta que a tela nunca fazia — e
+por não fazer, ofereceu blocos de conciliação o tempo inteiro.
