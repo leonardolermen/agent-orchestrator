@@ -30,6 +30,7 @@ torna isso verificável em vez de convenção.
 """
 
 from dataclasses import dataclass
+from typing import NoReturn
 
 from orchestrator.agent.declarado import (
     AgenteDeclarado,
@@ -51,8 +52,6 @@ from orchestrator.kernel.cost import CostClass
 from orchestrator.matching.exact import ExactMatcher
 from orchestrator.matching.grouping import GroupingMatcher
 from orchestrator.matching.tolerance import ToleranceMatcher
-from orchestrator.review.fila import Fila
-from orchestrator.review.revisor import RevisorHumano
 
 
 @dataclass(frozen=True)
@@ -249,13 +248,19 @@ PROCUREMENT = Dominio(
         RegraDisponivel(
             nome="preferido",
             cost_class=CostClass.REGRA,
-            resumo="fornecedor preferido que atende o item",
+            # Igual a `FornecedorPreferido.describe().summary`, verbatim — ver
+            # `test_resumo_da_REGRA_bate_com_o_describe_do_resolver`. Achado
+            # revisando a Task 3: as duas frases tinham divergido (nenhum
+            # teste comparava as duas antes dela restaurar a guarda).
+            resumo="fornecedor preferido",
             construir=lambda p: FornecedorPreferido(),
         ),
         RegraDisponivel(
             nome="anteriores",
             cost_class=CostClass.REGRA,
-            resumo="qualquer fornecedor que já atendeu este item antes",
+            # Igual a `ComprasAnteriores.describe().summary`, verbatim —
+            # mesmo motivo da entrada acima.
+            resumo="compras anteriores",
             construir=lambda p: ComprasAnteriores(),
         ),
     ),
@@ -321,12 +326,44 @@ def _todas_as_ferramentas() -> ToolRegistry:
     return junto
 
 
+def _revisor_precisa_da_fila(parametros: dict[str, int]) -> NoReturn:
+    """`revisor` não constrói por esta via — e é ERRO, não decoração.
+
+    `RegraDisponivel.construir` tem assinatura uniforme `(parametros) ->
+    Resolver` (ver o docstring da classe), sem onde receber a fila REAL de
+    decisões já tomadas. Um `RevisorHumano(fila=Fila.vazia())` aqui
+    CONSTRUIRIA — pareceria funcionar, a cascata ficaria "desenhável" — e
+    decisões aprovadas nunca chegariam à execução, sem nada avisar: o
+    fallback silencioso que o spec proíbe, só que plausível. Achado revisando
+    a Task 3 (`docs/superpowers/sdd/2026-09-17-quadro-em-branco/`): o único
+    motivo de ele não ter mordido ainda é `grill.receita.construir` desviar
+    deste `construir` olhando `cost_class`. Um segundo consumidor que não
+    soubesse disso — `construir_composicao`, por exemplo — receberia fila
+    vazia em silêncio.
+
+    Quem compõe uma cascata com um bloco `CostClass.HUMANO` precisa
+    reconhecer a classe e montar o resolver direto, com a fila de verdade —
+    exatamente como `grill.receita.construir` faz.
+    """
+    raise ValueError(
+        "'revisor' não pode ser construído por RegraDisponivel.construir: "
+        "esse degrau depende da fila REAL de decisões, que a assinatura "
+        "(parametros) -> Resolver não tem como receber. Quem compõe precisa "
+        "reconhecer cost_class is CostClass.HUMANO e montar "
+        "RevisorHumano(fila=...) direto, com a fila de verdade — nunca "
+        "chamar este `construir`"
+    )
+
+
 # O revisor: o degrau HUMANO que fecha a cascata. Ver o docstring de `Catalogo`.
 _REVISOR = RegraDisponivel(
     nome="revisor",
     cost_class=CostClass.HUMANO,
-    resumo="a decisão humana que fecha a cascata",
-    construir=lambda p: RevisorHumano(fila=Fila.vazia()),
+    # Igual a `RevisorHumano.describe().summary`, verbatim — ver
+    # `test_resumo_da_REGRA_bate_com_o_describe_do_resolver`. Mesma classe de
+    # drift que `preferido`/`anteriores`, achada pela mesma guarda restaurada.
+    resumo="aplica as decisões aprovadas na fila de revisão",
+    construir=_revisor_precisa_da_fila,
 )
 
 CATALOGO = Catalogo(

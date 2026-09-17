@@ -15,6 +15,7 @@ from orchestrator.agent.llm import LLMClient
 from orchestrator.conciliacao.ferramentas import ToolContext
 from orchestrator.domains.registro import CATALOGO
 from orchestrator.grill.catalogo import ClienteAusente
+from orchestrator.kernel.cost import CostClass
 from orchestrator.kernel.definition import Stage, WorkflowDefinition
 from orchestrator.review.fila import Fila
 from orchestrator.review.revisor import RevisorHumano
@@ -146,18 +147,22 @@ def construir(
                     f"parâmetro desconhecido para {item.nome!r}: {desconhecidos}. "
                     f"aceitos: {sorted(conhecidos)}"
                 )
-            if entrada.nome == "revisor":
-                # O único bloco HUMANO do catálogo plano, e o único cujo
-                # comportamento depende de algo que não é parâmetro: a fila de
-                # decisões já tomadas. `RegraDisponivel.construir` tem
-                # assinatura UNIFORME `(parametros) -> Resolver` (Task 1, sem
-                # `fila`/`cliente`/`context`) — de propósito, para não abrir
-                # uma segunda via de configuração por fora dos parâmetros. É
-                # por isso que o degrau humano é montado aqui, direto, e não
-                # via `entrada.construir`: sem este desvio, `fila` — que
-                # `workflows.py` liga ao contexto real de revisão — chegaria
-                # até aqui e morreria sem efeito, e toda receita gerada pelo
-                # chat reviraria sempre uma fila vazia.
+            if entrada.cost_class is CostClass.HUMANO:
+                # A CLASSE, não a grafia do nome: um bloco HUMANO depende de
+                # algo que não é parâmetro — a fila de decisões já tomadas —,
+                # e `RegraDisponivel.construir` tem assinatura UNIFORME
+                # `(parametros) -> Resolver` (Task 1, sem `fila`/`cliente`/
+                # `context`), de propósito, para não abrir uma segunda via de
+                # configuração por fora dos parâmetros. Por isso
+                # `entrada.construir` de um bloco HUMANO não é chamado aqui —
+                # a entrada `revisor` do catálogo plano levanta se for
+                # (`domains.registro._revisor_precisa_da_fila`), de propósito:
+                # sem este desvio, `fila` — que `workflows.py` liga ao
+                # contexto real de revisão — chegaria até aqui e morreria sem
+                # efeito, e toda receita gerada pelo chat reviraria sempre uma
+                # fila vazia, sem erro nenhum avisando. Ramificar por CLASSE
+                # (não por `nome == "revisor"`) cobre o próximo bloco HUMANO
+                # que aparecer no catálogo, não só este.
                 resolvers.append(RevisorHumano(fila=fila))
             else:
                 resolvers.append(entrada.construir(dict(item.parametros)))

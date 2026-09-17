@@ -201,3 +201,47 @@ def test_bloco_acha_por_nome_em_qualquer_das_duas_listas():
     assert CATALOGO.bloco("L1") is not None
     assert CATALOGO.bloco("triador") is not None
     assert CATALOGO.bloco("nao_existe") is None
+
+
+def test_toda_REGRA_do_catalogo_CONSTROI_com_a_classe_declarada():
+    """A propriedade central de `grill/ferramentas.py::_nomes_disponiveis`
+    (Task 3): o enum que o chat oferece sai deste catálogo, então tudo que é
+    proponível como REGRA precisa construir de verdade — `for` sobre
+    `CATALOGO.regras`, não exemplo, para que uma regra nova entre coberta sem
+    ninguém lembrar de acrescentar um caso aqui.
+
+    `revisor` (a única REGRA de classe HUMANO) é a exceção deliberada: ele
+    RECUSA construir por este caminho — ver `_revisor_precisa_da_fila` em
+    `domains/registro.py`. Antes desta fatia ele "construía" devolvendo
+    `RevisorHumano(fila=Fila.vazia())`, o que parecia funcionar e escondia
+    que a fila real nunca chegava — o fallback silencioso que o spec proíbe,
+    só que plausível. A expectativa agora é que ele LEVANTE, não que seja
+    pulado sem sintoma.
+    """
+    for r in CATALOGO.regras:
+        if r.cost_class is CostClass.HUMANO:
+            with pytest.raises(ValueError, match="fila"):
+                r.construir({})
+            continue
+        resolver = r.construir({})
+        assert resolver.cost_class is r.cost_class, r.nome
+
+
+def test_resumo_da_REGRA_bate_com_o_describe_do_resolver():
+    """Duas fontes de verdade para a mesma frase divergiriam na primeira
+    mudança. Isso importava pouco quando só a tela lia `resumo`; agora é
+    literalmente o texto que `grill/ferramentas.py::_catalogo_em_texto` serve
+    ao MODELO — um resumo desatualizado é uma instrução errada no prompt.
+    """
+    from orchestrator.review.fila import Fila
+    from orchestrator.review.revisor import RevisorHumano
+
+    for r in CATALOGO.regras:
+        if r.cost_class is CostClass.HUMANO:
+            # `revisor` não constrói por `r.construir` (teste acima); o
+            # resolver de verdade é montado como quem compõe faz — com uma
+            # fila de verdade, que `describe()` nem olha.
+            resolver = RevisorHumano(fila=Fila.vazia())
+        else:
+            resolver = r.construir({})
+        assert resolver.describe().summary == r.resumo, r.nome
