@@ -54,12 +54,22 @@ class ArquivoSource:
     raiz: Path
     max_linhas: int = MAX_LINHAS_PADRAO
     max_bytes: int = MAX_BYTES_PADRAO
-    _resolvido: Path = field(init=False, repr=False)
+    # `compare=False` nos dois campos derivados: um dataclass `frozen=True`
+    # promete hash estável, e os dois participariam do `__eq__`/`__hash__`
+    # gerados por padrão. `_conteudo` é populado PREGUIÇOSAMENTE por `.ref` —
+    # sem `compare=False`, o mesmo objeto hasheia diferente antes e depois de
+    # `.ref` ser lido, e some silenciosamente de um `set` do qual já era
+    # membro. `_resolvido` não tem esse problema (é determinístico a partir
+    # de `caminho`/`raiz`), mas um valor DERIVADO não tem por que participar
+    # de identidade de qualquer forma.
+    _resolvido: Path = field(init=False, repr=False, compare=False)
     # `None` até a primeira leitura. Fica de fora do `__post_init__` de
     # propósito: construir um `ArquivoSource` não deve tocar o disco, e o
     # teto de bytes (abaixo, em `_bytes()`) precisa poder recusar ANTES de
     # qualquer leitura acontecer.
-    _conteudo: bytes | None = field(init=False, repr=False, default=None)
+    _conteudo: bytes | None = field(
+        init=False, repr=False, compare=False, default=None
+    )
 
     def __post_init__(self) -> None:
         raiz = self.raiz.resolve()
@@ -162,14 +172,25 @@ class ArquivoSource:
                 f"linha {i} de {self.caminho.name} está truncada: falta o "
                 f"valor de {self.campo_id!r} (linha mais curta que o cabeçalho)"
             )
-        if valor == "":
-            # Vazio não identifica nada — mesmo espírito do `WorkItem` que já
-            # recusa id vazio, dito aqui com o número da linha. Comparação por
-            # `== ""`, nunca `not valor`: um id JSON `0` ou `False` é legítimo,
-            # e um teste genérico de "falsy" rejeitaria os dois à toa.
+        if isinstance(valor, str) and valor.strip() == "":
+            # Vazio OU só espaço — mesma classe de "None" fabricado: algo com
+            # a FORMA de um dado que não identifica nada, e que atravessa
+            # CSV/JSON invisível a olho nu. `WorkItem` já recusa id vazio
+            # sozinho, mas não sabe de qual arquivo ou linha veio — é isso
+            # que esta guarda diz e o `WorkItem` não pode.
+            #
+            # `valor.strip() == ""` decide se RECUSA; o valor aceito nunca é
+            # `.strip()`-ado. Normalizar " a " para "a" em silêncio seria o
+            # mesmo defeito de transformação silenciosa que criava o id
+            # "None" fabricado, só que na direção de aceitar — cortar espaço
+            # de um id real é tão errado quanto fabricar um id falso.
+            #
+            # `isinstance(valor, str)`: só string tem noção de "espaço". Um id
+            # JSON `0` ou `False` não entra aqui — nem deveria, os dois são
+            # ids legítimos.
             raise ValueError(
-                f"linha {i} de {self.caminho.name} tem {self.campo_id!r} vazio "
-                f"— string vazia não identifica um item"
+                f"linha {i} de {self.caminho.name} tem {self.campo_id!r} em "
+                f"branco (vazio ou só espaço) — isso não identifica um item"
             )
         return WorkItem(id=str(valor), kind=self.kind, payload=linha)
 

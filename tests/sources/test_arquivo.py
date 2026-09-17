@@ -183,20 +183,53 @@ def test_linha_csv_com_campos_extras_e_recusada_sem_TypeError(tmp_path):
 
 
 def test_id_vazio_e_recusado(tmp_path):
-    """String vazia não identifica nada — mesmo espírito do `WorkItem`, que já
-    recusa id vazio, mas aqui com o número da linha."""
+    """`WorkItem` já recusa id vazio sozinho — mas com uma mensagem genérica
+    que não sabe de qual ARQUIVO ou LINHA veio. É isso que esta guarda diz e
+    o `WorkItem` não pode, e é isso que o teste precisa cobrar: se checasse só
+    a palavra "vazio"/"branco", apagar a guarda inteira ainda deixaria o teste
+    verde, por tabela, via a mensagem genérica do `WorkItem`."""
     raiz = _raiz(tmp_path)
     (raiz / "x.csv").write_text("id,x\n,um\n", encoding="utf-8")
 
     fonte = ArquivoSource(caminho=raiz / "x.csv", kind="k", campo_id="id", raiz=raiz)
 
-    with pytest.raises(ValueError, match="vazio"):
+    with pytest.raises(ValueError, match=r"linha 1 de x\.csv") as excinfo:
         fonte.load()
+    assert "branco" in str(excinfo.value)
+
+
+def test_id_so_espaco_e_recusado(tmp_path):
+    """Espaço-only é da mesma classe que vazio: tem a FORMA de um dado, não
+    identifica nada, e atravessaria CSV/JSON invisível a olho nu."""
+    raiz = _raiz(tmp_path)
+    (raiz / "x.csv").write_text("id,x\n   ,um\n", encoding="utf-8")
+
+    fonte = ArquivoSource(caminho=raiz / "x.csv", kind="k", campo_id="id", raiz=raiz)
+
+    with pytest.raises(ValueError, match=r"linha 1 de x\.csv") as excinfo:
+        fonte.load()
+    assert "branco" in str(excinfo.value)
+
+
+def test_id_com_espaco_significativo_e_preservado_byte_a_byte(tmp_path):
+    """Recusar espaço-only não pode virar `.strip()` no caminho de aceitar —
+    normalizar `" a "` para `"a"` em silêncio seria o mesmo defeito de
+    transformação silenciosa que fabricava o id `"None"`, só que na direção
+    de aceitar."""
+    raiz = _raiz(tmp_path)
+    (raiz / "x.csv").write_text("id,x\n a ,um\n", encoding="utf-8")
+
+    pool = ArquivoSource(
+        caminho=raiz / "x.csv", kind="k", campo_id="id", raiz=raiz
+    ).load()
+
+    assert pool.items[0].id == " a "
 
 
 def test_id_falsy_como_zero_e_aceito(tmp_path):
-    """`0` é um id legítimo — a guarda testa `valor == ""`, nunca `not valor`,
-    ou um id falsy qualquer (0, False) seria rejeitado à toa."""
+    """`0` é um id legítimo — a guarda só olha string (`isinstance(valor, str)
+    and valor.strip() == ""`), nunca `not valor`, ou um id falsy qualquer (0,
+    False) seria rejeitado à toa."""
     raiz = _raiz(tmp_path)
     (raiz / "x.json").write_text(
         json.dumps([{"id": 0, "x": "um"}]), encoding="utf-8"
@@ -264,3 +297,20 @@ def test_teto_de_bytes_recusa_com_motivo(tmp_path):
 
     with pytest.raises(ValueError, match="bytes"):
         _ = fonte.ref
+
+
+def test_hash_nao_muda_apos_ler_ref(tmp_path):
+    """`ArquivoSource` é `frozen=True`: o contrato de um dataclass congelado é
+    hash estável pela vida do objeto. `_conteudo` é populado PREGUIÇOSAMENTE
+    por `.ref` — sem `compare=False` nele, o mesmo objeto hasheia diferente
+    antes e depois de `.ref` ser lido, e some silenciosamente de um `set` do
+    qual já era membro."""
+    raiz = _raiz(tmp_path)
+    (raiz / "a.csv").write_text("id,x\n1,um\n", encoding="utf-8")
+    fonte = ArquivoSource(caminho=raiz / "a.csv", kind="k", campo_id="id", raiz=raiz)
+
+    antes = hash(fonte)
+    _ = fonte.ref
+    depois = hash(fonte)
+
+    assert antes == depois
