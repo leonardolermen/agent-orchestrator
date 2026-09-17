@@ -371,7 +371,8 @@ def executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
         # entrar em `_executar`, nem para virar um run persistido de um
         # workflow que não existe.
         raise HTTPException(status_code=404, detail=f"workflow desconhecido: {workflow_id}")
-    return _executar(workflow_id, pedido.seed, pedido.n, pedido.taxa_divergencia)
+    f = pedido.fonte
+    return _executar(workflow_id, f.seed, f.n, f.taxa_divergencia)
 
 
 def _executar(workflow_id: str, seed: int, n: int, taxa: float) -> RunJSON:

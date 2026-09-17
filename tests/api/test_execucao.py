@@ -192,3 +192,54 @@ def test_resolver_com_layer_diferente_do_name_e_reportado_pelo_proprio_nome(monk
 
     soma = sum(r["rate"] for r in corpo["by_resolver"]) + corpo["gap"]["rate"]
     assert soma == pytest.approx(1.0)
+
+
+def test_pedido_SEM_fonte_continua_valendo():
+    """A compatibilidade que mantém o canvas, a CLI do grill e os testes de
+    hoje sem edição. O default é a sintética com os mesmos números."""
+    from orchestrator.api.schemas import RunRequest
+
+    r = RunRequest()
+
+    assert r.fonte.tipo == "sintetica"
+    assert (r.fonte.seed, r.fonte.n, r.fonte.taxa_divergencia) == (1, 300, 0.15)
+    assert r.teto_microcents is None
+
+
+def test_a_fonte_e_uma_UNIAO_DISCRIMINADA_por_tipo():
+    """Um objeto com `seed?` ao lado de `caminho?` aceitaria os cruzamentos que
+    não significam nada — uma fonte sintética com caminho, um arquivo com
+    semente. `tipo` é o que torna os quatro cruzamentos dois."""
+    from orchestrator.api.schemas import RunRequest
+
+    r = RunRequest.model_validate(
+        {"fonte": {"tipo": "arquivo", "caminho": "issues.csv",
+                   "kind": "issue", "campo_id": "numero"}}
+    )
+
+    assert r.fonte.tipo == "arquivo"
+    assert r.fonte.caminho == "issues.csv"
+    assert not hasattr(r.fonte, "seed")
+
+
+def test_fonte_de_arquivo_EXIGE_kind_e_campo_id():
+    """Nenhum dos dois é inferível. `kind` é o que liga um degrau ao outro no
+    grafo, e `campo_id` é o que dá identidade ao item — adivinhar qualquer um
+    seria conveniência com cara de defeito."""
+    import pydantic
+
+    from orchestrator.api.schemas import RunRequest
+
+    with pytest.raises(pydantic.ValidationError):
+        RunRequest.model_validate({"fonte": {"tipo": "arquivo", "caminho": "x.csv"}})
+
+
+def test_teto_negativo_e_recusado_pelo_SCHEMA():
+    """Fora do handler, como `taxa_divergencia` já é: o FastAPI devolve 422
+    sozinho em vez de deixar a aritmética de orçamento levantar mais fundo."""
+    import pydantic
+
+    from orchestrator.api.schemas import RunRequest
+
+    with pytest.raises(pydantic.ValidationError):
+        RunRequest(teto_microcents=-1)

@@ -40,17 +40,50 @@ class WorkflowResumoJSON(BaseModel):
     executavel: bool
 
 
-class RunRequest(BaseModel):
-    """O pedido de execução do benchmark sintético.
+class FonteSintetica(BaseModel):
+    """O benchmark sintético, agora como UMA fonte entre outras.
 
-    Os limites de `Field` são o que faz o FastAPI devolver 422 sozinho para
-    uma `taxa_divergencia` fora de [0, 1] — em vez de deixar `build_benchmark`
-    levantar `ValueError` e a rota devolver 500.
+    Os três campos eram o corpo inteiro de `RunRequest` — e era essa a forma
+    de dizer "toda execução é um benchmark". Deixaram de ser o pedido e
+    viraram os parâmetros de uma origem específica.
     """
 
+    tipo: Literal["sintetica"] = "sintetica"
     seed: int = Field(default=1, ge=0)
     n: int = Field(default=300, ge=1, le=5000)
     taxa_divergencia: float = Field(default=0.15, ge=0.0, le=1.0)
+
+
+class FonteArquivo(BaseModel):
+    """Um arquivo do usuário — CSV ou JSON — como pool de trabalho.
+
+    `kind` e `campo_id` são OBRIGATÓRIOS e não têm default, porque não existe
+    coluna que diga o que um item é nem qual campo o identifica. Inferir do
+    nome do arquivo ou da primeira coluna seria adivinhação, e o `kind` é o que
+    liga um degrau ao outro no grafo.
+    """
+
+    tipo: Literal["arquivo"]
+    caminho: str
+    kind: str
+    campo_id: str
+
+
+class RunRequest(BaseModel):
+    """O pedido de execução.
+
+    `fonte` com default mantém todo chamador de hoje funcionando sem edição: um
+    corpo vazio continua sendo o benchmark sintético com os mesmos números.
+    """
+
+    fonte: FonteSintetica | FonteArquivo = Field(
+        default_factory=FonteSintetica, discriminator="tipo"
+    )
+    # Teto da EXECUÇÃO inteira, em micro-centavos. `None` = o teto do próprio
+    # agente (`AgentSpec.budget_total_microcents`). NÃO existe valor que
+    # signifique "sem teto", e a ausência dele é deliberada: um agente sem teto
+    # é um agente que gasta até o fim da fila.
+    teto_microcents: int | None = Field(default=None, ge=0)
 
 
 class ResolverRunJSON(BaseModel):
