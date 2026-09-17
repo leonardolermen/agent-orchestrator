@@ -263,8 +263,16 @@ def test_o_stage_seguinte_ve_o_que_o_anterior_produziu():
         id="pipeline",
         name="dois passos",
         stages=(
-            Stage(name="um", cascade=(Transformador("um", "a", "b"),)),
-            Stage(name="dois", cascade=(Transformador("dois", "b", "c"),)),
+            Stage(
+                name="um",
+                cascade=(Transformador("um", "a", "b"),),
+                produz=frozenset({"b"}),
+            ),
+            Stage(
+                name="dois",
+                cascade=(Transformador("dois", "b", "c"),),
+                produz=frozenset({"c"}),
+            ),
         ),
     )
     pool = WorkSet(items=(WorkItem(id="i", kind="a", payload="x"),))
@@ -285,7 +293,13 @@ def test_producao_nao_apaga_a_resolucao_que_a_acompanha():
     d = WorkflowDefinition(
         id="um",
         name="um passo",
-        stages=(Stage(name="um", cascade=(Transformador("um", "a", "b"),)),),
+        stages=(
+            Stage(
+                name="um",
+                cascade=(Transformador("um", "a", "b"),),
+                produz=frozenset({"b"}),
+            ),
+        ),
     )
     pool = WorkSet(items=(WorkItem(id="i", kind="a", payload="x"),))
 
@@ -476,7 +490,15 @@ def test_consome_vazio_continua_vendo_o_pool_inteiro():
     d = WorkflowDefinition(
         id="tudo",
         name="tudo",
-        stages=(Stage(name="um", cascade=(Transformador("um", "a", "b"),)),),
+        # `consome` fica vazio DE PROPOSITO — e o que este teste prova.
+        # `produz` e declarado porque a guarda do motor e incondicional.
+        stages=(
+            Stage(
+                name="um",
+                cascade=(Transformador("um", "a", "b"),),
+                produz=frozenset({"b"}),
+            ),
+        ),
     )
     pool = WorkSet(
         items=(
@@ -618,7 +640,12 @@ Em `src/orchestrator/runtime/engine.py`, dentro do laço `for stage in definicao
             reservados = tuple(i for i in work.items if i.kind not in stage.consome)
         else:
             visivel, reservados = work, ()
-        if not visivel.items:
+        # `stage.consome and ...`: sem `consome` declarado o degrau roda mesmo
+        # com pool vazio, que é a semântica anterior a esta fatia. Três testes
+        # entre os 844 (`tests/matching/test_engine.py`) chamam
+        # `reconcile([], [], ...)` só para observar a ORDEM de chamada dos
+        # resolvers, e um gate incondicional pularia a cascata inteira.
+        if stage.consome and not visivel.items:
             # Ramo sem trabalho: o degrau não roda, e isso é a condicional.
             emitir(EventKind.STAGE_CONCLUIDO, stage=stage.name, rodou=False)
             continue
