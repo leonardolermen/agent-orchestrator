@@ -2204,3 +2204,74 @@ O caso que motivou: empate com n=5 dizia "indica direção", que se lê como
 "provavelmente não há diferença". Agora diz **"não é evidência de equivalência:
 é ausência de diferença DETECTÁVEL neste tamanho"** — que é o que estava
 acontecendo e o que eu não li.
+
+## P6.93. A matriz de confusão: o erro está TODO num lugar
+
+O estrato adversarial dava 80%. A taxa não dizia onde. A matriz diz:
+
+    esperado \ disse    BUG   DUVIDA  FEATURE
+    BUG                   7        ·        ·
+    DUVIDA                ·        6        ·
+    FEATURE               3        1        3
+
+**BUG: 7 de 7. DUVIDA: 6 de 6. FEATURE: 3 de 7.** Cem por cento dos erros do
+conjunto adversarial estão numa linha só — e nos mesmos quatro casos nos dois
+braços: I-28, I-29, I-30, I-33.
+
+Todos os quatro são a mesma construção: **reclamação que é pedido de
+funcionalidade**. *"A busca é inutilizável"*, *"perdi meia hora procurando"*,
+*"ter que reimportar tudo é absurdo"*, *"não existe jeito de exportar só o
+filtrado?"*. O modelo lê o tom de insatisfação e responde BUG.
+
+Diagnóstico limpo: não é limite geral do modelo (ele acerta 13 de 13 nas outras
+duas linhas), é uma construção linguística específica.
+
+### E a matriz também põe em dúvida o MEU gabarito
+
+Sendo honesto sobre o que ela revela: **eu escrevi esses rótulos.**
+
+- I-29 — *"perdi meia hora procurando onde muda o CNPJ"*. Eu rotulei FEATURE
+  (falta um lugar óbvio). Alguém rotularia BUG (está escondido onde não
+  deveria). As duas leituras são defensáveis.
+- I-30 — *"reimportar tudo por causa de uma linha errada é absurdo"*. Rotulei
+  FEATURE (import parcial). BUG (o import não deveria falhar inteiro) também
+  cabe.
+
+Ou seja: o estrato onde o agente erra é o mesmo em que **o gabarito é mais
+discutível**. Isso não invalida a medição — invalida a leitura preguiçosa dela
+("o modelo é ruim em FEATURE"). A leitura honesta é: *há um conjunto de casos
+cuja classificação é genuinamente ambígua, e nem eu nem o modelo temos
+autoridade sobre ela.*
+
+**É exatamente o viés de autor que o P6.84 previu e que 50 casos não removem.**
+Quem remove é `Provenance.HUMANO` — casos colhidos de revisão real, pelo
+`harvest`, decididos por alguém que não escreveu o prompt.
+
+## P6.94. ENFRAQUECE P6.89 — o dano da ferramenta à precisão é ruído; o custo não é
+
+Segunda execução do mesmo par:
+
+    execução   com-ferramenta   sem-ferramenta   diferença
+    1ª              92,0%            98,0%        3 casos
+    2ª              92,0%            94,0%        1 caso
+
+    custo por acerto: 2,9x e 2,7x
+
+O custo é estável entre execuções; a diferença de precisão não é. O P6.89 disse
+que "a direção sobreviveu à correção" — sobreviveu a UMA correção e não a uma
+segunda execução.
+
+Leitura corrigida, separando o que é robusto do que não é:
+
+- **A ferramenta custa ~2,8x por acerto.** Robusto: duas execuções, dois eixos,
+  sempre a mesma ordem de grandeza. Isto decide.
+- **A ferramenta piora a precisão.** NÃO estabelecido. Um caso de diferença no
+  adversarial é 5 pontos, e o estrato tem 20 casos.
+
+A conclusão prática não muda (tirar a ferramenta), mas o motivo muda: é custo,
+não qualidade. E o motivo importa, porque custo se resolve tirando a ferramenta
+e qualidade se resolveria mexendo no prompt.
+
+**Terceira vez que uma segunda medição derruba uma leitura minha da primeira.**
+Está virando padrão, e o padrão tem nome: eu leio o número antes de perguntar
+quantas vezes ele se repetiu.
