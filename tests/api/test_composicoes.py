@@ -150,8 +150,16 @@ def test_um_agente_de_KIND_qualquer_e_ACEITO():
 
     `kind="lancamento"` num agente inventado era recusado com "não é do
     domínio", porque o pedido carregava um domínio e o catálogo era
-    particionado por ele. Não é mais: quem recusa kinds que não conectam é
-    `WorkflowDefinition.__post_init__`, sobre o grafo que vai rodar.
+    particionado por ele. A checagem saiu porque, com a tela sem seletor, toda
+    composição chegava com o domínio default e ela recusava todo kind que não
+    fosse `"lancamento"` — cascata válida barrada pelo motivo errado.
+
+    **O que este teste NÃO afirma:** que alguma outra guarda tomou o lugar. Para
+    uma composição desta rota, a do grafo está inerte — `construir_composicao`
+    devolve um stage com `consome`/`produz` no default e não os popula a partir
+    dos blocos. Um `kind` digitado errado é aceito aqui e só aparece na
+    execução, como um agente que não pega item nenhum. Ver o cabeçalho de
+    `authoring/composicao.py`: religar precisa do X7/X8 e da fiação lá.
     """
     r = cliente.post("/api/composicoes", json=_corpo([_agente(kind="lancamento")]))
 

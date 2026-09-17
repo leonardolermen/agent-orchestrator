@@ -21,12 +21,35 @@ caso particular em que todos os blocos já existem por nome.
    tem, agora no formato persistido.
 2. **Valida construindo.** Se `construir_composicao` retorna, a cascata roda.
 
-A terceira garantia era "um domínio só": blocos cujos `WorkItem.kind` não
-conversam produzem uma cascata vazia de sentido, porque o segundo roda sobre um
-pool que o primeiro nem enxerga. Ela não sumiu — mudou de lugar e ficou mais
-forte. `Stage.consome`/`Stage.produz` declara a fiação POR DEGRAU e
-`WorkflowDefinition.__post_init__` recusa um grafo cujos kinds não conectam, o
-que valida o grafo que VAI RODAR em vez de uma partição de catálogo.
+**A terceira garantia era "um domínio só", e hoje ela NÃO TEM DONO aqui.
+Dito em voz alta porque a meia-verdade é pior que a lacuna.**
+
+Ela dizia: blocos cujos `WorkItem.kind` não conversam produzem uma cascata vazia
+de sentido, porque o segundo roda sobre um pool que o primeiro nem enxerga. A
+guarda antiga a fazia comparando o `kind` do agente com os `kinds` do domínio
+declarado na composição — e ela PRECISAVA sair. Com a tela sem seletor, toda
+composição chegava com o domínio default, e a checagem passou a recusar qualquer
+agente cujo kind não fosse `"lancamento"`: guarda certa aplicada ao pedido
+errado, recusando cascata válida.
+
+O lugar certo é o grafo — `Stage.consome`/`Stage.produz` declara a fiação POR
+DEGRAU, e o que se valida é o grafo que VAI RODAR, não uma partição de catálogo.
+Só que, para uma composição construída AQUI, essa guarda está **inerte**, por
+dois motivos que se somam:
+
+1. `construir_composicao` devolve UM stage com `consome`/`produz` nos defaults,
+   e `WorkflowDefinition.__post_init__` desliga a checagem de beco sem saída no
+   grafo inteiro assim que um único stage usa o default — o custo está dito em
+   voz alta em `kernel/definition.py`, e vale aqui;
+2. mesmo se rodasse, não acharia nada: esta função não POPULA `consome`/`produz`
+   a partir dos blocos, e a checagem de lá procura `produz` órfão — ela nunca
+   compara o `kind` de um agente com coisa nenhuma.
+
+Logo: um agente com `kind` digitado errado é aceito, e em execução simplesmente
+nunca pega item nenhum. Religar isso precisa das DUAS pontas — o X7/X8 (ensinar
+`AgenteDeclarado` a declarar o que PRODUZ) e a fiação aqui, derivando
+`consome`/`produz` dos blocos. Enquanto as duas não existirem, quem escreve um
+agente na tela é quem garante o `kind`.
 """
 
 import hashlib
@@ -164,9 +187,14 @@ def construir_composicao(
                 )
             resolvers.append(regra.construir(dict(bloco.parametros)))
         else:
-            # Sem checagem de `kind` contra uma lista de domínio: quem recusa
-            # kinds que não conectam é `WorkflowDefinition.__post_init__`, sobre
-            # o grafo que vai rodar. Ver o cabeçalho do módulo.
+            # Sem checagem de `kind`: a antiga comparava com os `kinds` do
+            # domínio e recusava cascata válida depois que a tela perdeu o
+            # seletor. O lugar certo é o grafo — mas para uma composição
+            # construída aqui ele está INERTE: um stage só, `consome`/`produz`
+            # no default, e esta função não os popula a partir dos blocos. Um
+            # `kind` errado passa e o agente não pega item nenhum na execução.
+            # Ver o cabeçalho do módulo: religar precisa do X7/X8 E da fiação
+            # aqui.
             resolvers.append(construir_agente(bloco.declaracao, cliente, ferramentas))
 
     return WorkflowDefinition(
