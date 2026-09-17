@@ -20,6 +20,30 @@ análise prévia tinha visto:
      pedido de compra não é uma divergência.
 
 Os dois foram achados na PRIMEIRA linha de código de domínio, não por leitura.
+
+**O quarto domínio, `redacao` (Task 8), achou um terceiro — não no kernel de
+execução, na camada de catálogo:**
+
+  3. `Dominio`/`AgenteDeclarado`, em `agent/declarado.py`, só sabe descrever
+     um resolver que JULGA um item e devolve `Proposal`/`Resolution` sobre
+     ELE MESMO. `redacao` é `Tarefa` (Task 7): cada degrau TRANSFORMA o item
+     num item de outro `kind`, para o próximo degrau consumir. Não existe
+     campo em `AgenteDeclarado` para "que `kind` isto produz" — e sem ele,
+     catalogar `redacao` em `domains/registro.py` exigiria mentir sobre o
+     que o domínio faz (declará-lo como `AgenteDeclarado` que nunca
+     transforma nada) ou registrá-lo vazio (sem regra nem agente, o que
+     `test_os_TRES_dominios_se_declaram` — fixo em três, sem editar —
+     corretamente recusa como item de catálogo sem conteúdo). `redacao` roda
+     de verdade (`domains/redacao/workflow.py`, três testes verdes) e
+     simplesmente NÃO entra em `DOMINIOS`; a nota em
+     `domains/registro.py` explica por quê. O kernel de execução (Tasks
+     1–7) não teve nenhum atrito — a `Tarefa`, o `Stage.consome/produz` e a
+     `entrega` bastaram sem alteração nenhuma. O atrito é uma camada acima:
+     o catálogo declarativo ainda descreve só a metade JULGA do mundo, não a
+     metade TRANSFORMA. Ensinar `AgenteDeclarado` a declarar `produz` é o
+     X7/X8 que o plano de execução-como-grafo já reservava para depois deste
+     domínio existir — este achado é a confirmação de que a reserva estava
+     certa, não uma surpresa.
 """
 
 from orchestrator.domains.procurement.workflow import (

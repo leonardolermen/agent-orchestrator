@@ -166,7 +166,11 @@ def _abstain(item_id, motivo, cost=None, trace=None):
 
 
 def ferramentas() -> ToolRegistry:
+    """`contexto=None` EXPLÍCITO: este domínio não precisa de dados para as
+    ferramentas dele, e dizer isso é diferente de esquecer de ligar."""
     return ToolRegistry(
+        contexto=None,
+        specs=
         [
             ToolSpec(
                 name="contar_palavras",
@@ -174,9 +178,12 @@ def ferramentas() -> ToolRegistry:
                 input_schema=tool_schema(
                     "contar_palavras", "", {"texto": {"type": "string"}}, ["texto"]
                 ),
-                fn=lambda texto: {"palavras": len(texto.split())},
+                # `fn(contexto, **args)` — assinatura uniforme. Esta ignora o
+                # contexto, e ignorar explicitamente é melhor que ter duas
+                # formas de ferramenta.
+                fn=lambda _ctx, texto: {"palavras": len(texto.split())},
             )
-        ]
+        ],
     )
 
 

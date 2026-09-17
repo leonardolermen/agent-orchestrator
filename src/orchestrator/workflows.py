@@ -17,10 +17,10 @@ corrigiu seis vezes em outros lugares.
 **A correção não é inspecionar melhor: é não precisar inspecionar.** Toda
 fábrica passa a ter a MESMA assinatura, `(WorkflowContext) -> WorkflowDefinition`,
 e quem não precisa do contexto simplesmente o ignora. A uniformidade é a mesma
-disciplina que `EntradaCatalogo.construir` já aplica no grill, e pelo mesmo
-motivo declarado lá: "assinaturas variáveis exigiriam introspecção para saber o
-que passar — e é exatamente esse padrão que já nos deu um defeito silencioso no
-`_construir_definicao` da API."
+disciplina que `agent.declarado.RegraDisponivel.construir` aplica no catálogo, e
+pelo mesmo motivo declarado lá: assinatura variável exigiria introspecção para
+saber o que passar — e é exatamente esse padrão que já nos deu um defeito
+silencioso no `_construir_definicao` da API.
 
 **Por que `WorkflowContext` é um dataclass tipado e não um `dict[str, Any]`.**
 Um saco de serviços com chave `"fila"` trocaria um contrato fraco (nome de

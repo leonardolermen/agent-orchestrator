@@ -1,7 +1,12 @@
 import inspect
 
+import pytest
+
 from orchestrator.conciliacao import default_definition
 from orchestrator.kernel.cost import CostClass
+from orchestrator.kernel.definition import Stage, WorkflowDefinition
+from orchestrator.kernel.resolver import ResolverDescription, ResolverOutput
+from orchestrator.kernel.work import WorkSet
 
 
 def test_definicao_padrao_tem_as_tres_regras_num_stage():
@@ -63,3 +68,115 @@ def test_stage_expoe_a_cascata_ordenada_por_classe_de_custo():
     cascata = d.stages[0].ordered()
 
     assert [r.cost_class for r in cascata] == sorted(r.cost_class for r in cascata)
+
+
+class _Nada:
+    name = "nada"
+    cost_class = CostClass.REGRA
+
+    def describe(self) -> ResolverDescription:
+        return ResolverDescription(self.name, self.cost_class, "teste")
+
+    def resolve(self, work: WorkSet) -> ResolverOutput:
+        return ResolverOutput()
+
+
+def _stage(nome, consome=frozenset(), produz=frozenset()):
+    return Stage(name=nome, cascade=(_Nada(),), consome=consome, produz=produz)
+
+
+def test_recusa_beco_sem_saida():
+    """Um kind produzido que ninguém consome é item que fica no pool para
+    sempre, sem nunca chegar ao degrau seguinte.
+
+    O que esta guarda compra é reachability ESTÁTICA no grafo de kinds: o kind
+    digitado errado e o esquecido são pegos na construção, e "isto é terminal"
+    vira afirmação escrita. O que ela NÃO compra é humano — ver
+    `tests/runtime/test_producao.py::test_a_guarda_nao_exige_humano`, que fixa
+    a limitação, e o docstring de `agent/tarefa.py`, que a declara.
+    """
+    with pytest.raises(ValueError, match="beco sem saída"):
+        WorkflowDefinition(
+            id="w",
+            name="w",
+            stages=(_stage("um", consome=frozenset({"a"}), produz=frozenset({"b"})),),
+        )
+
+
+def test_entrega_declara_o_kind_terminal():
+    """"Ninguém consome isto" tem de ser afirmação do autor, nunca acidente."""
+    d = WorkflowDefinition(
+        id="w",
+        name="w",
+        stages=(_stage("um", consome=frozenset({"a"}), produz=frozenset({"b"})),),
+        entrega=frozenset({"b"}),
+    )
+
+    assert d.entrega == frozenset({"b"})
+
+
+def test_kind_consumido_por_outro_stage_basta():
+    d = WorkflowDefinition(
+        id="w",
+        name="w",
+        stages=(
+            _stage("um", consome=frozenset({"a"}), produz=frozenset({"b"})),
+            _stage("dois", consome=frozenset({"b"}), produz=frozenset({"c"})),
+        ),
+        entrega=frozenset({"c"}),
+    )
+
+    assert len(d.stages) == 2
+
+
+def test_stage_sem_consome_e_consumidor_curinga():
+    """`consome` vazio é "vê o pool inteiro", não "não consome nada".
+
+    A checagem literal lia o default como ausência de consumo e RECUSAVA este
+    pipeline — correto, com o degrau de baixo no default — exigindo que o
+    autor pusesse "b", um kind INTERMEDIÁRIO, em `entrega` só para construir.
+    Isso fazia a declaração mentir E desligava a guarda justo para "b".
+
+    O custo da correção está declarado no comentário de `__post_init__`: com um
+    curinga no grafo, a guarda fica inerte para o grafo inteiro. Declarar
+    `consome` em todos os stages é o que a compra de volta.
+    """
+    d = WorkflowDefinition(
+        id="w",
+        name="w",
+        stages=(
+            _stage("um", consome=frozenset({"a"}), produz=frozenset({"b"})),
+            _stage("dois", produz=frozenset({"c"})),  # curinga: vê o pool inteiro
+        ),
+    )
+
+    assert d.entrega == frozenset()
+
+
+def test_max_rondas_menor_que_um_e_erro():
+    """Zero ronda não executa nada e pareceria um workflow que não acha nada,
+    em vez de configuração inválida — a mesma falha que `max_turns < 1` já
+    recusa em `Agent`."""
+    with pytest.raises(ValueError, match="max_rondas"):
+        WorkflowDefinition(id="w", name="w", stages=(_stage("um"),), max_rondas=0)
+
+
+def test_version_muda_com_consome_produz_e_max_rondas():
+    """Dois grafos diferentes não podem hashear igual: `Run.workflow_version`
+    é o que o benchmark usa para saber que comparou a mesma coisa."""
+    base = WorkflowDefinition(
+        id="w", name="w", stages=(_stage("um", produz=frozenset({"b"})),),
+        entrega=frozenset({"b"}),
+    )
+    outro_consumo = WorkflowDefinition(
+        id="w", name="w",
+        stages=(_stage("um", consome=frozenset({"a"}), produz=frozenset({"b"})),),
+        entrega=frozenset({"b"}),
+    )
+    mais_rondas = WorkflowDefinition(
+        id="w", name="w", stages=(_stage("um", produz=frozenset({"b"})),),
+        entrega=frozenset({"b"}), max_rondas=3,
+    )
+
+    assert base.version != outro_consumo.version
+    assert base.version != mais_rondas.version

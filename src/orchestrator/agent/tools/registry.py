@@ -20,7 +20,7 @@ aparecer na conta.
 """
 
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
@@ -41,6 +41,21 @@ class ToolSpec:
     name: str
     description: str
     input_schema: Mapping[str, Any]
+    # `fn(contexto, **argumentos)`. O CONTEXTO É O PRIMEIRO ARGUMENTO, sempre,
+    # inclusive nas ferramentas que o ignoram.
+    #
+    # Antes ele vinha ligado por closure (`getattr(contexto, nome)`), e isso
+    # fazia o registro carregar DADOS além de ferramentas. A consequência só
+    # apareceu ao tentar listar o catálogo de um domínio sem ter os dados: um
+    # registro construído com contexto vazio LISTAVA certo e EXECUTAVA errado,
+    # devolvendo zero resultados sem erro nenhum. Silencioso e sobre dados — a
+    # pior combinação que este projeto conhece.
+    #
+    # Assinatura UNIFORME, mesmo nas que ignoram o contexto: variável exigiria
+    # introspecção para saber o que passar, e é esse padrão que já deu um
+    # defeito silencioso no `_construir_definicao` da API (ver
+    # `agent.declarado.RegraDisponivel.construir` e `workflows.WorkflowFactory`,
+    # que tomaram a mesma decisão pela mesma razão).
     fn: Callable[..., Any]
     permission: ToolPermission = ToolPermission.READ_ONLY
     timeout_s: float = 10.0
@@ -122,13 +137,72 @@ def _validar_palavras(ferramenta: str, schema: Mapping[str, Any], onde: str) -> 
         _validar_palavras(ferramenta, itens, f"{onde}.items")
 
 
-class ToolRegistry:
-    """As ferramentas de um agente. Uma fonte para schema e despacho."""
+# Distingue "contexto ainda não ligado" de "contexto é None de propósito". Sem
+# a sentinela, um domínio cujas ferramentas não precisam de dados (`swe`) seria
+# indistinguível de um que esqueceu de ligar (`conciliacao`) — e o segundo
+# executaria devolvendo nada.
+_NAO_LIGADO = object()
 
-    def __init__(self, specs: list[ToolSpec] | None = None) -> None:
+
+class ToolRegistry:
+    """As ferramentas de um agente. Uma fonte para schema e despacho.
+
+    Um registro tem duas vidas. **Sem contexto** ele é um CATÁLOGO: serve para
+    listar, validar declaração e montar schema, e recusa executar. **Com
+    contexto** (`com_contexto`) ele executa.
+
+    Separar as duas é o que permite um domínio publicar o que sabe fazer sem
+    ter dados em mãos — que é a pergunta que a tela de composição faz.
+    """
+
+    def __init__(
+        self,
+        specs: list[ToolSpec] | None = None,
+        *,
+        contexto: Any = _NAO_LIGADO,
+    ) -> None:
         self._por_nome: dict[str, ToolSpec] = {}
+        self._contexto = contexto
         for s in specs or []:
             self.register(s)
+
+    @property
+    def ligado(self) -> bool:
+        return self._contexto is not _NAO_LIGADO
+
+    def com_contexto(self, contexto: Any) -> "ToolRegistry":
+        """As MESMAS ferramentas, agora ligadas a dados.
+
+        Devolve um registro novo em vez de mutar: o catálogo de um domínio é
+        compartilhado, e ligá-lo a um contexto no lugar mudaria o que todo mundo
+        vê por causa de uma execução.
+        """
+        novo = ToolRegistry(contexto=contexto)
+        for s in self._por_nome.values():
+            novo.register(s)
+        return novo
+
+    def recortar(self, nomes: Iterable[str]) -> "ToolRegistry":
+        """Um sub-registro com as ferramentas escolhidas, **mesmo contexto**.
+
+        Existe porque a alternativa — `ToolRegistry([reg.spec(n) for n in ...])`
+        — perde o contexto em silêncio, e o sintoma é caro: o agente construído
+        recebe um registro DESLIGADO, toda chamada de ferramenta volta como
+        `ToolResult.error`, e como `call` nunca levanta, o laço continua, o
+        modelo insiste, e a conta cresce. "Não achei nada" indistinguível de
+        "não procurei", agora em cima de um orçamento.
+
+        Era exatamente o que `construir_agente` fazia. Foi encontrado lendo, não
+        por teste, porque todo teste de composição usava `FakeLLMClient`, que
+        nunca pede ferramenta.
+
+        O recorte é do registro e não de quem chama: um segundo dicionário fora
+        daqui é o join frágil de sempre — e foi ele que perdeu o contexto.
+        """
+        novo = ToolRegistry(contexto=self._contexto)
+        for n in nomes:
+            novo.register(self.spec(n))
+        return novo
 
     def register(self, spec: ToolSpec) -> None:
         """Valida registrando. Se registrou, dá para chamar.
@@ -157,6 +231,24 @@ class ToolRegistry:
 
     def __contains__(self, nome: str) -> bool:
         return nome in self._por_nome
+
+    def spec(self, nome: str) -> ToolSpec:
+        """A ferramenta pelo nome. Levanta se não existe.
+
+        Existe para o RECORTE: um agente declarado recebe as ferramentas que
+        declara, não as que por acaso estão no registro do domínio. Sem poder
+        pegar uma por nome, o recorte seria feito por quem chama, com uma
+        segunda cópia do dicionário.
+
+        `KeyError` e não `None`: quem pede uma ferramenta pelo nome já checou a
+        lista, e um `None` silencioso viraria um registro com um buraco.
+        """
+        if nome not in self._por_nome:
+            raise KeyError(
+                f"ferramenta desconhecida: {nome!r}. disponíveis: "
+                f"{sorted(self._por_nome)}"
+            )
+        return self._por_nome[nome]
 
     def names(self) -> tuple[str, ...]:
         return tuple(self._por_nome)
@@ -187,6 +279,19 @@ class ToolRegistry:
             return ToolResult(
                 name=name, value=None, duration_ms=0, error="ferramenta inexistente"
             )
+        if not self.ligado:
+            # Recusa ALTA em vez de executar com dados ausentes. Uma ferramenta
+            # de conciliação chamada sem `ToolContext` devolveria lista vazia —
+            # e "não achei nada" é indistinguível de "não procurei".
+            return ToolResult(
+                name=name,
+                value=None,
+                duration_ms=0,
+                error=(
+                    "registro não ligado a dados: este é o catálogo do domínio, "
+                    "não um registro executável. use `com_contexto(...)`"
+                ),
+            )
         inicio = time.perf_counter()
         try:
             # `None` some dos argumentos: o schema declara os campos como
@@ -194,7 +299,7 @@ class ToolRegistry:
             # sem quebrar `strict`, e quem recebe é uma função Python com
             # defaults. Preservado de `Investigator._executar`.
             limpos = {k: v for k, v in arguments.items() if v is not None}
-            valor, erro = spec.fn(**limpos), None
+            valor, erro = spec.fn(self._contexto, **limpos), None
         except Exception as e:  # noqa: BLE001
             valor, erro = None, str(e)
         return ToolResult(

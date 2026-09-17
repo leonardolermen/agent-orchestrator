@@ -1,7 +1,8 @@
 # Runtime de Orquestração — do conciliador ao motor genérico
 
 **Data:** 2026-09-16
-**Estado do repo auditado:** branch `ci/github-actions`, 107 arquivos Python,
+**Estado:** ENTREGUE (M0–M8).
+**Estado do repo auditado (instantâneo de 2026-09-16, não atualizado):** branch `ci/github-actions`, 107 arquivos Python,
 ~12.2k LOC (≈5.5k em `src/`, ≈6.7k em `tests/`), **449 testes passando**,
 CI verde em 3.11/3.13 × `[dev]`/`[dev,api]`.
 **Specs antecessores:** [design do produto](2026-09-14-agent-orchestrator-design.md),

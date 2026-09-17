@@ -34,6 +34,10 @@ class RunState(StrEnum):
     PENDENTE = "pendente"
     EXECUTANDO = "executando"
     AGUARDANDO_HUMANO = "aguardando_humano"
+    # Bateu `WorkflowDefinition.max_rondas` sem convergir. NÃO é `CONCLUIDO`:
+    # o trabalho não acabou, o teto é que chegou. Mesmo espírito de
+    # `AGUARDANDO_HUMANO` — a lacuna é declarada, nunca escondida.
+    LIMITE_DE_RONDAS = "limite_de_rondas"
     CONCLUIDO = "concluido"
     FALHOU = "falhou"
     CANCELADO = "cancelado"
@@ -79,6 +83,8 @@ class Run:
     policy_decisions: tuple[PolicyDecision, ...] = ()
     finished_at: datetime | None = None
     error: str | None = None
+    # Quantas vezes a sequência de stages rodou. 1 no caso comum.
+    rondas: int = 1
 
     def __post_init__(self) -> None:
         # Mesma exigência de `Decision.quando`, e pelo mesmo motivo: horário

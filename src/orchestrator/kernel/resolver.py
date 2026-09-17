@@ -10,7 +10,7 @@ from typing import Protocol
 
 from orchestrator.kernel.cost import Cost, CostClass
 from orchestrator.kernel.resolution import Proposal, Resolution
-from orchestrator.kernel.work import WorkSet
+from orchestrator.kernel.work import WorkItem, WorkSet
 
 
 @dataclass(frozen=True)
@@ -29,6 +29,15 @@ class ResolverOutput:
 
     resolutions: list[Resolution] = field(default_factory=list)
     proposals: list[Proposal] = field(default_factory=list)
+    # O que este resolver CRIOU. Campo separado de `resolutions` pela mesma
+    # razão que `proposals` é separado: resolução consome, produção cria, e um
+    # tipo único com campo de status transformaria duas garantias de tipo numa
+    # convenção que alguém precisa verificar.
+    #
+    # `proposals` não aparece em nenhuma das duas expressões do motor
+    # (`without` e `com`), e é essa ausência — agora que há DUAS maneiras de o
+    # pool mudar — que mantém "proposta não resolve" estrutural.
+    produced: tuple[WorkItem, ...] = ()
     cost: Cost = field(default_factory=Cost.zero)
 
 

@@ -1,0 +1,12 @@
+# TUDO em `web/` é GERADO (Vite) e commitado, porque o pacote é
+# Python e `pip install` não roda npm.
+#
+# `-text` desliga a conversão de quebra de linha. Sem isso, o git guardaria LF,
+# entregaria CRLF no Windows, e o job `canvas` do CI — que rebuilda e exige
+# `git diff` vazio — acusaria diferença onde só houve normalização. Um check
+# que falha sem defeito é um check que as pessoas aprendem a ignorar.
+#
+# `linguist-generated` colapsa esses arquivos no diff do GitHub: eles não são
+# para ler, são para servir.
+web/** -text linguist-generated
+web-app/package-lock.json -text linguist-generated
