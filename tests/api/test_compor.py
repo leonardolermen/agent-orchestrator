@@ -66,12 +66,27 @@ def test_as_regras_vem_na_ordem_em_que_a_CASCATA_RODA():
 
 def test_o_catalogo_traz_os_parametros_com_DEFAULT_do_proprio_resolver():
     """`_param` lê o default do dataclass do resolver. A tela preenche com ele,
-    então renomear o campo no resolver explode no import e não na tela."""
+    então renomear o campo no resolver explode no import e não na tela.
+
+    A comparação é contra `dataclasses.fields(ToleranceMatcher)`, e é ela que
+    carrega o teste: conferir que o default é `int` passaria com um literal
+    escrito à mão no catálogo, que é exatamente a divergência que `_param`
+    existe para tornar impossível. O sintoma seria a tela preencher `5` num
+    campo cujo resolver já mudou para outro valor — e ninguém veria.
+    """
+    import dataclasses
+
+    from orchestrator.matching.tolerance import ToleranceMatcher
+
     dados = cliente.get("/api/catalogo").json()
     l2 = next(r for r in dados["regras"] if r["nome"] == "L2")
+    do_resolver = {f.name: f.default for f in dataclasses.fields(ToleranceMatcher)}
 
     assert {p["nome"] for p in l2["parametros"]} == {"max_cents", "max_business_days"}
-    assert all(isinstance(p["default"], int) for p in l2["parametros"])
+    assert {p["nome"]: p["default"] for p in l2["parametros"]} == {
+        "max_cents": do_resolver["max_cents"],
+        "max_business_days": do_resolver["max_business_days"],
+    }
     assert all(p["descricao"] for p in l2["parametros"])
 
 

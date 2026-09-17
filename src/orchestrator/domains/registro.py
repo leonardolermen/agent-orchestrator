@@ -109,11 +109,19 @@ def _param(cls: type, nome: str, descricao: str) -> ParametroDeRegra:
     """Lê o default do PRÓPRIO resolver.
 
     Renomear o campo lá explode AQUI, no import, e não numa tela que oferece um
-    parâmetro que o construtor não aceita. Mesma técnica de `grill.catalogo._param`.
+    parâmetro que o construtor não aceita.
+
+    **A recusa é EXPLÍCITA, e o texto é o que ela entrega.** `campos[nome]`
+    sozinho já levantaria — mas um `KeyError: 'max_cents'` no meio de um import
+    não diz de que resolver o campo sumiu, e é justamente esse nome que aponta
+    para a linha que precisa mudar. Falhar alto e falhar LEGÍVEL são a mesma
+    exigência neste repositório.
     """
     import dataclasses
 
     campos = {f.name: f for f in dataclasses.fields(cls)}
+    if nome not in campos:
+        raise ValueError(f"{cls.__name__} não tem campo {nome!r}")
     return ParametroDeRegra(nome=nome, default=campos[nome].default, descricao=descricao)
 
 

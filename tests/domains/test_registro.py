@@ -206,6 +206,27 @@ def test_toda_REGRA_do_catalogo_CONSTROI_com_a_classe_declarada():
         assert resolver.cost_class is r.cost_class, r.nome
 
 
+def test_parametro_INEXISTENTE_no_resolver_explode_NOMEANDO_o_resolver():
+    """A guarda que vive em `_param`, e o TEXTO dela.
+
+    O catálogo lê o default do próprio resolver, então renomear um campo lá
+    precisa explodir aqui, na importação — nunca virar uma tela oferecendo um
+    parâmetro que o construtor não aceita. `campos[nome]` sozinho já levantaria,
+    mas um `KeyError: 'max_cents'` no meio de um import não diz de QUE resolver
+    o campo sumiu, que é a única informação capaz de apontar a linha a mudar.
+
+    Este teste é o herdeiro direto de
+    `test_parametro_inexistente_no_resolver_explode_na_construcao_do_catalogo`,
+    que travava a mesma mensagem em `grill.catalogo._param` — o `_param` que
+    esta fatia removeu junto com o cardápio do grill.
+    """
+    from orchestrator.domains.registro import _param
+    from orchestrator.matching.tolerance import ToleranceMatcher
+
+    with pytest.raises(ValueError, match="ToleranceMatcher não tem campo"):
+        _param(ToleranceMatcher, "campo_que_nao_existe", "x")
+
+
 def test_resumo_da_REGRA_bate_com_o_describe_do_resolver():
     """Duas fontes de verdade para a mesma frase divergiriam na primeira
     mudança. Isso importava pouco quando só a tela lia `resumo`; agora é
