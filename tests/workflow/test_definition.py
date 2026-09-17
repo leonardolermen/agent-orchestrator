@@ -87,12 +87,13 @@ def _stage(nome, consome=frozenset(), produz=frozenset()):
 
 def test_recusa_beco_sem_saida():
     """Um kind produzido que ninguém consome é item que fica no pool para
-    sempre, sem nunca chegar a um humano.
+    sempre, sem nunca chegar ao degrau seguinte.
 
-    Esta é a guarda que impede `Tarefa` (Task 7) de virar a porta dos fundos
-    por onde "proposta não resolve" sairia: uma transformação é legítima
-    porque o item que ela produz AINDA passa por alguém. Se ninguém o
-    consome, ela encerrou o trabalho sem que nada fosse conferido.
+    O que esta guarda compra é reachability ESTÁTICA no grafo de kinds: o kind
+    digitado errado e o esquecido são pegos na construção, e "isto é terminal"
+    vira afirmação escrita. O que ela NÃO compra é humano — ver
+    `tests/runtime/test_producao.py::test_a_guarda_nao_exige_humano`, que fixa
+    a limitação, e o docstring de `agent/tarefa.py`, que a declara.
     """
     with pytest.raises(ValueError, match="beco sem saída"):
         WorkflowDefinition(
@@ -126,6 +127,30 @@ def test_kind_consumido_por_outro_stage_basta():
     )
 
     assert len(d.stages) == 2
+
+
+def test_stage_sem_consome_e_consumidor_curinga():
+    """`consome` vazio é "vê o pool inteiro", não "não consome nada".
+
+    A checagem literal lia o default como ausência de consumo e RECUSAVA este
+    pipeline — correto, com o degrau de baixo no default — exigindo que o
+    autor pusesse "b", um kind INTERMEDIÁRIO, em `entrega` só para construir.
+    Isso fazia a declaração mentir E desligava a guarda justo para "b".
+
+    O custo da correção está declarado no comentário de `__post_init__`: com um
+    curinga no grafo, a guarda fica inerte para o grafo inteiro. Declarar
+    `consome` em todos os stages é o que a compra de volta.
+    """
+    d = WorkflowDefinition(
+        id="w",
+        name="w",
+        stages=(
+            _stage("um", consome=frozenset({"a"}), produz=frozenset({"b"})),
+            _stage("dois", produz=frozenset({"c"})),  # curinga: vê o pool inteiro
+        ),
+    )
+
+    assert d.entrega == frozenset()
 
 
 def test_max_rondas_menor_que_um_e_erro():

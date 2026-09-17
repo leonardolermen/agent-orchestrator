@@ -210,3 +210,80 @@ def test_coletar_NAO_muda_o_resultado_da_execucao():
     assert len(com.spans) > 0
     assert [r.item_ids for r in sem.resolutions] == [frozenset({"a"})]
     assert len(sem.unresolved.items) == 1
+
+
+class _Transformador:
+    """Resolve carregando o rastro em `Resolution.evidence`, como `Tarefa` faz.
+
+    Não propõe NADA: é o formato de `domains/redacao` e de qualquer pipeline de
+    pura transformação, em que `run.proposals` fica vazio.
+    """
+
+    cost_class = CostClass.AGENTE
+
+    def __init__(self, name="tarefa", evidencia=None):
+        self.name = name
+        self._evidencia = {} if evidencia is None else evidencia
+
+    def describe(self):
+        return ResolverDescription(self.name, self.cost_class, "t")
+
+    def resolve(self, work):
+        return ResolverOutput(
+            resolutions=[
+                Resolution(
+                    item_ids=frozenset({i.id}),
+                    produced_by=self.name,
+                    rule="transformou",
+                    evidence=self._evidencia,
+                )
+                for i in work.items
+            ],
+            cost=Cost(input_tokens=100, calls=1),
+        )
+
+
+def test_resolucao_com_rastro_na_evidencia_vira_span_de_item_e_llm():
+    """Um pipeline só de `Tarefa` não propõe nada — e enquanto o coletor só lia
+    `run.proposals`, um run que chamou o modelo três vezes rendia ZERO span de
+    item, llm ou tool. O rastro existia; ninguém o lia de volta."""
+    rastro = (
+        TraceEvent(
+            kind=TraceKind.LLM,
+            detail={"turno": 1, "tokens_entrada": 100, "tokens_saida": 7},
+        ),
+        TraceEvent(
+            kind=TraceKind.TOOL, detail={"nome": "buscar", "resultado": {}, "duracao_ms": 2}
+        ),
+    )
+    trace, run = _rodar(_wf(_Transformador(evidencia={"trace": rastro})), _pool("a"))
+
+    assert run.proposals == ()
+    itens = trace.por_kind(SpanKind.ITEM)
+    assert [s.name for s in itens] == ["a"]
+    assert itens[0].attributes["produced_by"] == "tarefa"
+    # O pai é o resolver que resolveu, por `produced_by` — sem a aproximação
+    # que `_propositor` precisa fazer, porque `Resolution` carrega proveniência.
+    resolver = trace.por_kind(SpanKind.RESOLVER)[0]
+    assert itens[0].parent_id == resolver.id
+    assert len(trace.por_kind(SpanKind.LLM)) == 1
+    assert trace.por_kind(SpanKind.TOOL)[0].name == "buscar"
+
+
+def test_evidencia_malformada_e_pulada_sem_explodir():
+    """`evidence` é `Mapping[str, Any]` preenchido por DOMÍNIO: chave ausente,
+    tipo errado ou lista de lixo são todos possíveis, e nenhum pode quebrar
+    `orchestrator trace`."""
+    for evidencia in (
+        {},
+        {"trace": "não é uma tupla"},
+        {"trace": 42},
+        {"trace": ("nem isto", None, 7)},
+        {"trace": ()},
+        {"outra_coisa": "sem trace nenhum"},
+    ):
+        trace, _ = _rodar(_wf(_Transformador(evidencia=evidencia)), _pool("a"))
+
+        assert trace.por_kind(SpanKind.ITEM) == ()
+        # A árvore continua íntegra: a evidência ruim não derruba o resto.
+        assert trace.raiz() is not None

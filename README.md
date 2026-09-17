@@ -34,6 +34,16 @@ entrada estruturada
 A última seta é o ativo de longo prazo. Em seis meses, o conjunto de avaliação
 é a coisa que um concorrente não copia.
 
+**Onde a tese não gera economia, dito aqui e não só no spec.** Num pipeline
+linear — um degrau, um resolver, a saída de um alimentando o próximo — não há
+barato competindo com caro: a cascata ordenada por custo continua rodando, mas
+ordena um elemento só. O encadeamento ganha pipeline e grafo; não ganha
+centavo. A tese volta inteira no momento em que um degrau tem **regra + agente**
+— é aí que existe alguém mais barato para tentar antes, e é aí que medir custo
+por resolver passa a decidir alguma coisa. Ampliar o mercado onde a tese se
+aplica não é o mesmo que aplicá-la, e confundir os dois é como um produto vira
+"mais um framework de agentes" sem ninguém perceber.
+
 ## Por que Brasil
 
 Não é geografia — é que a stack documental e regulatória brasileira é

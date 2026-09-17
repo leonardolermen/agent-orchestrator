@@ -10,6 +10,7 @@ from orchestrator.kernel.cost import Cost, CostClass
 from orchestrator.kernel.definition import Stage, WorkflowDefinition
 from orchestrator.kernel.resolution import Resolution
 from orchestrator.kernel.resolver import ResolverDescription, ResolverOutput
+from orchestrator.kernel.run import RunState
 from orchestrator.kernel.work import WorkItem, WorkSet
 from orchestrator.runtime.engine import execute
 
@@ -77,11 +78,11 @@ def test_o_stage_seguinte_ve_o_que_o_anterior_produziu():
                 produz=frozenset({"c"}),
             ),
         ),
-        # Nenhum dos dois stages declara `consome`: cada um vê o pool inteiro
-        # (o comportamento padrão), e é exatamente por isso que a checagem
-        # LITERAL de `consome` não enxerga "b" sendo consumido por "dois" —
-        # só `entrega` fecha o grafo aqui.
-        entrega=frozenset({"b", "c"}),
+        # Só "c" é terminal. "b" NÃO entra aqui: ele é intermediário, e
+        # declará-lo em `entrega` — como esta definição precisava fazer antes
+        # da correção da guarda — era escrever uma mentira no objeto para
+        # conseguir construí-lo.
+        entrega=frozenset({"c"}),
     )
     pool = WorkSet(items=(WorkItem(id="i", kind="a", payload="x"),))
 
@@ -189,9 +190,9 @@ def test_consome_vazio_continua_vendo_o_pool_inteiro():
                 name="um",
                 cascade=(Transformador("um", "a", "b"),),
                 # `consome` FICA vazio de propósito — é o que este teste
-                # prova. `produz`, ao contrário, é sempre exigido: a guarda
-                # de `produz` é incondicional, então até um teste sobre
-                # `consome` precisa declarar o que produz.
+                # prova. `produz` continua declarado porque a guarda de
+                # RUNTIME (`produziu kind não declarado`) é incondicional, ao
+                # contrário da de construção.
                 produz=frozenset({"b"}),
             ),
         ),
@@ -237,6 +238,49 @@ def test_produzir_kind_nao_declarado_e_erro_alto():
 
     with pytest.raises(ValueError, match="produziu kind não declarado"):
         execute(d, pool)
+
+
+def test_a_guarda_nao_exige_humano():
+    """LIMITAÇÃO DOCUMENTADA, não acidente — e por isso ela tem um teste.
+
+    Este grafo passa por `WorkflowDefinition.__post_init__` sem reclamar: "z"
+    está em `entrega`, logo nenhum kind fica órfão. Não há um único resolver de
+    classe `HUMANO` na cascata. O run termina `CONCLUIDO`, e o que ele entrega
+    é a saída de um resolver, sem ninguém conferindo.
+
+    O que a guarda de beco sem saída compra é reachability ESTÁTICA no grafo de
+    kinds: ela pega o kind digitado errado e o esquecido, e obriga o autor a
+    declarar que um kind é terminal. O que ela NÃO compra — e o docstring de
+    `agent/tarefa.py` chegou a afirmar que sim — é humano em lugar nenhum.
+    `domains/redacao` tem exatamente esta forma.
+
+    Se um dia alguém exigir humano no fim, este teste é o que vai QUEBRAR, e é
+    para isso que ele existe: o próximo leitor encontra a limitação como fato
+    fixado pela suíte, não como surpresa em produção.
+    """
+    d = WorkflowDefinition(
+        id="sem-humano",
+        name="sem humano",
+        stages=(
+            Stage(
+                name="unico",
+                cascade=(Transformador("modelo", "a", "z"),),
+                consome=frozenset({"a"}),
+                produz=frozenset({"z"}),
+            ),
+        ),
+        entrega=frozenset({"z"}),
+    )
+    pool = WorkSet(items=(WorkItem(id="i", kind="a", payload="x"),))
+
+    r = execute(d, pool)
+
+    assert r.state is RunState.CONCLUIDO
+    assert not any(
+        res.cost_class >= CostClass.HUMANO for s in d.stages for res in s.cascade
+    )
+    # O veredito do resolver É a entrega do run. Nada o conferiu.
+    assert [i.kind for i in r.unresolved.items] == ["z"]
 
 
 def test_stages_nao_sao_reordenados_por_custo():

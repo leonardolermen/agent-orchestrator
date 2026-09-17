@@ -12,18 +12,18 @@ encontra vira uma correção de um dia em vez de uma descoberta de um mês.
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
 
 from orchestrator.agent.llm import LLMClient
 from orchestrator.agent.tarefa import SaidaDaTarefa, Tarefa, TarefaSpec
 from orchestrator.agent.tools.registry import ToolRegistry
+from orchestrator.kernel.cost import Cost
 from orchestrator.kernel.definition import Stage, WorkflowDefinition
-from orchestrator.kernel.resolution import Resolution
+from orchestrator.kernel.resolution import Resolution, TraceEvent
 from orchestrator.kernel.work import WorkItem, WorkSet
 
 
 def _degrau(
-    nome: str, system: str, produz_kind: str, instrucao: Callable[[Any], str]
+    nome: str, system: str, produz_kind: str, instrucao: Callable[[WorkItem], str]
 ) -> TarefaSpec:
     """Um degrau do pipeline. Os três só diferem no prompt e no kind de saída.
 
@@ -32,7 +32,9 @@ def _degrau(
     texto do modelo vira o payload do próximo item — é a mesma em todos.
     """
 
-    def transformar(item_id, texto, custo, trace):
+    def transformar(
+        item_id: str, texto: str, custo: Cost, trace: list[TraceEvent]
+    ) -> SaidaDaTarefa | None:
         if not texto.strip():
             # Texto vazio não é rascunho. `None` pede retry de formato; se o
             # retry esgotar, `conversar` chama a desistência e o item fica no

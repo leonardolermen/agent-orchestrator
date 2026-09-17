@@ -10,12 +10,24 @@ observabilidade inteira sem tocar em lógica. Há teste provando que ligar e
 desligar o barramento produz o mesmo resultado (`test_run.py`).
 
 **A limitação, declarada.** Os spans de `run`, `stage`, `policy` e `resolver`
-vêm do STREAM de eventos. Os de `item`, `llm` e `tool` são DERIVADOS de
-`Proposal.trace` depois que o run termina — porque quem sabe deles é o agente, e
-o agente ainda não recebe o barramento. Fechar isso exige `Resolver.resolve(work,
-ctx)` com um contexto de execução, que é mudança de assinatura em todo resolver
-e está agendada para o M6 (confiabilidade), onde ela também paga por timeout e
-cancelamento.
+vêm do STREAM de eventos. Os de `item`, `llm` e `tool` são DERIVADOS depois que
+o run termina — porque quem sabe deles é o agente, e o agente ainda não recebe o
+barramento. Fechar isso exige `Resolver.resolve(work, ctx)` com um contexto de
+execução, que é mudança de assinatura em todo resolver e está agendada para o M6
+(confiabilidade), onde ela também paga por timeout e cancelamento.
+
+Derivados de DOIS lugares, e dizer só o primeiro já deixou um grafo inteiro sem
+rastro: `Proposal.trace`, para quem julga, e `Resolution.evidence["trace"]`,
+para quem TRANSFORMA. Um pipeline só de `Tarefa` — `domains/redacao` — não
+produz proposta nenhuma, e enquanto este módulo só lia `run.proposals` ele
+devolvia zero span de item para um run que chamou o modelo três vezes. A
+assimetria é do kernel e fica: `Proposal` tem campo `trace`; `Resolution` tem um
+`evidence` livre, e é o `transformar` de cada domínio que decide guardar o
+rastro ali.
+
+O que continua SEM rastro, e é sabido: a desistência de uma `Tarefa`. Ela não
+emite `Resolution` nem `Proposal`, então não há onde o rastro pousar — ver a
+lacuna declarada em `agent/tarefa.py`. É o mesmo `ctx` do M6 que a fecha.
 
 Consequência prática: a árvore de `orchestrator trace <run-id>` é completa, mas
 o detalhe de LLM e ferramenta só existe DEPOIS do run, não durante. Para
@@ -23,11 +35,12 @@ observabilidade ao vivo — que ninguém pediu ainda — falta aquele contexto.
 """
 
 import itertools
+from collections.abc import Sequence
 from datetime import datetime
 
 from orchestrator.kernel.cost import Cost
 from orchestrator.kernel.event import Event, EventBus, EventKind
-from orchestrator.kernel.resolution import Proposal, TraceKind
+from orchestrator.kernel.resolution import TraceEvent, TraceKind
 from orchestrator.kernel.run import Run
 from orchestrator.kernel.trace import Span, SpanKind, SpanStatus, Trace
 
@@ -180,6 +193,7 @@ class SpanCollector:
         spans = list(self._spans)
         if run is not None:
             spans.extend(self._de_propostas(run))
+            spans.extend(self._de_resolucoes(run))
         return Trace(run_id=self._run_id or (run.id if run else ""), spans=tuple(spans))
 
     def _de_propostas(self, run: Run) -> list[Span]:
@@ -206,8 +220,67 @@ class SpanCollector:
                     },
                 )
             )
-            achados.extend(self._de_trace(proposta, item_id))
+            achados.extend(self._de_trace(proposta.trace, item_id))
         return achados
+
+    def _de_resolucoes(self, run: Run) -> list[Span]:
+        """O espelho de `_de_propostas` para quem TRANSFORMA em vez de propor.
+
+        Um pipeline só de `Tarefa` — `domains/redacao` é um — tem
+        `run.proposals` vazio, e sem isto a árvore não tinha NENHUM span de
+        `item`, `llm` ou `tool`: zero detalhe por item num grafo inteiro. O
+        rastro existe, só não era lido de volta — `Tarefa` deixa ao
+        `transformar` de cada domínio a decisão de guardá-lo em
+        `Resolution.evidence["trace"]`, e quem guarda quer vê-lo aqui.
+
+        **Defensivo de propósito.** `evidence` é `Mapping[str, Any]` preenchido
+        por código de DOMÍNIO: a chave pode faltar, vir com outro tipo, ou vir
+        com uma lista de qualquer coisa. Nada disso pode explodir
+        `orchestrator trace` — um saco de evidência malformado é resolução sem
+        detalhe, nunca um comando que quebra. Por isso o filtro é por
+        `isinstance`, e não por confiança no domínio.
+        """
+        achados: list[Span] = []
+        for resolucao in run.resolutions:
+            eventos = resolucao.evidence.get("trace") if resolucao.evidence else None
+            if not isinstance(eventos, tuple | list):
+                continue
+            eventos = [e for e in eventos if isinstance(e, TraceEvent)]
+            if not eventos:
+                continue
+            item_id = self._novo_id("item")
+            achados.append(
+                Span(
+                    id=item_id,
+                    parent_id=self._transformador(resolucao.produced_by),
+                    kind=SpanKind.ITEM,
+                    name=",".join(sorted(resolucao.item_ids)),
+                    status=(
+                        SpanStatus.ERRO
+                        if any(t.kind is TraceKind.ERRO for t in eventos)
+                        else SpanStatus.OK
+                    ),
+                    attributes={
+                        "produced_by": resolucao.produced_by,
+                        "rule": resolucao.rule,
+                    },
+                )
+            )
+            achados.extend(self._de_trace(eventos, item_id))
+        return achados
+
+    def _transformador(self, nome: str) -> str | None:
+        """O span do resolver que resolveu, por NOME.
+
+        Sem a aproximação que `_propositor` precisa: `Resolution.produced_by`
+        carrega a proveniência, e `Proposal` não carrega nada equivalente. O
+        último span com esse nome, porque com aresta de volta o mesmo resolver
+        roda em mais de uma ronda.
+        """
+        candidatos = [
+            s for s in self._spans if s.kind is SpanKind.RESOLVER and s.name == nome
+        ]
+        return candidatos[-1].id if candidatos else self._stage_span
 
     def _propositor(self) -> str | None:
         """O span do resolver que propôs.
@@ -229,9 +302,16 @@ class SpanCollector:
         ]
         return propositores[-1].id if propositores else self._stage_span
 
-    def _de_trace(self, proposta: Proposal, pai: str) -> list[Span]:
+    def _de_trace(self, eventos: Sequence[TraceEvent], pai: str) -> list[Span]:
+        """Os spans de um rastro. Recebe os EVENTOS, não quem os carrega.
+
+        Era `(proposta, pai)` e lia `proposta.trace`. O corpo não mudou: só o
+        parâmetro afrouxou, porque o mesmo rastro chega por dois caminhos
+        agora — `Proposal.trace` e `Resolution.evidence["trace"]` — e duplicar
+        esta tradução seria manter duas cópias da mesma tabela.
+        """
         achados = []
-        for t in proposta.trace:
+        for t in eventos:
             if t.kind is TraceKind.LLM:
                 achados.append(
                     Span(

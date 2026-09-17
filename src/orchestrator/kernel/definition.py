@@ -109,6 +109,23 @@ class WorkflowDefinition:
         # de AUTORIA, e os domínios em Python montam `WorkflowDefinition`
         # direto. Uma guarda que só protege o canvas não protege o código, e é
         # o código que roda em produção.
+        #
+        # **Um stage com `consome` vazio vê o POOL INTEIRO** — logo consome
+        # qualquer kind, e nenhum kind pode ficar órfão. Sem esta saída, a
+        # checagem literal contava `consome=frozenset()` como "não consome
+        # nada" e RECUSAVA um pipeline correto cujo degrau de baixo usa o
+        # default, empurrando o autor a listar kinds INTERMEDIÁRIOS em
+        # `entrega` só para conseguir construir — o que transforma a
+        # declaração numa mentira E desliga a guarda justo para esses kinds.
+        #
+        # O CUSTO, dito em voz alta: a guarda fica INERTE no grafo inteiro
+        # assim que um único stage usa o default. Um kind digitado errado num
+        # grafo assim não é pego aqui. Declarar `consome` em TODOS os stages é
+        # o que compra a checagem de volta — e é por isso que os domínios de
+        # pipeline declaram. Uma guarda honesta e inerte é melhor que uma que
+        # recusa grafo válido e ensina o autor a mentir em `entrega`.
+        if any(not s.consome for s in self.stages):
+            return
         consumidos: set[str] = set()
         for s in self.stages:
             consumidos |= s.consome
