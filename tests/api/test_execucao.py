@@ -822,3 +822,556 @@ def test_a_lacuna_do_produtor_nao_e_alcancavel_pelo_CATALOGO():
     for workflow_id, definicao in descrever():
         for stage in definicao.stages:
             assert stage.produz == frozenset(), (workflow_id, stage.name)
+
+
+# ===========================================================================
+# EXECUTAR COM AGENTE, COM TETO
+#
+# A regra deste módulo ficou MAIS PRECISA, não mais frouxa. Era "nenhum
+# endpoint gasta dinheiro", e o 409 de "etapa paga" era a porta. Agora:
+#
+#     EXECUTAR pela web GASTA quando a cascata tem agente, com teto, e o teto
+#     é dito antes.
+#
+# As três guardas são as de `api/entrevista.py`, e nenhuma é opcional:
+#   1. teto por unidade de trabalho, aplicado por REQUISIÇÃO;
+#   2. o custo volta em CADA desfecho — inclusive no que falhou;
+#   3. sem chave, recusa legível.
+# ===========================================================================
+
+
+# 100 tokens de entrada + 50 de saída em `claude-opus-5`: 100*500 + 50*2500.
+# Escrito uma vez, derivado da tabela de preços, usado nas asserções de teto.
+_POR_CHAMADA = 100 * 500 + 50 * 2500  # 175.000 µ¢
+
+
+def _resposta(tipo: str = "BUG", *, entrada: int = 100, saida: int = 50):
+    """Uma resposta de modelo válida para o vocabulário do `triador`."""
+    from orchestrator.agent.llm import LLMResponse
+    from orchestrator.kernel.cost import Cost
+
+    return LLMResponse(
+        text=(
+            '{"tipo": "' + tipo + '", "explicacao": "porque sim", '
+            '"evidencia": ["o titulo"], "confianca": "ALTA"}'
+        ),
+        tool_calls=[],
+        cost=Cost(input_tokens=entrada, output_tokens=saida),
+    )
+
+
+def _declarado(**kw):
+    from orchestrator.agent.declarado import AgenteDeclarado
+
+    base = dict(
+        name="gastador",
+        system="classifique",
+        kind="issue",
+        prompt="{titulo}",
+        tipos=("BUG", "FEATURE"),
+        abstem_com="NAO_SEI",
+        max_turns=1,
+    )
+    base.update(kw)
+    return AgenteDeclarado(**base)
+
+
+def _fabrica_com_agentes(*declaracoes, workflow_id="com-agente"):
+    """Uma cascata de agentes declarados que HONRA `ctx.cliente`.
+
+    É a mesma costura de `workflows._de_receita`: `None` continua significando
+    `ClienteAusente` — a tranca —, e quem executa passa um cliente de verdade.
+    """
+    from orchestrator.agent.declarado import construir_agente
+    from orchestrator.grill.catalogo import ClienteAusente
+    from orchestrator.kernel.definition import Stage, WorkflowDefinition
+
+    def fabrica(ctx):
+        cliente_do_ctx = ctx.cliente if ctx.cliente is not None else ClienteAusente()
+        return WorkflowDefinition(
+            id=workflow_id,
+            name="cascata com agente",
+            stages=(
+                Stage(
+                    name="triar",
+                    cascade=tuple(
+                        construir_agente(d, cliente_do_ctx) for d in declaracoes
+                    ),
+                ),
+            ),
+        )
+
+    return fabrica
+
+
+def _csv_de_issues(tmp_path, monkeypatch, linhas: int = 3) -> None:
+    import orchestrator.api.app as api_app
+
+    raiz = tmp_path / "entradas"
+    raiz.mkdir(exist_ok=True)
+    corpo = "numero,titulo,corpo\n" + "".join(
+        f"{i},titulo {i},corpo {i}\n" for i in range(1, linhas + 1)
+    )
+    (raiz / "issues.csv").write_text(corpo, encoding="utf-8")
+    monkeypatch.setattr(api_app, "_RAIZ_ENTRADAS", raiz)
+
+
+_FONTE_ISSUES = {
+    "tipo": "arquivo",
+    "caminho": "issues.csv",
+    "kind": "issue",
+    "campo_id": "numero",
+}
+
+
+def _cliente_falso(monkeypatch, respostas, teto_visto: dict | None = None):
+    """Troca SÓ a ponta de rede. O teto continua passando por `ClienteComTeto`.
+
+    Monkeypatchar `_cliente_de_execucao` para devolver um `FakeLLMClient` cru
+    provaria o roteamento e nada sobre o teto — o teto seria um argumento que
+    o teste recebe e joga fora. Aqui o embrulho REAL é construído, com o teto
+    REAL do pedido, e só o cliente de dentro é falso.
+    """
+    import orchestrator.api.app as api_app
+    from orchestrator.agent.llm import FakeLLMClient
+    from orchestrator.agent.teto import ClienteComTeto
+
+    fake = FakeLLMClient(list(respostas))
+
+    def _de_execucao(teto):
+        if teto_visto is not None:
+            teto_visto["teto"] = teto
+        return ClienteComTeto(fake, teto_microcents=teto)
+
+    monkeypatch.setattr(api_app, "_tem_chave", lambda: True)
+    monkeypatch.setattr(api_app, "_cliente_de_execucao", _de_execucao)
+    return fake
+
+
+# -- guarda 3: sem chave, recusa legível ------------------------------------
+
+
+def test_sem_chave_a_execucao_com_agente_e_recusada_com_MOTIVO(monkeypatch):
+    """Guarda 3, a mesma do chat. Sem chave, recusa legível — em vez de o SDK
+    levantar no meio do laço com o trabalho já pela metade."""
+    import orchestrator.api.app as api_app
+
+    monkeypatch.setattr(api_app, "_tem_chave", lambda: False)
+    _registrar(monkeypatch, "com-agente", _fabrica_com_agentes(_declarado()))
+
+    r = cliente.post("/api/workflows/com-agente/runs", json={})
+
+    assert r.status_code == 409, r.text
+    assert "chave" in r.json()["detail"].lower()
+    # E o texto diz o que fazer, nas DUAS saídas: configurar, ou rodar pela CLI.
+    assert "ANTHROPIC_API_KEY" in r.json()["detail"]
+
+
+def test_cascata_SEM_agente_nao_exige_chave(monkeypatch):
+    """A regra ficou mais precisa, não mais frouxa: só gasta quem tem agente."""
+    import orchestrator.api.app as api_app
+
+    monkeypatch.setattr(api_app, "_tem_chave", lambda: False)
+
+    r = cliente.post("/api/workflows/conciliacao/runs", json={})
+
+    assert r.status_code == 200, r.text
+
+
+def test_sem_agente_o_cliente_de_execucao_NUNCA_e_construido(monkeypatch):
+    """A tranca, não a porta. `ClienteAusente` continua sendo o default, e
+    `_cliente_de_execucao` — o único caminho daqui até o modelo — não é sequer
+    chamado quando não há agente na cascata."""
+    import orchestrator.api.app as api_app
+
+    def _proibido(teto):  # pragma: no cover - o teste falha se isto rodar
+        raise AssertionError("cascata sem agente construiu cliente de execução")
+
+    monkeypatch.setattr(api_app, "_cliente_de_execucao", _proibido)
+    monkeypatch.setattr(api_app, "_tem_chave", lambda: True)
+
+    assert cliente.post("/api/workflows/conciliacao/runs", json={}).status_code == 200
+
+
+# -- guarda 1: o teto, dito antes ------------------------------------------
+
+
+def test_o_teto_do_pedido_chega_ao_agente(monkeypatch):
+    """Guarda 1. O teto é dito ANTES, e é o do pedido que vale — não o default
+    do agente, que é generoso por ser um default."""
+    vistos: dict = {}
+    _cliente_falso(monkeypatch, [_resposta()], teto_visto=vistos)
+    _registrar(
+        monkeypatch, "com-teto", _fabrica_com_agentes(_declarado(), workflow_id="com-teto")
+    )
+
+    cliente.post("/api/workflows/com-teto/runs", json={"teto_microcents": 12345})
+
+    assert vistos["teto"] == 12345
+
+
+def test_o_teto_do_pedido_PARA_o_gasto(tmp_path, monkeypatch):
+    """O teto não é decoração: ele para de gastar.
+
+    Três issues, uma chamada por issue, 175.000 µ¢ cada. Com teto de 100.000 µ¢
+    a PRIMEIRA passa — nada tinha sido gasto ainda — e as duas seguintes nem
+    chegam ao modelo.
+
+    E é por isso que o gasto final (175.000) fica ACIMA do teto (100.000): não
+    há como saber o custo de uma chamada sem fazê-la, então o teto é conferido
+    ANTES de cada uma e a última pode ultrapassá-lo por um turno. É a mesma
+    forma do orçamento por item em `agent/conversa.py`, está dita no
+    `ClienteComTeto`, e o teste a fixa em vez de escolher números que a
+    escondam — um teto lido como "limite exato" viraria um relatório de bug.
+    """
+    _csv_de_issues(tmp_path, monkeypatch, linhas=3)
+    fake = _cliente_falso(monkeypatch, [_resposta()] * 3)
+    _registrar(monkeypatch, "com-agente", _fabrica_com_agentes(_declarado()))
+
+    r = cliente.post(
+        "/api/workflows/com-agente/runs",
+        json={"fonte": _FONTE_ISSUES, "teto_microcents": 100_000},
+    )
+
+    assert r.status_code == 200, r.text
+    assert len(fake.chamadas) == 1
+    assert r.json()["custo_microcents"] == _POR_CHAMADA > 100_000
+
+
+def test_teto_AUSENTE_cai_no_teto_do_AGENTE_e_nunca_em_ilimitado(tmp_path, monkeypatch):
+    """`teto_microcents: None` NAO e "sem teto".
+
+    O schema já diz que `None` significa o teto do próprio agente
+    (`AgentSpec.budget_total_microcents`) e que "não existe valor que signifique
+    sem teto". Aqui isso é OBSERVADO: cinco issues, um agente com teto total de
+    200.000 µ¢, pedido sem `teto_microcents` — e o gasto para em duas chamadas,
+    não em cinco.
+    """
+    _csv_de_issues(tmp_path, monkeypatch, linhas=5)
+    fake = _cliente_falso(monkeypatch, [_resposta()] * 5)
+    _registrar(
+        monkeypatch,
+        "com-agente",
+        _fabrica_com_agentes(_declarado(budget_total_microcents=200_000)),
+    )
+
+    r = cliente.post("/api/workflows/com-agente/runs", json={"fonte": _FONTE_ISSUES})
+
+    assert r.status_code == 200, r.text
+    # 2 chamadas: a 3ª encontra 350.000 > 200.000 e abstém sem chamar o modelo.
+    assert len(fake.chamadas) == 2
+    assert r.json()["custo_microcents"] == 2 * _POR_CHAMADA
+
+
+def test_o_embrulho_de_teto_nao_inventa_ilimitado():
+    """A outra metade da mesma garantia, na unidade: `teto=None` deixa o teto
+    do agente valer, e nunca troca um teto por ausência de teto."""
+    import orchestrator.api.app as api_app
+    from orchestrator.agent.teto import ClienteComTeto
+
+    # Construir NÃO fala com rede: `AnthropicClient` só instancia o SDK na
+    # primeira chamada, e aqui nenhuma é feita.
+    c = api_app._cliente_de_execucao(None)
+
+    assert isinstance(c, ClienteComTeto)
+    assert c.teto_microcents is None
+    assert api_app._cliente_de_execucao(7).teto_microcents == 7
+
+
+# -- guarda 2: o custo volta em CADA desfecho -------------------------------
+
+
+def test_um_run_que_GASTOU_e_FALHOU_devolve_quanto_gastou(tmp_path, monkeypatch):
+    """Guarda 2, e é o buraco que o plano não cobria.
+
+    Gasto que não aparece na tela é gasto que ninguém revisa. Sem isto, uma
+    cascata que gasta e depois levanta devolve um 500 nu e o dinheiro morre
+    com a exceção.
+
+    O segundo agente cita no prompt um campo que o CSV não tem —
+    `declarado._units` levanta `KeyError` de propósito, em vez de mandar ao
+    modelo um prompt com buracos. É um caminho de erro REAL e alcançável por
+    configuração: basta compor um agente cujo template não case com as colunas
+    do arquivo. Note que um cliente que levanta DENTRO de `complete` não serve
+    para provar isto: `agent/conversa.py` captura exatamente essa chamada e a
+    transforma em abstenção, de propósito.
+    """
+    _csv_de_issues(tmp_path, monkeypatch, linhas=2)
+    _cliente_falso(monkeypatch, [_resposta()] * 2)
+    _registrar(
+        monkeypatch,
+        "com-agente",
+        _fabrica_com_agentes(
+            _declarado(),
+            _declarado(name="quebrado", prompt="{coluna_que_nao_existe}"),
+        ),
+    )
+
+    r = cliente.post("/api/workflows/com-agente/runs", json={"fonte": _FONTE_ISSUES})
+
+    assert r.status_code == 500, r.text
+    detalhe = r.json()["detail"]
+    assert detalhe["custo_microcents"] == 2 * _POR_CHAMADA
+    assert "KeyError" in detalhe["motivo"]
+
+
+def test_um_run_que_falhou_SEM_gastar_reporta_zero_MEDIDO(monkeypatch):
+    """O outro lado: zero aqui é MEDIDO, não inventado.
+
+    Sem agente na cascata não existe caminho até o modelo — `ClienteAusente` é
+    a tranca —, então `0` é o gasto de fato, e não um número que finge medição
+    onde nada foi medido.
+    """
+    import orchestrator.api.app as api_app
+
+    def _explode(*a, **kw):
+        raise RuntimeError("defeito do motor")
+
+    monkeypatch.setattr(api_app, "execute", _explode)
+
+    r = cliente.post("/api/workflows/conciliacao/runs", json={})
+
+    assert r.status_code == 500, r.text
+    assert r.json()["detail"]["custo_microcents"] == 0
+
+
+def test_um_run_que_GASTOU_e_deu_certo_fica_no_HISTORICO_com_o_custo(
+    tmp_path, monkeypatch
+):
+    """A outra metade da guarda 2: no caminho feliz o custo não depende de o
+    corpo da resposta sobreviver — ele está no store, e `/api/runs` o devolve.
+    """
+    _csv_de_issues(tmp_path, monkeypatch, linhas=2)
+    _cliente_falso(monkeypatch, [_resposta()] * 2)
+    _registrar(monkeypatch, "com-agente", _fabrica_com_agentes(_declarado()))
+
+    corpo = cliente.post(
+        "/api/workflows/com-agente/runs", json={"fonte": _FONTE_ISSUES}
+    ).json()
+
+    (resumo,) = cliente.get("/api/runs", params={"workflow_id": "com-agente"}).json()
+    assert resumo["microcents"] == corpo["custo_microcents"] == 2 * _POR_CHAMADA
+    assert resumo["proposed"] == 2
+
+
+# -- a ordem entre o 409 e o 422 -------------------------------------------
+
+
+def test_o_422_de_PAYLOAD_vem_ANTES_do_409_de_chave(tmp_path, monkeypatch):
+    """A ordem mudou junto com o significado do 409, e de propósito.
+
+    Antes, o 409 dizia "esta cascata é paga e nunca roda por aqui" — uma
+    propriedade permanente da cascata, que precede qualquer coisa sobre o
+    formato do dado. Agora ele diz "falta uma chave NO SERVIDOR" — estado do
+    hospedeiro, não do pedido. Devolver isso primeiro mandaria o usuário
+    procurar o administrador para depois descobrir que o CSV dele seria
+    recusado de qualquer jeito.
+
+    Erro do PEDIDO antes de erro do AMBIENTE.
+    """
+    import orchestrator.api.app as api_app
+    from orchestrator.agent.declarado import construir_agente
+    from orchestrator.grill.catalogo import ClienteAusente
+    from orchestrator.kernel.definition import Stage, WorkflowDefinition
+    from orchestrator.matching.exact import ExactMatcher
+
+    raiz = tmp_path / "entradas"
+    raiz.mkdir()
+    (raiz / "itens.csv").write_text("id,texto\na,um\n", encoding="utf-8")
+    monkeypatch.setattr(api_app, "_RAIZ_ENTRADAS", raiz)
+    monkeypatch.setattr(api_app, "_tem_chave", lambda: False)
+
+    def fabrica(ctx):
+        cliente_do_ctx = ctx.cliente if ctx.cliente is not None else ClienteAusente()
+        return WorkflowDefinition(
+            id="misto",
+            name="regra tipada mais agente",
+            stages=(
+                Stage(
+                    name="s",
+                    cascade=(
+                        ExactMatcher(),
+                        construir_agente(_declarado(), cliente_do_ctx),
+                    ),
+                ),
+            ),
+        )
+
+    _registrar(monkeypatch, "misto", fabrica)
+
+    r = cliente.post(
+        "/api/workflows/misto/runs",
+        json={"fonte": {"tipo": "arquivo", "caminho": "itens.csv",
+                        "kind": "banco", "campo_id": "id"}},
+    )
+
+    assert r.status_code == 422, r.text
+    assert "L1" in r.json()["detail"]
+
+
+# -- o objetivo da fatia: compor na tela e rodar sobre um arquivo -----------
+
+
+def test_um_CSV_de_issues_roda_no_TRIADOR_composto_pela_WEB(tmp_path, monkeypatch):
+    """A evidência do objetivo desta fatia, de ponta a ponta.
+
+    Até aqui NENHUM bloco do catálogo executável por `/runs` consumia
+    dicionário: as seis regras exigem payload tipado, e os três agentes são
+    `AGENTE` — barrados pelo 409. O teste de CSV da Task 3 precisou de um
+    resolver construído dentro do próprio teste, então a máquina estava
+    provada e nenhuma configuração ENTREGUE estava.
+
+    Com o 409 fora, o `triador` do catálogo roda: `kind="issue"`, prompt sobre
+    campos do payload, e `agent/declarado.py::_campos` aceita dicionário — que
+    é exatamente o que `ArquivoSource` entrega. Compor pela web
+    (`/api/receitas`) e rodar sobre um arquivo do usuário, sem sair da tela.
+    """
+    import orchestrator.api.app as api_app
+
+    monkeypatch.setattr(api_app, "_RAIZ_RECEITAS", tmp_path / "receitas")
+    _csv_de_issues(tmp_path, monkeypatch, linhas=3)
+    fake = _cliente_falso(monkeypatch, [_resposta()] * 3)
+
+    criada = cliente.post("/api/receitas", json={
+        "id": "triagem-web", "nome": "Triagem", "justificativa": "j",
+        "resolvers": [{"nome": "triador"}]})
+    assert criada.status_code == 201, criada.text
+
+    r = cliente.post(
+        "/api/workflows/triagem-web/runs",
+        json={"fonte": _FONTE_ISSUES, "teto_microcents": 10_000_000},
+    )
+
+    assert r.status_code == 200, r.text
+    corpo = r.json()
+    assert corpo["itens"] == 3
+    assert corpo["input_ref"].startswith("file:issues.csv@")
+    # O agente LEU o arquivo: o prompt do `triador` é "{titulo}\n\n{corpo}",
+    # e o que chegou ao modelo são as colunas do CSV. Sem isto, a cascata
+    # poderia ter rodado sobre um pool vazio e o teste continuaria verde.
+    assert len(fake.chamadas) == 3
+    enviados = [c["messages"][0]["content"] for c in fake.chamadas]
+    assert enviados == [f"titulo {i}\n\ncorpo {i}" for i in (1, 2, 3)]
+    # O custo volta, e é de AGENTE — não de regra.
+    (linha,) = corpo["por_resolver"]
+    assert (linha["name"], linha["cost_class"]) == ("triador", "AGENTE")
+    assert linha["microcents"] == corpo["custo_microcents"] == 3 * _POR_CHAMADA
+    # Agente PROPÕE, nunca resolve: a lacuna continua inteira, e é isso que
+    # manda as três issues para a revisão humana.
+    assert corpo["resolvidos"] == 0
+    assert corpo["gap"]["items"] == 3
+    assert corpo["contra_gabarito"] is None
+
+
+def test_o_triador_composto_pela_WEB_e_LISTADO_como_executavel(tmp_path, monkeypatch):
+    """A tela não pode desabilitar um botão que o servidor aceitaria.
+
+    `executavel` era "a cascata não tem AGENTE". Com o caminho pago aberto, a
+    pergunta que a tela faz é outra — "este servidor consegue rodar isto?" — e
+    a resposta depende da chave. Uma cascata paga num servidor COM chave é
+    executável, e dizer o contrário faria a API mentir sobre a própria rota.
+    """
+    import orchestrator.api.app as api_app
+
+    monkeypatch.setattr(api_app, "_RAIZ_RECEITAS", tmp_path / "receitas")
+    cliente.post("/api/receitas", json={
+        "id": "triagem-web", "nome": "Triagem", "justificativa": "j",
+        "resolvers": [{"nome": "triador"}]})
+
+    monkeypatch.setattr(api_app, "_tem_chave", lambda: True)
+    com = next(
+        w for w in cliente.get("/api/workflows").json() if w["id"] == "triagem-web"
+    )
+    monkeypatch.setattr(api_app, "_tem_chave", lambda: False)
+    sem = next(
+        w for w in cliente.get("/api/workflows").json() if w["id"] == "triagem-web"
+    )
+
+    assert com["executavel"] is True
+    assert sem["executavel"] is False
+    assert com["classes"] == sem["classes"] == ["AGENTE"]
+
+
+# -- a política, que o 409 segurava em pé -----------------------------------
+
+
+def test_a_politica_economica_continua_INERTE_com_o_409_fora(tmp_path, monkeypatch):
+    """Tirar o 409 derruba UMA das pernas que seguram a política inerte. As
+    outras duas seguem de pé, e isto é o que as prende.
+
+    A revisão da Task 3 registrou que `POLITICA_ECONOMICA`/`max_cost_ratio`
+    está inerte por acidente, sobre três coincidências: (a) nenhum formato de
+    composição expressa política; (b) o 409 barra `AGENTE`; (c)
+    `custo_estimado` devolve 0 fora do `investigador`. Esta task remove (b).
+
+    Política que às vezes se aplica é pior que política nenhuma, porque
+    ninguém sabe qual das duas está olhando. Então a escolha é EXPLÍCITA:
+    neste caminho ela continua totalmente desligada, e as afirmações abaixo
+    são o que impede alguém de religá-la pela metade sem perceber.
+    """
+    import orchestrator.api.app as api_app
+    from orchestrator.kernel.policy import ExecutionPolicy
+    from orchestrator.workflows import descrever
+
+    # (a) Nenhum workflow publicado carrega razão de custo nem predicado.
+    #     `descrever` cobre o embutido e tudo que veio de receita.
+    monkeypatch.setattr(api_app, "_RAIZ_RECEITAS", tmp_path / "receitas")
+    cliente.post("/api/receitas", json={
+        "id": "triagem-web", "nome": "Triagem", "justificativa": "j",
+        "resolvers": [{"nome": "triador"}]})
+    for workflow_id, definicao in descrever(tmp_path / "receitas"):
+        for stage in definicao.stages:
+            assert stage.policy.max_cost_ratio is None, (workflow_id, stage.name)
+            assert stage.policy.skip_when is None, (workflow_id, stage.name)
+            assert stage.policy.escalate_when is None, (workflow_id, stage.name)
+    assert ExecutionPolicy().max_cost_ratio is None
+
+    # (c) E, mesmo que alguém ligasse uma razão de custo, `/runs` não passa
+    #     `PolicyContext` — sem `value_at_risk`/`estimated_cost` a regra 7 do
+    #     motor devolve `None` e não pula item nenhum. A observação é sobre a
+    #     CHAMADA que o endpoint faz, não sobre uma leitura do código.
+    vistos: dict = {}
+    original = api_app.execute
+
+    def _espiao(definicao, pool, **kw):
+        vistos.update(kw)
+        return original(definicao, pool, **kw)
+
+    monkeypatch.setattr(api_app, "execute", _espiao)
+    _csv_de_issues(tmp_path, monkeypatch, linhas=1)
+    _cliente_falso(monkeypatch, [_resposta()])
+
+    r = cliente.post("/api/workflows/triagem-web/runs", json={"fonte": _FONTE_ISSUES})
+
+    assert r.status_code == 200, r.text
+    assert vistos.get("policy") is None
+
+
+def test_a_tranca_de_REDE_da_suite_e_ALTA_e_nao_engolida(tmp_path, monkeypatch):
+    """A guarda que impede esta fatia de gastar dinheiro em CI, provada.
+
+    `tests/conftest.py::_rede_proibida` troca `anthropic.Anthropic` por algo que
+    levanta. Ela existe porque quatro testes desta suite passaram a ir a rede no
+    dia em que `/runs` aprendeu a executar cascata paga, e ninguem notou: a
+    falha virava abstencao em `agent/conversa.py` e a rota devolvia 200.
+
+    Por isso `RedeProibida` deriva de `BaseException` — e por isso este teste
+    existe. Sem ele a tranca seria uma linha de conftest que ninguem exercita, e
+    a proxima pessoa a "arrumar" a heranca para `Exception` a desligaria sem que
+    nada ficasse vermelho.
+
+    Aqui `_cliente_de_execucao` NAO e substituido de proposito: e o unico teste
+    do repositorio que deixa o caminho de rede de verdade ser percorrido, ate o
+    ponto exato em que a tranca fecha.
+    """
+    import orchestrator.api.app as api_app
+
+    _csv_de_issues(tmp_path, monkeypatch, linhas=1)
+    monkeypatch.setattr(api_app, "_tem_chave", lambda: True)
+    _registrar(monkeypatch, "com-agente", _fabrica_com_agentes(_declarado()))
+
+    # `BaseException`, e nao `Exception`: se a tranca fosse uma `Exception`,
+    # `conversar` a capturaria, o POST devolveria 200, e este `raises` falharia
+    # — que e exatamente o sinal que se quer.
+    with pytest.raises(BaseException, match="SDK real da Anthropic"):
+        cliente.post("/api/workflows/com-agente/runs", json={"fonte": _FONTE_ISSUES})

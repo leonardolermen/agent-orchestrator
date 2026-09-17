@@ -32,9 +32,17 @@ MODELO_INERTE = "claude-opus-5"
 class ClienteAusente:
     """`LLMClient` sentinela: existe para ser construído, nunca para ser chamado.
 
-    É o que permite à API construir e desenhar um resolver pago sem que exista
-    caminho de execução paga atrás de um endpoint. O 409 do `app.py` é a porta
-    educada; isto aqui é a tranca.
+    É o que permite DESENHAR um resolver pago — listar, validar, servir a forma
+    da cascata — sem que a construção abra caminho até o modelo.
+
+    **Continua sendo a tranca, e agora ela tem exatamente uma chave.** Enquanto
+    `/runs` recusava toda cascata paga com 409, o sentinela cobria o módulo
+    HTTP inteiro. Hoje executar com agente é possível, e o único ponto que
+    desarma a tranca é `api/app.py::_cliente_de_execucao` — chamado só quando a
+    cascata tem agente e só quando há chave. Todo o resto (`/api/receitas`,
+    `/api/composicoes`, `GET /api/workflows`, `GET /api/workflows/{id}`)
+    constrói com este sentinela, e um `RuntimeError` daqui é o sinal de que
+    algum caminho novo chegou ao modelo por onde não deveria haver caminho.
     """
 
     model: str = MODELO_INERTE

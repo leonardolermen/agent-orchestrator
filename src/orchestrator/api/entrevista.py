@@ -1,22 +1,23 @@
 """A entrevista por WebSocket: o chat que compõe a cascata.
 
-**Este módulo GASTA DINHEIRO, e é o único da camada HTTP que gasta.**
+**Este módulo GASTA DINHEIRO.** Foi o primeiro da camada HTTP a gastar, e por
+um tempo foi o único.
 
 A regra de `api/app.py` era *"nenhum endpoint daqui pode gastar dinheiro"*, e
-ela existia para proteger o caminho de EXECUÇÃO: rodar um workflow pela web
-nunca pode virar uma conta. Isso continua valendo e continua testado — uma
-cascata com classe `AGENTE` é recusada com 409.
+ela existia para proteger o caminho de EXECUÇÃO: rodar um workflow pela web não
+podia virar uma conta. A entrevista foi a primeira exceção, porque ela não
+executa nada — ela COMPÕE, e não há como compor conversando sem falar com um
+modelo. Hoje `/runs` também gasta, sob as MESMAS três guardas (ver o cabeçalho
+de `api/app.py`), e a regra ficou:
 
-A entrevista é outra coisa: ela não executa nada, ela COMPÕE. E não há como
-compor conversando sem falar com um modelo. Então a regra fica mais precisa em
-vez de absoluta:
-
-    EXECUTAR um workflow pela web nunca gasta dinheiro.
+    EXECUTAR pela web gasta quando a cascata tem agente, com teto, e o teto é
+    dito antes.
     COMPOR por conversa gasta, com teto, e o teto é dito antes.
 
 O custo de ser mais preciso: este endpoint é um caminho pelo qual quem alcança o
 servidor gasta o crédito de quem o hospeda. As três guardas abaixo são o que
-torna isso aceitável, e nenhuma delas é opcional.
+torna isso aceitável, nenhuma delas é opcional, e são elas que `api/app.py`
+copia — este arquivo é a referência citada lá.
 
 **Guarda 1 — teto por entrevista.** `Entrevistador.budget_microcents` já existe
 e já é testado; aqui ele é aplicado por conexão, não por processo.

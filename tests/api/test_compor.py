@@ -213,9 +213,11 @@ def test_a_receita_composta_APARECE_na_listagem_de_workflows():
     assert "composta" in ids
 
 
-def test_cascata_com_AGENTE_e_marcada_como_nao_executavel_pela_API():
-    """A regra que governa o módulo HTTP: nenhum endpoint gasta dinheiro. A
-    tela desabilita o botão em vez de deixar o usuário colher um 409.
+def test_cascata_com_AGENTE_so_e_executavel_onde_HA_CHAVE(monkeypatch):
+    """A regra do módulo HTTP ficou mais precisa: executar pela web GASTA
+    quando a cascata tem agente, com teto, e o teto é dito antes. A tela
+    continua desabilitando o botão em vez de deixar o usuário colher um 409 —
+    mas agora só quando o servidor de fato não conseguiria rodar.
 
     "investigador", não "agente": o catálogo plano (Task 3) nomeia o bloco
     AGENTE da conciliação pelo `Resolver.name` que ele sempre teve — o
@@ -224,9 +226,13 @@ def test_cascata_com_AGENTE_e_marcada_como_nao_executavel_pela_API():
     """
     cliente.post("/api/receitas", json=_corpo([{"nome": "investigador"}], wid="cara"))
 
-    w = next(x for x in cliente.get("/api/workflows").json() if x["id"] == "cara")
+    def _cara():
+        return next(x for x in cliente.get("/api/workflows").json() if x["id"] == "cara")
 
-    assert w["executavel"] is False
+    monkeypatch.setattr(app_mod, "_tem_chave", lambda: False)
+    assert _cara()["executavel"] is False
+    monkeypatch.setattr(app_mod, "_tem_chave", lambda: True)
+    assert _cara()["executavel"] is True
 
 
 # -- a página ---------------------------------------------------------------
@@ -395,13 +401,22 @@ def test_cascata_GRATIS_composta_pela_tela_RODA_de_verdade():
     assert "items" in r.json()["gap"]
 
 
-def test_cascata_PAGA_composta_pela_tela_e_recusada_pelo_SERVIDOR():
+def test_cascata_PAGA_composta_pela_tela_e_recusada_SEM_CHAVE(monkeypatch):
     """A tela desabilita o botão, mas quem garante é o servidor. Testado
     forçando o POST — que é exatamente o que fiz no navegador.
 
+    O que a recusa DIZ mudou junto com o motivo dela: não é mais "isto nunca
+    roda por aqui", é "falta uma chave neste servidor", e o texto nomeia a
+    variável e as duas saídas. Uma recusa que não diz o que fazer manda a
+    pessoa adivinhar.
+
+    `_tem_chave` é substituído em vez de lido do ambiente: caso contrário este
+    teste passaria ou falharia conforme a máquina que o roda.
+
     "investigador", não "agente" — ver o comentário em
-    `test_cascata_com_AGENTE_e_marcada_como_nao_executavel_pela_API`.
+    `test_cascata_com_AGENTE_so_e_executavel_onde_HA_CHAVE`.
     """
+    monkeypatch.setattr(app_mod, "_tem_chave", lambda: False)
     cliente.post("/api/receitas", json=_corpo([{"nome": "investigador"}], wid="com-agente"))
 
     r = cliente.post(
@@ -411,3 +426,4 @@ def test_cascata_PAGA_composta_pela_tela_e_recusada_pelo_SERVIDOR():
 
     assert r.status_code == 409
     assert "etapa paga" in r.json()["detail"]
+    assert "ANTHROPIC_API_KEY" in r.json()["detail"]

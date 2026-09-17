@@ -75,19 +75,37 @@ def test_workflow_gerado_executa_e_fecha_a_lacuna(tmp_path):
     assert [r["name"] for r in dados["por_resolver"]] == ["L1", "revisor"]
 
 
-def test_workflow_com_agente_e_listado_como_nao_executavel(tmp_path):
-    # "investigador", não "agente": o catálogo plano (Task 3) nomeia o bloco
-    # AGENTE da conciliação pelo `Resolver.name` que ele sempre teve — o
-    # cardápio do grill é que usava a chave "agente" só para propor este
-    # mesmo bloco.
+def test_workflow_com_agente_e_executavel_conforme_a_CHAVE(tmp_path, monkeypatch):
+    """`executavel` responde "o botão Run vai funcionar?", e a resposta mudou.
+
+    Era "a cascata não tem AGENTE", porque `/runs` recusava toda cascata paga.
+    Com o caminho pago aberto, uma cascata com agente roda num servidor que tem
+    `ANTHROPIC_API_KEY` e é recusada com 409 num que não tem — então é a chave
+    que decide, e a listagem tem de dizer o mesmo que a rota diria.
+
+    Monkeypatch dos DOIS lados de propósito: sem isso o teste passaria ou
+    falharia conforme a variável de ambiente da máquina que o roda, que é
+    exatamente a classe de teste que esta fatia existe para não deixar em pé.
+
+    "investigador", não "agente": o catálogo plano (Task 3) nomeia o bloco
+    AGENTE da conciliação pelo `Resolver.name` que ele sempre teve — o
+    cardápio do grill é que usava a chave "agente" só para propor este
+    mesmo bloco.
+    """
     _gravar(tmp_path, "pago", "L1", "investigador")
     cliente = TestClient(app_mod.app)
 
-    dados = cliente.get("/api/workflows").json()
-    pago = next(x for x in dados if x["id"] == "pago")
+    def _pago():
+        return next(x for x in cliente.get("/api/workflows").json() if x["id"] == "pago")
 
-    assert pago["executavel"] is False
-    assert "AGENTE" in pago["classes"]
+    monkeypatch.setattr(app_mod, "_tem_chave", lambda: False)
+    sem = _pago()
+    monkeypatch.setattr(app_mod, "_tem_chave", lambda: True)
+    com = _pago()
+
+    assert sem["executavel"] is False
+    assert com["executavel"] is True
+    assert "AGENTE" in sem["classes"] == com["classes"]
 
 
 def test_receita_inconstruivel_nao_derruba_a_listagem(tmp_path, capsys):
