@@ -23,9 +23,9 @@ import hashlib
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
 
-from orchestrator.agent.llm import LLMClient, blocos_assistente
+from orchestrator.agent.conversa import conversar
+from orchestrator.agent.llm import LLMClient
 from orchestrator.agent.tools.registry import ToolRegistry
 from orchestrator.kernel.cost import Cost, CostClass
 from orchestrator.kernel.resolution import (
@@ -201,142 +201,23 @@ class Agent:
         return ResolverOutput(proposals=propostas, cost=total)
 
     def investigar(self, tarefa: AgentTask) -> Proposal:
-        """Um item, do prompt à proposta. O laço inteiro, para UMA tarefa.
+        """Um item, do prompt à proposta.
 
-        Público desde o M8. Era `_uma`, e `resolve` era o único chamador — até
-        o `Crew` precisar rodar o mesmo laço com o prompt enriquecido pelo
-        `SharedContext`. A alternativa era o Crew chamar `resolve` por agente,
-        mas aí `AgentSpec.units` remontaria o prompt do payload e não haveria
-        onde injetar o que os agentes anteriores escreveram.
-
-        Tornar a costura pública é mais honesto que um Crew chamando `_uma` de
-        outro módulo: um sublinhado que dois módulos ignoram não protege nada,
-        só esconde quem depende de quê.
+        O laço mora em `conversa.conversar` desde a extração: aqui ficam só os
+        dois pontos que sabem o que é uma proposta. Público desde o M8, porque
+        o `Crew` roda o mesmo laço com o prompt enriquecido pelo
+        `SharedContext` — e um sublinhado que dois módulos ignoram não protege
+        nada, só esconde quem depende de quê.
         """
-        mensagens: list[dict[str, Any]] = [{"role": "user", "content": tarefa.prompt}]
-        custo, tentativas_formato = Cost.zero(), 0
-        esquemas = self.tools.schemas()
-        trace: list[TraceEvent] = [
-            TraceEvent(kind=TraceKind.ENTRADA, detail={"item": tarefa.id})
-        ]
-
-        for turno in range(1, self.spec.max_turns + 1):
-            try:
-                resposta = self.client.complete(
-                    system=self.spec.system, messages=mensagens, tools=esquemas
-                )
-            except Exception as erro:  # noqa: BLE001
-                # A captura envolve SÓ a chamada ao modelo, de propósito.
-                # Alargá-la para o corpo do turno inteiro transformaria bug do
-                # próprio agente — um AttributeError, um nome errado — em
-                # abstenção plausível com suíte verde, que é a falha oposta e
-                # pior da que esta guarda previne.
-                #
-                # Timeout, rede caída, 500 da API. O SDK já tenta de novo por
-                # conta própria; se chegou aqui, acabou. Abster é a saída
-                # certa: derrubar o processo inteiro por causa de um item
-                # transformaria falha de rede em trabalho não entregue.
-                trace.append(
-                    TraceEvent(
-                        kind=TraceKind.ERRO, detail={"turno": turno, "erro": str(erro)}
-                    )
-                )
-                trace.append(
-                    TraceEvent(kind=TraceKind.OUTCOME, detail={"motivo": "falha de api"})
-                )
-                return self.spec.abstain(
-                    tarefa.id, f"falha de API ao investigar: {erro}", custo, trace
-                )
-
-            custo = custo + resposta.cost
-            trace.append(
-                TraceEvent(
-                    kind=TraceKind.LLM,
-                    detail={
-                        "turno": turno,
-                        "tokens_entrada": resposta.cost.input_tokens,
-                        "tokens_saida": resposta.cost.output_tokens,
-                        "ferramentas_pedidas": [c.name for c in resposta.tool_calls],
-                        # I8: truncamento (max_tokens), recusa e falha de rede
-                        # são três problemas operacionais diferentes que sem
-                        # este campo aparecem idênticos.
-                        "stop_reason": resposta.stop_reason,
-                    },
-                )
-            )
-
-            if custo.microcents(self.client.model) > self.spec.budget_microcents:
-                trace.append(
-                    TraceEvent(kind=TraceKind.OUTCOME, detail={"motivo": "orçamento"})
-                )
-                return self.spec.abstain(
-                    tarefa.id, "orçamento do item esgotado", custo, trace
-                )
-
-            if resposta.tool_calls:
-                resultados = [
-                    self.tools.call(c.name, c.arguments) for c in resposta.tool_calls
-                ]
-                for chamada, r in zip(resposta.tool_calls, resultados, strict=True):
-                    trace.append(
-                        TraceEvent(
-                            kind=TraceKind.TOOL,
-                            detail={
-                                "nome": chamada.name,
-                                "argumentos": chamada.arguments,
-                                # I2: o spec exige argumento E retorno no
-                                # rastro — sem o retorno, uma auditoria não
-                                # sabe o que a ferramenta respondeu.
-                                "resultado": r.para_modelo(),
-                                # Novo com o registry: latência por chamada.
-                                "duracao_ms": r.duration_ms,
-                            },
-                        )
-                    )
-                mensagens.append(
-                    {"role": "assistant", "content": blocos_assistente(resposta)}
-                )
-                # UM `tool_result` por `tool_use`, na mesma ordem: a Messages
-                # API exige isso, e uma chamada paralela que recebesse só um
-                # deixaria a(s) outra(s) órfã(s) e a PRÓXIMA chamada voltaria
-                # com 400 (CRITICAL 2, defeito 2).
-                mensagens.append(
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": chamada.id,
-                                "content": json.dumps(
-                                    r.para_modelo(), ensure_ascii=False, default=str
-                                ),
-                            }
-                            for chamada, r in zip(
-                                resposta.tool_calls, resultados, strict=True
-                            )
-                        ],
-                    }
-                )
-                continue
-
-            proposta = self.spec.parse(tarefa.id, resposta.text, custo, trace)
-            if proposta is not None:
-                return proposta
-
-            tentativas_formato += 1
-            if tentativas_formato > self.spec.max_format_retries:
-                break
-            mensagens.append({"role": "assistant", "content": resposta.text})
-            mensagens.append(
-                {
-                    "role": "user",
-                    "content": "Resposta inválida. Responda APENAS o objeto JSON pedido.",
-                }
-            )
-
-        trace.append(
-            TraceEvent(kind=TraceKind.OUTCOME, detail={"motivo": "sem conclusão"})
-        )
-        return self.spec.abstain(
-            tarefa.id, "investigação encerrada sem conclusão utilizável", custo, trace
+        return conversar(
+            client=self.client,
+            tools=self.tools,
+            system=self.spec.system,
+            item_id=tarefa.id,
+            prompt=tarefa.prompt,
+            max_turns=self.spec.max_turns,
+            max_format_retries=self.spec.max_format_retries,
+            budget_microcents=self.spec.budget_microcents,
+            interpretar=self.spec.parse,
+            desistir=self.spec.abstain,
         )
