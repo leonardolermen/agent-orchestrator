@@ -35,8 +35,15 @@ class WorkflowResumoJSON(BaseModel):
     nome: str
     classes: list[str]
     gerado_em: str | None = None
-    # Falso quando a cascata tem classe AGENTE: a tela desabilita o botão em
-    # vez de deixar o usuário colher um 409.
+    # "ESTE servidor consegue rodar isto?" — a tela desabilita o botão em vez
+    # de deixar o usuário colher um 409.
+    #
+    # Era "a cascata não tem classe AGENTE", quando `/runs` recusava toda
+    # cascata paga. Com o caminho pago aberto, uma cascata com agente roda onde
+    # há `ANTHROPIC_API_KEY` e leva 409 onde não há — então a resposta passou a
+    # depender da chave, e é `api/app.py::_tem_chave` que a dá, a MESMA leitura
+    # que a rota usa para recusar. Duas leituras divergiriam, e o sintoma seria
+    # a tela desabilitar um botão para uma execução que o servidor aceitaria.
     executavel: bool
 
 
