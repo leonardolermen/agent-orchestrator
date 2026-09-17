@@ -42,7 +42,6 @@ WebSocket é só o cano. O que a CLI do grill exercita é literalmente o mesmo
 código.
 """
 
-import os
 import queue
 import threading
 from typing import Any
@@ -64,13 +63,37 @@ from orchestrator.kernel.cost import Cost
 # thread vazaria — uma por aba fechada.
 _DESISTIU = object()
 
+# Sentinela posta no `finally` da thread: ela ACABOU, tenha dito o que disser.
+#
+# **Defeito real, e ele não é dos testes.** `rodar()` capturava `Exception`, e
+# qualquer coisa que escape disso — `BaseException`, e portanto
+# `KeyboardInterrupt`, `SystemExit` e a tranca de rede da suíte — matava a
+# thread sem pôr nada em `perguntas`. O consumidor ficava bloqueado para sempre
+# em `perguntas.get`: num servidor de verdade, uma conexão pendurada que nunca
+# responde nem fecha; em CI, um job que queima o timeout inteiro e não diz nada,
+# que é o pior sinal que existe. Medido: `PYTEST_EXIT=124`, saída vazia.
+#
+# A correção não é alargar a captura — alargá-la para `BaseException` engoliria
+# justamente o que precisa subir. É garantir que a MORTE da thread, por qualquer
+# motivo, acorde quem espera por ela. Uma thread que não pode mais falar tem de
+# dizer isso antes de calar.
+_MORREU = object()
+
 
 def _usd(cost: Cost, modelo: str) -> float:
     return cost.microcents(modelo) / 100_000_000
 
 
 def _sem_chave() -> str | None:
-    if os.environ.get("ANTHROPIC_API_KEY"):
+    # Import ADIADO, e pelos dois motivos de uma vez. `api/app.py` importa este
+    # módulo no topo, então um import no topo aqui formaria ciclo. E adiado ele
+    # resolve o atributo na HORA DA CHAMADA, o que faz "uma leitura só" ser
+    # verdade inclusive sob `monkeypatch` — em vez de uma frase sobre produção
+    # que o teste desmente. Antes desta linha havia TRÊS leituras de
+    # `os.environ` para a mesma pergunta; agora há uma função.
+    from orchestrator.api.app import _tem_chave
+
+    if _tem_chave():
         return None
     return (
         "sem ANTHROPIC_API_KEY no ambiente do servidor: a entrevista fala com o "
@@ -156,6 +179,13 @@ async def conduzir(
             # isso — em vez de virar uma desconexão muda que o parceiro leria
             # como "a internet caiu".
             perguntas.put(("defeito", erro))
+        finally:
+            # A thread acabou. SEMPRE. Ver `_MORREU`: sem esta linha, o que
+            # escapa dos `except` acima deixa o consumidor bloqueado para
+            # sempre. Posta depois do veredito quando há veredito — a fila é
+            # FIFO, o consumidor lê o veredito primeiro e retorna, e esta
+            # sentinela fica sem leitor, que é inofensivo.
+            perguntas.put(_MORREU)
 
     thread = threading.Thread(target=rodar, daemon=True)
     thread.start()
@@ -163,6 +193,25 @@ async def conduzir(
     try:
         while True:
             item = await run_in_threadpool(perguntas.get)
+
+            if item is _MORREU:
+                # A thread morreu sem veredito. O que a matou já está no
+                # `threading.excepthook` (stderr), com traceback — aqui só
+                # importa que o parceiro receba uma resposta em vez de uma
+                # conexão pendurada. "defeito" e não "falhou": `falhou` é o
+                # entrevistador dizendo que não deu, e isto é o servidor
+                # dizendo que quebrou.
+                await ws.send_json(
+                    {
+                        "tipo": "defeito",
+                        "motivo": (
+                            "a entrevista foi interrompida por uma falha que o "
+                            "servidor não conseguiu capturar; nada foi gravado"
+                        ),
+                    }
+                )
+                await ws.close()
+                return
 
             if isinstance(item, dict):
                 await ws.send_json(item)
