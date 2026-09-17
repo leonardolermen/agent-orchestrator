@@ -25,6 +25,19 @@ from orchestrator.kernel.resolver import Resolver
 class Stage:
     name: str
     cascade: tuple[Resolver, ...]
+    # Quais `kind` de item este degrau consome. VAZIO = o pool inteiro, que é
+    # exatamente o comportamento anterior a esta fatia — e é o que mantém as 9
+    # definições existentes sem edição.
+    #
+    # A CONDICIONAL do kernel mora aqui: um stage cujo `consome` não casa com
+    # nada simplesmente não roda. É ausência de item, não predicado, e é por
+    # isso que o kernel não ganha linguagem de expressão.
+    consome: frozenset[str] = frozenset()
+    # Quais `kind` este degrau pode produzir. DECLARADO, não observado:
+    # a recusa de beco sem saída, as arestas do canvas e a `version` precisam
+    # do grafo ANTES da execução, e um grafo que só existe depois de rodar não
+    # previne nada e não desenha nada.
+    produz: frozenset[str] = frozenset()
     # A política deste stage. O default reproduz EXATAMENTE o comportamento
     # anterior ao M3: teto na classe mais cara, autonomia PROPOR, sem predicado
     # e sem razão de custo. É por isso que o motor de política entra sem mudar
@@ -45,6 +58,8 @@ def Task(  # noqa: N802 — é um construtor, e o nome é o do conceito
     *,
     resolver: Resolver | None = None,
     cascade: tuple[Resolver, ...] | list[Resolver] | None = None,
+    consome: frozenset[str] = frozenset(),
+    produz: frozenset[str] = frozenset(),
     policy: ExecutionPolicy | None = None,
 ) -> Stage:
     """Açúcar: `Task(resolver=x)` é `Stage(cascade=(x,))`.
@@ -63,6 +78,8 @@ def Task(  # noqa: N802 — é um construtor, e o nome é o do conceito
     return Stage(
         name=name,
         cascade=(resolver,) if resolver else tuple(cascade),
+        consome=consome,
+        produz=produz,
         policy=policy or ExecutionPolicy(),
     )
 

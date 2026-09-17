@@ -83,6 +83,33 @@ def execute(
     # caso de hoje — os dois dariam no mesmo; com dois, só este está certo.
     for stage in definicao.stages:
         emitir(EventKind.STAGE_INICIADO, stage=stage.name)
+        # O que ESTE degrau enxerga. `consome` vazio = o pool inteiro.
+        #
+        # Guardamos o resto à parte e o recompomos no fim do stage: filtrar
+        # sem recompor faria o pool encolher por um caminho que não é
+        # `without()`, e a invariante "só resolução consome" cairia sem
+        # ninguém notar.
+        if stage.consome:
+            visivel = WorkSet(
+                items=tuple(i for i in work.items if i.kind in stage.consome)
+            )
+            reservados = tuple(i for i in work.items if i.kind not in stage.consome)
+        else:
+            visivel, reservados = work, ()
+        if stage.consome and not visivel.items:
+            # Ramo sem trabalho: o degrau não roda, e isso é a condicional.
+            #
+            # O gate é em `stage.consome`, não em `visivel.items` sozinho:
+            # sem `consome` declarado (default, pool inteiro) um pool vazio já
+            # rodava a cascata antes desta fatia — é o cenário que
+            # `test_ordenacao_e_por_stage_nao_global` e vizinhos, em
+            # `tests/matching/test_engine.py`, fixam ao chamar `reconcile([],
+            # [], ...)` só para observar ORDEM, sem depender de item nenhum.
+            # Sem este gate, "consome vazio = pool inteiro" deixaria de
+            # reproduzir a semântica de hoje assim que o pool esvaziasse.
+            emitir(EventKind.STAGE_CONCLUIDO, stage=stage.name, rodou=False)
+            continue
+        work = visivel
         for resolver in stage.ordered():
             # A POLÍTICA decide se este resolver roda. `Stage.ordered()`
             # continua sendo a ORDEM — as duas coisas são ortogonais, e é isso
@@ -126,6 +153,20 @@ def execute(
             comeco = time.perf_counter()
             saida = resolver.resolve(elegiveis)
             duracao_ms = int((time.perf_counter() - comeco) * 1000)
+            # `produz` vazio = sem restrição declarada, o espelho exato do que
+            # `consome` vazio já significa para o lado do consumo. A guarda só
+            # entra quando o stage DECLAROU um `produz`: é o que mantém as 9
+            # definições existentes — que nunca declararam nada — reproduzindo
+            # a semântica de hoje, e reserva o erro para quem prometeu um
+            # conjunto e entregou outro.
+            if stage.produz:
+                for novo in saida.produced:
+                    if novo.kind not in stage.produz:
+                        raise ValueError(
+                            f"{resolver.name!r} produziu kind não declarado: "
+                            f"{novo.kind!r} não está em produz="
+                            f"{sorted(stage.produz)} do stage {stage.name!r}"
+                        )
             todos.extend(saida.resolutions)
             propostas.extend(saida.proposals)
             # Uma entrada por resolver que RODOU, mesmo que o custo seja
@@ -180,6 +221,9 @@ def execute(
                 cost=saida.cost,
                 cost_class=resolver.cost_class.name,
             )
+
+        work = WorkSet(items=work.items + reservados)
+        emitir(EventKind.STAGE_CONCLUIDO, stage=stage.name, rodou=True)
 
     # Sobrou item E a cascata tem um degrau humano -> o run espera alguém.
     # Antes isso era "a lacuna", sem nome e sem como perguntar.

@@ -4,6 +4,8 @@ Nenhum teste aqui menciona conciliação, e é o ponto — a mesma disciplina de
 `tests/kernel/test_work.py`.
 """
 
+import pytest
+
 from orchestrator.kernel.cost import Cost, CostClass
 from orchestrator.kernel.definition import Stage, WorkflowDefinition
 from orchestrator.kernel.resolution import Resolution
@@ -94,3 +96,144 @@ def test_producao_nao_apaga_a_resolucao_que_a_acompanha():
 
     assert "i" not in r.unresolved.ids()
     assert r.resolutions[0].item_ids == frozenset({"i"})
+
+
+def test_o_stage_so_ve_os_kinds_que_declara_consumir():
+    """`consome` é o que separa dois caminhos num pool heterogêneo."""
+    d = WorkflowDefinition(
+        id="dois-caminhos",
+        name="dois caminhos",
+        stages=(
+            Stage(
+                name="cuida do a",
+                cascade=(Transformador("ta", "a", "z"),),
+                consome=frozenset({"a"}),
+                produz=frozenset({"z"}),
+            ),
+        ),
+    )
+    pool = WorkSet(
+        items=(
+            WorkItem(id="i1", kind="a", payload="x"),
+            WorkItem(id="i2", kind="b", payload="y"),
+        )
+    )
+
+    r = execute(d, pool)
+
+    # O item de kind "b" nunca foi oferecido ao stage, e continua intacto.
+    assert {i.id for i in r.unresolved.items} == {"i1+z", "i2"}
+
+
+def test_o_stage_sem_item_do_seu_kind_nao_roda():
+    """A CONDICIONAL do kernel: ausência de item, nunca um predicado.
+
+    É isto que dá ramificação sem o kernel ganhar linguagem de expressão — e
+    é por isso que a §10 do spec pode dizer "não vira n8n" e ser verdade.
+    """
+    d = WorkflowDefinition(
+        id="ramo-morto",
+        name="ramo morto",
+        stages=(
+            Stage(
+                name="urgente",
+                cascade=(Transformador("u", "urgente", "z"),),
+                consome=frozenset({"urgente"}),
+                produz=frozenset({"z"}),
+            ),
+        ),
+    )
+    pool = WorkSet(items=(WorkItem(id="i", kind="normal", payload="x"),))
+
+    r = execute(d, pool)
+
+    assert r.resolutions == ()
+    # O resolver não rodou: não há custo registrado para ele.
+    assert "u" not in r.cost_by_resolver
+    assert [i.id for i in r.unresolved.items] == ["i"]
+
+
+def test_consome_vazio_continua_vendo_o_pool_inteiro():
+    """O default reproduz a semântica de hoje. É o que mantém as 9 definições
+    existentes e os 844 testes sem edição."""
+    d = WorkflowDefinition(
+        id="tudo",
+        name="tudo",
+        stages=(Stage(name="um", cascade=(Transformador("um", "a", "b"),)),),
+    )
+    pool = WorkSet(
+        items=(
+            WorkItem(id="i1", kind="a", payload="x"),
+            WorkItem(id="i2", kind="a", payload="y"),
+        )
+    )
+
+    r = execute(d, pool)
+
+    assert len(r.resolutions) == 2
+
+
+def test_produzir_kind_nao_declarado_e_erro_alto():
+    """`produz` DECLARADO só vale se o runtime o impuser.
+
+    Sem esta guarda, `produz` seria documentação — e documentação que o
+    runtime não impõe desatualiza em silêncio, levando a recusa de beco sem
+    saída (Task 4) e as arestas do canvas a mentirem juntas.
+    """
+    d = WorkflowDefinition(
+        id="mentiroso",
+        name="mentiroso",
+        stages=(
+            Stage(
+                name="um",
+                cascade=(Transformador("um", "a", "b"),),
+                consome=frozenset({"a"}),
+                produz=frozenset({"outro"}),  # promete "outro", entrega "b"
+            ),
+        ),
+    )
+    pool = WorkSet(items=(WorkItem(id="i", kind="a", payload="x"),))
+
+    with pytest.raises(ValueError, match="produziu kind não declarado"):
+        execute(d, pool)
+
+
+def test_stages_nao_sao_reordenados_por_custo():
+    """Os DOIS EIXOS, e a §5.1 do spec vira asserção aqui.
+
+    Dentro de um stage a ordem é CUSTO — quem tenta primeiro no mesmo
+    trabalho. Entre stages a ordem é DADO — quem precisa da saída de quem.
+    Ordenar por custo entre stages seria escrever antes de pesquisar.
+
+    O teste monta um pipeline em que o segundo degrau é MAIS BARATO que o
+    primeiro. Se alguém algum dia aplicar `ordered()` globalmente, o barato
+    rodaria antes, não acharia item do seu kind, e o pipeline devolveria o
+    item parado no meio.
+    """
+
+    class Caro(Transformador):
+        cost_class = CostClass.AGENTE
+
+    d = WorkflowDefinition(
+        id="ordem",
+        name="ordem",
+        stages=(
+            Stage(
+                name="caro primeiro",
+                cascade=(Caro("caro", "a", "b"),),
+                consome=frozenset({"a"}),
+                produz=frozenset({"b"}),
+            ),
+            Stage(
+                name="barato depois",
+                cascade=(Transformador("barato", "b", "c"),),  # REGRA, mais barato
+                consome=frozenset({"b"}),
+                produz=frozenset({"c"}),
+            ),
+        ),
+    )
+    pool = WorkSet(items=(WorkItem(id="i", kind="a", payload="x"),))
+
+    r = execute(d, pool)
+
+    assert [i.kind for i in r.unresolved.items] == ["c"]
