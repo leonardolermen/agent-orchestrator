@@ -25,9 +25,9 @@ silencioso no `_construir_definicao` da API.
 **Por que `WorkflowContext` é um dataclass tipado e não um `dict[str, Any]`.**
 Um saco de serviços com chave `"fila"` trocaria um contrato fraco (nome de
 parâmetro) por outro igualmente fraco (chave de dicionário), e o defeito
-original voltaria com outra roupa. Ele tem um campo hoje porque há um domínio;
-quando houver mais, ganha campos — e cada um deles some do `TypeError` para
-dentro do type checker.
+original voltaria com outra roupa. Ele ganha um campo quando aparece uma
+necessidade — `cliente` entrou quando executar com agente pela web passou a
+existir — e cada um deles some do `TypeError` para dentro do type checker.
 """
 
 import sys
@@ -35,6 +35,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from orchestrator.agent.llm import LLMClient
 from orchestrator.conciliacao import default_definition
 from orchestrator.grill.receita import Receita, construir
 from orchestrator.grill.registro import listar_receitas
@@ -54,13 +55,25 @@ class WorkflowContext:
     """
 
     fila: Fila
+    # O cliente que a EXECUÇÃO usa. `None` mantém o comportamento de todos os
+    # chamadores de hoje: a fábrica cai no `ClienteAusente`, que é a tranca.
+    # Desarmá-la continua sendo ato explícito de quem executa — o que muda é
+    # que agora existe por onde fazê-lo sem inventar um segundo caminho.
+    #
+    # Uma cascata com agente precisa de um `LLMClient` de verdade para ser
+    # CONSTRUÍDA (o cliente entra no `Agent`, não numa chamada posterior), e
+    # `construir_definicao(fabrica, ctx)` não tinha por onde passá-lo: a
+    # definição saía montada com a tranca e o agente levantava ao primeiro
+    # turno.
+    cliente: "LLMClient | None" = None
 
     @staticmethod
     def vazio() -> "WorkflowContext":
-        """Contexto sem decisão nenhuma.
+        """Contexto sem decisão nenhuma, e sem cliente.
 
         É o que `GET /api/workflows` usa: aquela rota só descreve a FORMA da
-        cascata, que não muda com o conteúdo da fila.
+        cascata, que não muda com o conteúdo da fila — nem com quem pagaria a
+        conta se ela rodasse.
         """
         return WorkflowContext(fila=Fila.vazia())
 
@@ -78,15 +91,18 @@ class WorkflowFactory(Protocol):
 def _de_receita(receita: Receita) -> WorkflowFactory:
     """Fábrica para um workflow gerado pelo grill.
 
-    Cliente e contexto ficam nos DEFAULTS INERTES de `construir` de propósito:
-    como `/runs` responde 409 para qualquer cascata com classe AGENTE, nenhum
-    workflow com agente chega a executar por um endpoint — então não existe
-    caminho em que a API precise de um agente funcional, e portanto não existe
-    código aqui que o construa.
+    `ctx.cliente` é repassado VERBATIM, incluindo `None`. Não há `or` e não há
+    default escrito aqui: quem decide o que `None` significa é `construir`, que
+    cai no `ClienteAusente` — a tranca. Um default nesta camada seria uma
+    segunda resposta para a mesma pergunta, e a que divergisse seria a que
+    ninguém testa.
+
+    `context` (o `ToolContext` dos dados) continua no default inerte: ele é
+    insumo de FERRAMENTA, não de cliente, e ligá-lo é outra fatia.
     """
 
     def fabrica(ctx: WorkflowContext) -> WorkflowDefinition:
-        return construir(receita, fila=ctx.fila)
+        return construir(receita, fila=ctx.fila, cliente=ctx.cliente)
 
     return fabrica
 
