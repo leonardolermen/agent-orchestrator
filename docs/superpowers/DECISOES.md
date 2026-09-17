@@ -2767,3 +2767,71 @@ guarda contra misturar cascatas deixaria de valer.
 
 `GET /api/dominios` expõe tudo isso. Era a pergunta que a tela nunca fazia — e
 por não fazer, ofereceu blocos de conciliação o tempo inteiro.
+
+### P6.119. G1 — regra é CÓDIGO com parâmetros expostos; agente é DADO
+
+A assimetria que faz a plataforma ser geral sem virar gerador de código:
+
+| bloco | o que é | quem compõe o quê |
+|---|---|---|
+| agente | DADO (`AgenteDeclarado`) | a tela compõe o agente inteiro |
+| regra | CÓDIGO com parâmetros | a tela compõe QUAIS entram e com que parâmetros |
+
+**Por que não simetria.** Casar por documento e valor é lógica de negócio, e uma
+linguagem declarativa de regras ou fica pela metade ou vira uma linguagem de
+programação com outro nome. Já o laço de um agente é o mesmo sempre — o que
+muda é prompt, vocabulário e ferramentas, que são dado.
+
+`RegraDisponivel` recusa `cost_class=AGENTE` na construção: uma regra que chama
+modelo declarada como regra rodaria ANTES dos agentes baratos na cascata, que é
+a inversão mais cara possível.
+
+`ParametroDeRegra` lê o default do PRÓPRIO resolver (`dataclasses.fields`).
+Renomear o campo lá explode no import, não numa tela que oferece um parâmetro
+que o construtor não aceita.
+
+**Os três domínios agora publicam blocos:**
+
+    conciliacao   L1, L2(2p), L3(3p)  +  investigador
+    swe           (nenhuma regra)     +  triador
+    procurement   preferido, anteriores +  buscador
+
+`swe` sem regra é deliberado e é o caso degenerado do §1.3 — uma cascata que
+começa direto na classe `AGENTE`. É também onde o laço de promoção tem mais a
+ganhar: hoje 100% do trabalho dele passa pelo modelo.
+
+### P6.120. `Composicao` — o formato que a `Receita` não conseguia carregar
+
+`Receita.resolvers` é `tuple[ResolverReceita(nome, parametros: dict[str, int])]`
+— uma lista de NOMES do catálogo. Funciona enquanto tudo que se compõe já existe
+pronto.
+
+**Um agente declarado não existe pronto.** Ele é criado NA composição, com
+prompt, vocabulário e ferramentas próprios, e não tem nome no catálogo de
+ninguém. Encaixá-lo em `ResolverReceita` daria um `dict[str, int]` carregando um
+prompt — e o `int` no tipo é o aviso de que não cabe.
+
+`Composicao` carrega `BlocoRegra | BlocoAgente`, e o segundo é a declaração
+inteira.
+
+**A `Receita` não é depreciada.** O entrevistador do grill a produz, e os testes
+dela valem. `Composicao` é o formato geral; `Receita` é o caso particular em que
+todos os blocos já existem por nome.
+
+**Três garantias estruturais, e nenhuma é nova — são as mesmas do canvas, agora
+no formato persistido:**
+
+1. **Um domínio só.** Agente de `kind` estranho ao domínio é recusado: ele
+   rodaria sobre um pool que não enxerga.
+2. **A ordem não é do autor.** Não existe campo de ordem. Teste:
+   `test_a_ordem_dos_BLOCOS_nao_decide_a_ordem_da_CASCATA` monta agente antes de
+   regra e exige `REGRA → AGENTE` de volta.
+3. **Valida construindo.** Se `construir_composicao` retorna, a cascata roda.
+
+`version` é derivada do conteúdo — mudar um prompt ou um parâmetro muda a
+versão, e há teste para os dois. Sem isso, dois resultados de benchmark
+poderiam alegar ter medido a mesma cascata sem terem medido.
+
+`gravar` recusa sobrescrever: runs antigos apontam para a composição pela
+versão, e trocar o conteúdo sob o mesmo id faria um run apontar para uma cascata
+que nunca rodou.

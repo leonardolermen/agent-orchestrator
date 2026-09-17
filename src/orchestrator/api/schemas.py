@@ -296,9 +296,27 @@ class AgenteDeclaradoJSON(BaseModel):
     budget_microcents: int
 
 
+class RegraJSON(BaseModel):
+    """Um bloco determinístico. O que a tela ajusta são os PARÂMETROS.
+
+    Sem `prompt`, sem `tipos`, sem ferramentas — uma regra não fala com modelo.
+    A ausência desses campos no schema é o que impede a tela de oferecer edição
+    que o construtor não aceita.
+    """
+
+    nome: str
+    cost_class: str
+    resumo: str
+    parametros: list[ParametroJSON]
+
+
 class DominioJSON(BaseModel):
     id: str
     nome: str
     kinds: list[str]
     ferramentas: list[FerramentaJSON]
+    # Os blocos, separados por natureza. Regra e agente NÃO vão na mesma lista:
+    # o que a tela edita em cada um é diferente, e uma lista só obrigaria a
+    # inspecionar o tipo em cada linha de render.
+    regras: list[RegraJSON]
     agentes: list[AgenteDeclaradoJSON]

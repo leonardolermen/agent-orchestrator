@@ -41,6 +41,7 @@ from orchestrator.api.schemas import (
     LancamentoJSON,
     ParametroJSON,
     ReceitaRequest,
+    RegraJSON,
     ResolverRunJSON,
     RunJSON,
     RunRequest,
@@ -149,6 +150,20 @@ def dominios() -> list[DominioJSON]:
             ferramentas=[
                 FerramentaJSON(nome=n, descricao=d.ferramentas.spec(n).description)
                 for n in d.ferramentas.names()
+            ],
+            regras=[
+                RegraJSON(
+                    nome=r.nome,
+                    cost_class=r.cost_class.name,
+                    resumo=r.resumo,
+                    parametros=[
+                        ParametroJSON(
+                            nome=p.nome, default=p.default, descricao=p.descricao
+                        )
+                        for p in r.parametros
+                    ],
+                )
+                for r in d.regras
             ],
             agentes=[
                 AgenteDeclaradoJSON(

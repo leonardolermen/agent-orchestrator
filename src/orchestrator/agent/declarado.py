@@ -29,13 +29,14 @@ foi descoberta medindo; aqui ela é recusada na construção.
 """
 
 import json
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, is_dataclass
 from typing import Any
 
 from orchestrator.agent.agent import Agent, AgentSpec, AgentTask
 from orchestrator.agent.llm import LLMClient
 from orchestrator.agent.tools.registry import ToolRegistry
-from orchestrator.kernel.cost import Cost
+from orchestrator.kernel.cost import Cost, CostClass
 from orchestrator.kernel.resolution import Confidence, Proposal, TraceEvent, TraceKind
 from orchestrator.kernel.work import WorkSet
 
@@ -248,6 +249,53 @@ def construir_agente(
 
 
 @dataclass(frozen=True)
+class ParametroDeRegra:
+    """O que uma regra aceita ser ajustada. DESCREVE, não valida.
+
+    Sem faixa (mínimo/máximo) de propósito: as restrições já vivem nos
+    `__post_init__` dos resolvers, e duplicá-las aqui criaria duas fontes de
+    verdade que divergiriam na primeira mudança. Mesma decisão de
+    `ParametroSpec` no grill, pelo mesmo motivo.
+    """
+
+    nome: str
+    default: int
+    descricao: str
+
+
+@dataclass(frozen=True)
+class RegraDisponivel:
+    """Uma regra determinística que um domínio oferece para compor.
+
+    **Por que regra continua sendo CÓDIGO e não declaração.** Casar por
+    documento e valor é lógica de domínio; não há declaração que a substitua, e
+    fingir que há produziria uma linguagem de regras pela metade. O que a tela
+    compõe é QUAIS regras entram e com que parâmetros — não o corpo delas.
+
+    (Tipos de regra genéricos — igualdade, tolerância, agrupamento, tabela,
+    padrão, limiar — são o G3 do spec da plataforma geral. Quando existirem,
+    entram aqui como mais entradas, sem mudar este contrato.)
+    """
+
+    nome: str
+    cost_class: CostClass
+    resumo: str
+    # `construir(parametros) -> Resolver`. Assinatura UNIFORME, como
+    # `EntradaCatalogo.construir` no grill: variável exigiria introspecção para
+    # saber o que passar, e é esse padrão que já deu um defeito silencioso.
+    construir: Callable[[dict[str, int]], Any]
+    parametros: tuple[ParametroDeRegra, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.cost_class is CostClass.AGENTE:
+            raise ValueError(
+                f"regra {self.nome!r} se declara AGENTE. uma regra não chama "
+                f"modelo — se ela chama, é agente, e declará-la como regra a "
+                f"faria rodar ANTES dos agentes baratos na cascata"
+            )
+
+
+@dataclass(frozen=True)
 class Dominio:
     """Um domínio: os tipos de trabalho que ele conhece e o que sabe fazer.
 
@@ -267,6 +315,11 @@ class Dominio:
     ferramentas: ToolRegistry = field(default_factory=ToolRegistry)
     # Agentes já declarados, prontos para usar ou copiar.
     agentes: tuple[AgenteDeclarado, ...] = ()
+    # As regras determinísticas e a revisão humana que o domínio oferece. São
+    # os blocos que a tela compõe junto com os agentes — e são eles que dão a
+    # um domínio novo um PISO BARATO. Sem regra, a cascata começa 100% na
+    # classe AGENTE, que é o pior custo possível.
+    regras: tuple[RegraDisponivel, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.kinds:
@@ -274,7 +327,16 @@ class Dominio:
                 f"domínio {self.id!r} sem `kinds`: nada saberia quais itens ele "
                 f"trabalha, e a guarda contra misturar domínios cairia"
             )
+        vistos = {r.nome for r in self.regras}
+        if len(vistos) != len(self.regras):
+            raise ValueError(f"domínio {self.id!r} tem regra com nome repetido")
         for a in self.agentes:
+            if a.name in vistos:
+                raise ValueError(
+                    f"domínio {self.id!r}: {a.name!r} é nome de agente E de "
+                    f"regra. a composição indexa blocos por nome, e dois iguais "
+                    f"fariam a cascata depender de quem foi procurado primeiro"
+                )
             if a.kind not in self.kinds:
                 raise ValueError(
                     f"agente {a.name!r} trabalha kind {a.kind!r}, que não é do "

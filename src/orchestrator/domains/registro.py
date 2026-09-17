@@ -6,16 +6,21 @@ só tem blocos de conciliação? eu quero uma plataforma geral."* Estava certo, 
 havia seis resolvers escritos que o canvas não oferecia.
 
 **A forma da generalidade, e por que ela não é uma lista maior.** Um domínio
-declara três coisas:
+declara quatro coisas:
 
     kinds        — que tipos de `WorkItem` ele trabalha
     ferramentas  — o CATÁLOGO delas (sem dados; `com_contexto` liga na execução)
     agentes      — declarações, que `construir_agente` valida construindo
+    regras       — os blocos determinísticos, com os parâmetros ajustáveis
 
-E uma coisa que ele NÃO declara aqui: as regras determinísticas. Casar por
-documento e valor é lógica de domínio — não há declaração que a substitua, e
-fingir que há produziria uma linguagem de regras pela metade. Regra é código, e
-entra na cascata pelo módulo do próprio domínio.
+**Agente é DADO; regra é CÓDIGO com parâmetros expostos.** Casar por documento e
+valor é lógica de domínio, e não há declaração que a substitua — fingir que há
+produziria uma linguagem de regras pela metade. O que a composição escolhe é
+QUAIS regras entram e com que parâmetros, nunca o corpo delas.
+
+É a assimetria que faz a plataforma ser geral sem virar um gerador de código:
+o caro (agente) é declarativo porque precisa ser composto por quem não programa;
+o barato (regra) é código porque é onde a lógica do negócio realmente mora.
 
 **Por que domínios não se misturam.** `L1` trabalha `kind="lancamento"`,
 `FornecedorPreferido` trabalha `"requisicao"`, o triador trabalha `"issue"`. Uma
@@ -24,11 +29,36 @@ segundo roda sobre um pool que o primeiro nem enxerga. `Dominio.kinds` é o que
 torna isso verificável em vez de convenção.
 """
 
-from orchestrator.agent.declarado import AgenteDeclarado, Dominio
+from orchestrator.agent.declarado import (
+    AgenteDeclarado,
+    Dominio,
+    ParametroDeRegra,
+    RegraDisponivel,
+)
 from orchestrator.agent.tools.registry import ToolRegistry
 from orchestrator.conciliacao.ferramentas import catalogo_de_ferramentas
+from orchestrator.domains.procurement.workflow import (
+    ComprasAnteriores,
+    FornecedorPreferido,
+)
 from orchestrator.domains.swe.workflow import ISSUE, PROMPT
 from orchestrator.domains.swe.workflow import ferramentas as ferramentas_swe
+from orchestrator.kernel.cost import CostClass
+from orchestrator.matching.exact import ExactMatcher
+from orchestrator.matching.grouping import GroupingMatcher
+from orchestrator.matching.tolerance import ToleranceMatcher
+
+
+def _param(cls: type, nome: str, descricao: str) -> ParametroDeRegra:
+    """Lê o default do PRÓPRIO resolver.
+
+    Renomear o campo lá explode AQUI, no import, e não numa tela que oferece um
+    parâmetro que o construtor não aceita. Mesma técnica de `grill.catalogo._param`.
+    """
+    import dataclasses
+
+    campos = {f.name: f for f in dataclasses.fields(cls)}
+    return ParametroDeRegra(nome=nome, default=campos[nome].default, descricao=descricao)
 
 # --------------------------------------------------------------------------
 # Conciliação — a implementação de referência (§1.3)
@@ -48,6 +78,39 @@ CONCILIACAO = Dominio(
     nome="Conciliação bancária",
     kinds=("lancamento",),
     ferramentas=catalogo_de_ferramentas(),
+    regras=(
+        RegraDisponivel(
+            nome="L1",
+            cost_class=CostClass.REGRA,
+            resumo="documento, valor e data coincidem exatamente",
+            construir=lambda p: ExactMatcher(),
+        ),
+        RegraDisponivel(
+            nome="L2",
+            cost_class=CostClass.REGRA,
+            resumo="mesmo documento, com folga de valor e dias úteis",
+            parametros=(
+                _param(ToleranceMatcher, "max_cents", "folga máxima de valor, em centavos"),
+                _param(
+                    ToleranceMatcher,
+                    "max_business_days",
+                    "folga máxima entre as datas, em dias úteis",
+                ),
+            ),
+            construir=lambda p: ToleranceMatcher(**p),
+        ),
+        RegraDisponivel(
+            nome="L3",
+            cost_class=CostClass.REGRA,
+            resumo="um lançamento bancário cobrindo N contábeis do mesmo fornecedor",
+            parametros=(
+                _param(GroupingMatcher, "max_group_size", "quantos contábeis no máximo"),
+                _param(GroupingMatcher, "max_business_days", "folga entre as datas"),
+                _param(GroupingMatcher, "max_candidates", "teto de combinações testadas"),
+            ),
+            construir=lambda p: GroupingMatcher(**p),
+        ),
+    ),
     agentes=(
         AgenteDeclarado(
             name="investigador",
@@ -76,6 +139,13 @@ SWE = Dominio(
     nome="Triagem de issues",
     kinds=(ISSUE,),
     ferramentas=ferramentas_swe(),
+    # SEM regras, e é deliberado: o `swe` é o CASO DEGENERADO do §1.3 do spec de
+    # composição — uma cascata que começa direto na classe AGENTE. Ele existe
+    # para provar que o kernel não supõe que todo domínio tenha um piso barato.
+    #
+    # É também o domínio onde o laço de promoção (§6.3 do spec da plataforma)
+    # tem mais a ganhar: hoje 100% do trabalho dele passa pelo modelo.
+    regras=(),
     agentes=(
         AgenteDeclarado(
             name="triador",
@@ -113,6 +183,20 @@ PROCUREMENT = Dominio(
     # Sem ferramentas ainda: o domínio é esqueleto, e um registro vazio DIZ
     # isso. Inventar ferramentas para preencher a tela seria pior que a lacuna.
     ferramentas=ToolRegistry(contexto=None),
+    regras=(
+        RegraDisponivel(
+            nome="preferido",
+            cost_class=CostClass.REGRA,
+            resumo="fornecedor preferido que atende o item",
+            construir=lambda p: FornecedorPreferido(),
+        ),
+        RegraDisponivel(
+            nome="anteriores",
+            cost_class=CostClass.REGRA,
+            resumo="qualquer fornecedor que já atendeu este item antes",
+            construir=lambda p: ComprasAnteriores(),
+        ),
+    ),
     agentes=(
         AgenteDeclarado(
             name="buscador",

@@ -26,6 +26,42 @@ export interface EntradaCatalogo {
   modelo_padrao: string | null;
 }
 
+export interface Ferramenta {
+  nome: string;
+  descricao: string;
+}
+
+export interface Regra {
+  nome: string;
+  cost_class: CostClass;
+  resumo: string;
+  parametros: Parametro[];
+}
+
+export interface AgenteDeclarado {
+  name: string;
+  system: string;
+  kind: string;
+  prompt: string;
+  tipos: string[];
+  abstem_com: string;
+  ferramentas: string[];
+  max_turns: number;
+  budget_microcents: number;
+}
+
+export interface DominioInfo {
+  id: string;
+  nome: string;
+  kinds: string[];
+  ferramentas: Ferramenta[];
+  // Regra e agente em listas SEPARADAS: o que a tela edita em cada um é
+  // diferente — regra tem parâmetros, agente tem prompt, vocabulário e
+  // ferramentas. Uma lista só obrigaria a inspecionar o tipo em cada linha.
+  regras: Regra[];
+  agentes: AgenteDeclarado[];
+}
+
 export interface ResolverConstruido {
   name: string;
   cost_class: CostClass;
@@ -106,6 +142,11 @@ export const api = {
   catalogo: () => pedir<EntradaCatalogo[]>("/api/catalogo"),
 
   ambiente: () => pedir<Ambiente>("/api/ambiente"),
+
+  // A PRIMEIRA pergunta da tela. Antes ela não existia: a paleta era o
+  // catálogo do grill — o cardápio da conciliação — e por isso o canvas só
+  // ofereceu blocos de conciliação até alguém perguntar por quê.
+  dominios: () => pedir<DominioInfo[]>("/api/dominios"),
 
   criarReceita: (corpo: {
     id: string;
