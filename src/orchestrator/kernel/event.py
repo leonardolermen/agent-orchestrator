@@ -23,6 +23,7 @@ class EventKind(StrEnum):
     RUN_INICIADO = "run.iniciado"
     RUN_CONCLUIDO = "run.concluido"
     RUN_FALHOU = "run.falhou"
+    RONDA_INICIADA = "ronda.iniciada"
     STAGE_INICIADO = "stage.iniciado"
     STAGE_CONCLUIDO = "stage.concluido"
     POLITICA_DECIDIU = "politica.decidiu"
