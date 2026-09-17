@@ -50,6 +50,30 @@ function formatarTaxa(m: LinhaDeRun | undefined): string {
   return m ? `${(m.rate * 100).toFixed(1)}%` : "—";
 }
 
+// Estados que não são "terminou bem". Existe só para a tela ter um TEXTO
+// amigável — o valor renderizado é sempre o do servidor; um estado que a
+// tela não conhece cai no `default` e mostra o string cru, nunca um "ok"
+// inventado.
+//
+// Chamada só de dentro do ramo `{naoConcluido && (...)}` em `Execucao`, de
+// propósito: se essa função virasse uma constante top-level referenciada
+// fora de um ramo condicional, seus literais sobreviveriam no bundle mesmo
+// com o ramo morto, e um teste que procurasse só o TEXTO não pegaria a
+// tela deixando de DESENHÁ-lo.
+function textoDoEstado(estado: string): string {
+  const CONHECIDOS: Record<string, string> = {
+    concluido: "concluído",
+    limite_de_custo: "parou no teto — o pedido proibiu de continuar gastando",
+    limite_de_rondas: "parou no limite de rondas, sem convergir",
+    aguardando_humano: "aguardando decisão humana",
+    pendente: "pendente",
+    executando: "executando",
+    falhou: "falhou",
+    cancelado: "cancelado",
+  };
+  return CONHECIDOS[estado] ?? estado;
+}
+
 export function Execucao() {
   const [escuro, alternarTema] = usarTema();
   const [{ workflow, dataset }] = useState(parametrosDaUrl);
@@ -153,21 +177,7 @@ export function Execucao() {
 
   const porNome = new Map((run?.por_resolver ?? []).map((r) => [r.name, r]));
 
-  // Estados que não são "terminou bem". `ESTADOS_CONHECIDOS` só existe para a
-  // tela ter um TEXTO amigável — o valor renderizado é sempre o do servidor;
-  // um estado que a tela não conhece cai no `default` e mostra o string cru.
-  const ESTADOS_CONHECIDOS: Record<string, string> = {
-    concluido: "concluído",
-    limite_de_custo: "parou no teto — o pedido proibiu de continuar gastando",
-    limite_de_rondas: "parou no limite de rondas, sem convergir",
-    aguardando_humano: "aguardando decisão humana",
-    pendente: "pendente",
-    executando: "executando",
-    falhou: "falhou",
-    cancelado: "cancelado",
-  };
   const naoConcluido = !!run && run.estado !== "concluido";
-  const textoEstado = run ? (ESTADOS_CONHECIDOS[run.estado] ?? run.estado) : "";
 
   return (
     <div className="min-h-screen bg-papel text-tinta dark:bg-noite-fundo dark:text-noite-tinta">
@@ -190,8 +200,20 @@ export function Execucao() {
                 custo desta execução: {formatarUSD(run.custo_microcents)}
               </span>
               {naoConcluido && (
-                <span className="font-medium text-lacuna dark:text-noite-crew">
-                  {textoEstado}
+                // `data-nao-concluido`: só existe no bundle quando este ramo
+                // é alcançável de verdade — é o que separa "a tela CITA o
+                // texto em algum lugar" de "a tela DESENHA o texto quando o
+                // run não terminou". Um teste que buscasse só a string
+                // passaria mesmo com este `{naoConcluido && (...)}` trocado
+                // por `{false && (...)}`, porque `textoDoEstado` seria um
+                // valor morto, mas os LITERAIS que ele devolve — inclusive
+                // este atributo — ainda estariam em algum lugar do módulo se
+                // vivessem fora do ramo. Aqui não vivem: nascem dentro dele.
+                <span
+                  data-nao-concluido="run-nao-terminou"
+                  className="font-medium text-lacuna dark:text-noite-crew"
+                >
+                  {textoDoEstado(run.estado)}
                   {run.teto_atingido && " (teto desta execução atingido)"}
                 </span>
               )}

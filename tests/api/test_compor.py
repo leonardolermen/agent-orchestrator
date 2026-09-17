@@ -473,9 +473,22 @@ def test_a_tela_de_execucao_trata_estado_NAO_CONCLUIDO_como_nao_terminado():
     """`limite_de_custo` (e os outros estados que não são `concluido`) saem com
     a MESMA proeminência de um run que não terminou — nunca um `concluido`
     com nota de rodapé. A tela lê o string cru do enum do servidor; não
-    inventa estados no cliente."""
+    inventa estados no cliente.
+
+    O marcador `run-nao-terminou` é o que torna este teste capaz de pegar a
+    tela DECORANDO em vez de DESENHANDO: `limite_de_custo` e "parou no teto"
+    moram em `textoDoEstado`, uma função só chamada de DENTRO do ramo
+    `{naoConcluido && (...)}` em `Execucao.tsx` — então se esse ramo virasse
+    morto (por exemplo `naoConcluido` sendo trocado por um `false` fixo), a
+    função inteira, com os dois literais, seria eliminada do bundle pelo
+    tree-shaking, e checar só os literais não pegaria a regressão. O atributo
+    `data-nao-concluido="run-nao-terminou"` nasce no MESMO ramo, então ele
+    desaparece exatamente quando o ramo desaparece — é o marcador que só
+    sobrevive ao build quando o caminho de renderização está de fato vivo.
+    """
     fonte = _bundle()
 
+    assert 'run-nao-terminou' in fonte
     assert "limite_de_custo" in fonte
     assert "parou no teto" in fonte
     # O estado bruto continua acessível: um valor que a tela não conhece cai
