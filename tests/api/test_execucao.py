@@ -711,3 +711,114 @@ def test_uma_falha_da_fonte_SINTETICA_sobe_como_erro_de_SERVIDOR(monkeypatch):
 
     with pytest.raises(ValueError, match="defeito do gerador"):
         cliente.post("/api/workflows/conciliacao/runs", json={})
+
+
+def _transformador():
+    """Um stage que CONSOME `issue` e PRODUZ `banco`, com payload de dicionário.
+
+    `produced` e `WorkSet.com()` existem desde a fatia do grafo: um resolver
+    pode criar itens de outro `kind`, e o stage seguinte os consome.
+    """
+    from orchestrator.kernel.cost import CostClass
+    from orchestrator.kernel.definition import Stage, WorkflowDefinition
+    from orchestrator.kernel.resolution import Resolution
+    from orchestrator.kernel.resolver import ResolverDescription, ResolverOutput
+    from orchestrator.kernel.work import WorkItem
+    from orchestrator.matching.exact import ExactMatcher
+
+    class Transforma:
+        name = "transforma"
+        cost_class = CostClass.REGRA
+
+        def describe(self) -> ResolverDescription:
+            return ResolverDescription(self.name, self.cost_class, "issue vira lançamento")
+
+        def resolve(self, work):
+            return ResolverOutput(
+                resolutions=[
+                    Resolution(item_ids=frozenset({i.id}), produced_by=self.name, rule="t")
+                    for i in work.items
+                ],
+                produced=tuple(
+                    # Payload de DICIONÁRIO, que é o que uma fonte de arquivo
+                    # entrega e o que este resolver genérico repassa.
+                    WorkItem(id=f"b-{i.id}", kind="banco", payload=dict(i.payload),
+                             origem=self.name)
+                    for i in work.items
+                ),
+            )
+
+    def fabrica(ctx):
+        return WorkflowDefinition(
+            id="produz",
+            name="produz lançamento a partir de issue",
+            stages=(
+                Stage(name="transformar", cascade=(Transforma(),),
+                      consome=frozenset({"issue"}), produz=frozenset({"banco"})),
+                # L1 EXIGE `BankEntry` para o kind `banco` — e vai receber dict.
+                Stage(name="conciliar", cascade=(ExactMatcher(),),
+                      consome=frozenset({"banco"})),
+            ),
+        )
+
+    return fabrica
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "LACUNA CONHECIDA: `_conferir_payload` inspeciona o pool INICIAL. Um "
+        "stage que PRODUZ itens os injeta depois da conferência, então um "
+        "produtor genérico alimentando um consumidor tipado traz de volta o "
+        "500 original. Fechar isso exige uma declaração do lado do PRODUTOR "
+        "(que tipo ele emite por kind), que não existe, e o ponto de "
+        "aplicação seria `runtime/engine.py` — onde `produced` entra no pool "
+        "e onde o motor, por desenho, nunca inspeciona payload. Inalcançável "
+        "por configuração publicada: nenhum bloco do catálogo produz."
+    ),
+)
+def test_um_stage_PRODUTOR_ainda_fura_a_conferencia_de_payload(tmp_path, monkeypatch):
+    """A borda protege o que entra pela FONTE, não o que nasce no meio do run.
+
+    Este teste falha de propósito, e o `strict=True` é o catraca: no dia em que
+    alguém fechar a lacuna, ele passa a dar XPASS e a suíte fica vermelha até
+    que a marcação saia junto. Um `xfail` frouxo viraria um teste que ninguém
+    percebe ter sido consertado — ou quebrado de novo.
+    """
+    import orchestrator.api.app as api_app
+
+    raiz = tmp_path / "entradas"
+    raiz.mkdir()
+    (raiz / "issues.csv").write_text("id,texto\n1,um\n", encoding="utf-8")
+    monkeypatch.setattr(api_app, "_RAIZ_ENTRADAS", raiz)
+    _registrar(monkeypatch, "produz", _transformador())
+
+    local = TestClient(api_app.app, raise_server_exceptions=False)
+    r = local.post(
+        "/api/workflows/produz/runs",
+        json={"fonte": {"tipo": "arquivo", "caminho": "issues.csv",
+                        "kind": "issue", "campo_id": "id"}},
+    )
+
+    # O que DEVERIA acontecer. Hoje é 500, com `AttributeError: 'dict' object
+    # has no attribute 'document'` vindo de `matching/exact.py`.
+    assert r.status_code == 422, r.status_code
+
+
+def test_a_lacuna_do_produtor_nao_e_alcancavel_pelo_CATALOGO():
+    """O que torna a lacuna acima documentável em vez de urgente.
+
+    Nenhum bloco do catálogo produz item nenhum: `produz` é declarado no
+    `Stage`, e as duas vias de composição (`grill.receita.construir` e
+    `authoring.composicao.construir_composicao`) montam stages sem ele. Se
+    isso mudar, a lacuna passa a ser alcançável pela tela e este teste é quem
+    avisa.
+    """
+    # `descrever` em vez de `registry` + `construir_definicao`: ela isola a
+    # receita que não constrói, então uma receita quebrada no `data/` de um
+    # desenvolvedor não transforma esta asserção num erro sobre outro assunto.
+    from orchestrator.workflows import descrever
+
+    for workflow_id, definicao in descrever():
+        for stage in definicao.stages:
+            assert stage.produz == frozenset(), (workflow_id, stage.name)

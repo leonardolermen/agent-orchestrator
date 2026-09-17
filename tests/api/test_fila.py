@@ -368,3 +368,48 @@ def test_uma_fila_JA_EM_DISCO_continua_sendo_encontrada():
 
     assert [i["divergence_id"] for i in corpo["itens"]] == ["d-b-b00003"]
     assert corpo["dataset"] == dataset_id(1, 30, 0.15)
+
+
+@pytest.mark.parametrize(
+    "taxa",
+    [
+        0.15,
+        # `repr(1e-05)` é `'1e-05'`: notação científica. A chave da fila passa
+        # por `dataset_id`, que interpola esse `repr`, e um ramo de
+        # compatibilidade que tentasse reconhecer "a forma que `dataset_id`
+        # produz" não casaria — a fila em disco some e a rota devolve 200 com
+        # lista vazia. Foi o que aconteceu, e é por isso que este valor está
+        # aqui em vez de num comentário.
+        0.00001,
+        1e-10,
+    ],
+)
+def test_uma_fila_EM_DISCO_e_encontrada_mesmo_com_taxa_em_notacao_cientifica(taxa):
+    """A compatibilidade da chave, no nível do HTTP, sobre o valor que quebrou.
+
+    O `.jsonl` é escrito pela chave que `dataset_id` produz, sem passar por
+    código novo nenhum. Quem o encontra é a rota, pela chave derivada do `ref`.
+    Uma divergência entre as duas não levanta nada: devolve `200` com
+    `itens: []` sobre um arquivo que está ali.
+    """
+    import orchestrator.api.app as modulo
+
+    params = {"seed": 1, "n": 30, "taxa_divergencia": taxa}
+    caminho = caminho_da_fila("conciliacao", dataset_id(1, 30, taxa), raiz=modulo._RAIZ_FILA)
+    caminho.parent.mkdir(parents=True, exist_ok=True)
+    Fila(caminho).gravar_proposta(
+        Proposal(
+            item_id="d-b-b00003",
+            tipo=DivergenceType.DEFASAGEM_TEMPORAL,
+            explicacao="x",
+            evidencia=["e"],
+            confianca=Confidence.MEDIA,
+            acao_sugerida="conciliar_com(l00003)",
+        )
+    )
+    assert caminho.exists()
+
+    corpo = cliente.get("/api/fila/conciliacao", params=params).json()
+
+    assert [i["divergence_id"] for i in corpo["itens"]] == ["d-b-b00003"]
+    assert corpo["dataset"] == dataset_id(1, 30, taxa)

@@ -35,20 +35,31 @@ def dataset_id(seed: int, n: int, taxa: float) -> str:
     return f"s{seed}-n{n}-t{taxa}"
 
 
-# O que pode virar nome de arquivo sem surpresa em nenhum dos dois sistemas de
-# arquivos que este projeto roda (Windows no desenvolvimento, Linux no CI).
-_NOME_SEGURO = re.compile(r"[A-Za-z0-9._-]+")
-
-# A forma EXATA que `dataset_id` produz, e a única que o esquema `synth:` tem
-# permissão de perder ao virar chave de fila. É a compatibilidade com o que já
-# está escrito em `data/fila/**`, escrita como exceção estreita em vez de como
-# regra geral — ver `dataset_de_ref`.
+# Duas peneiras, e elas respondem perguntas DIFERENTES.
 #
-# Duas expressões que precisam concordar sobre o mesmo formato são o join
-# frágil de sempre; `test_a_forma_legada_descreve_o_que_dataset_id_produz`
-# fecha o par.
-_FORMA_LEGADA = re.compile(r"s\d+-n\d+-t[\d.]+")
+# `_INSEGURO` é uma DENY-LIST e responde "isto pode ser um componente de
+# caminho?". É um conjunto fechado, ditado pelos dois sistemas de arquivos que
+# este projeto roda (Windows no desenvolvimento, Linux no CI), e não muda
+# quando o formato de um `ref` muda. É a única peneira que o ramo de
+# compatibilidade pode usar — ver `dataset_de_ref`.
+#
+# `_NOME_SEGURO` é uma ALLOW-LIST e responde "esta chave é ARRUMADA o bastante
+# para ir inteira para o nome do arquivo, em vez de virar hash?". Ela pode
+# recusar coisas legais sem consequência: o ramo que a consulta tem o hash
+# como saída, e hash é uma resposta correta ali.
+#
+# Confundir as duas foi o defeito: uma allow-list no ramo de compatibilidade é
+# uma afirmação sobre o que `dataset_id` imprime, e `dataset_id` interpola o
+# `repr` de um float — que vira `1e-05` e `1e+25`. Adivinhar isso é o mesmo bug
+# com pavio mais longo.
+_INSEGURO = re.compile(r'[/\\:*?"<>|\x00-\x1f]')
+_NOME_SEGURO = re.compile(r"[A-Za-z0-9._-]+")
 _ESQUEMA_LEGADO = "synth"
+
+
+def _componente_seguro(nome: str) -> bool:
+    """`nome` pode virar UM componente de caminho, sem escapar dele?"""
+    return bool(nome) and nome not in (".", "..") and not _INSEGURO.search(nome)
 
 
 def dataset_de_ref(ref: str) -> str:
@@ -63,14 +74,26 @@ def dataset_de_ref(ref: str) -> str:
     Precisa servir de NOME DE ARQUIVO — `caminho_da_fila` o interpola em
     `{dataset}.jsonl`.
 
-    **O ESQUEMA faz parte da chave, com uma exceção nomeada.** Jogá-lo fora
-    sempre que o resto fosse seguro faria `synth:X` e `db:X` colidirem numa
-    fila só — dois conjuntos diferentes compartilhando a trilha de decisões
-    humanas. Ele só é descartado para `synth:` com um resto na forma exata que
-    `dataset_id` produz, porque é essa a chave das filas JÁ ESCRITAS em disco,
-    e perdê-la tornaria toda decisão humana existente invisível. Nenhuma outra
-    string pode alcançar esse ramo: `_FORMA_LEGADA` não casa com `db-x`, nem
-    com um caminho, nem com um hash.
+    **O ESQUEMA faz parte da chave, menos para `synth:`.** Jogá-lo fora sempre
+    que o resto parecesse seguro faria `synth:X` e `db:X` colidirem numa fila
+    só — dois conjuntos diferentes compartilhando a trilha de decisões humanas.
+    Ele é descartado para `synth:` e só para ele, porque é esse esquema que tem
+    filas JÁ ESCRITAS em `data/fila/**` sob a chave sem prefixo, e perdê-la
+    tornaria toda decisão humana existente invisível.
+
+    **A condição é o ESQUEMA, nunca a forma do resto.** Uma versão anterior
+    exigia que o resto casasse `s\\d+-n\\d+-t[\\d.]+`, "a forma que `dataset_id`
+    produz" — e `dataset_id` interpola o `repr` de um float, que vira notação
+    científica: `taxa=0.00001` imprime `t1e-05`, o `e` e o `-` ficam fora do
+    padrão, a chave muda e a fila em disco some SEM ERRO NENHUM. Medido: 90 de
+    420 combinações de uma grade divergiam, e `GET /api/fila` devolvia `200`
+    com lista vazia sobre um `.jsonl` que estava ali. O esquema não tem essa
+    fragilidade porque não descreve o conteúdo de nada.
+
+    A ÚNICA coisa que ainda pode desviar o ramo legado é o resto não caber num
+    componente de caminho (`_componente_seguro`) — e aí não há escolha: uma
+    chave com barra não é uma chave, é um diretório. Isso não é uma afirmação
+    sobre o formato de `dataset_id`; é sobre o sistema de arquivos.
 
     Um ref `file:` carrega `/`, `@` e o `:` do esquema — diretório acidental no
     Linux, nome ilegal no Windows — e por isso vira hash.
@@ -79,7 +102,7 @@ def dataset_de_ref(ref: str) -> str:
     verdade.
     """
     esquema, _, resto = ref.partition(":")
-    if esquema == _ESQUEMA_LEGADO and _FORMA_LEGADA.fullmatch(resto):
+    if esquema == _ESQUEMA_LEGADO and _componente_seguro(resto):
         return resto
     if _NOME_SEGURO.fullmatch(esquema) and _NOME_SEGURO.fullmatch(resto):
         return f"{esquema}-{resto}"

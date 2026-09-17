@@ -494,6 +494,16 @@ def _conferir_payload(definicao: WorkflowDefinition, pool: WorkSet) -> None:
     `Agent` monta o prompt a partir dos CAMPOS do item e aceita dataclass ou
     dict (ver `agent/declarado.py::_campos`), então um agente declarado roda
     sobre um CSV sem nada a exigir.
+
+    **LIMITE, dito em voz alta: só o pool INICIAL é conferido.** Um stage que
+    PRODUZ itens (`ResolverOutput.produced`) os injeta no pool depois daqui, e
+    um produtor genérico alimentando um consumidor tipado traz de volta o 500
+    original. Fechar isso exige uma declaração do lado do PRODUTOR — que tipo
+    ele emite por kind — e o ponto de aplicação seria `runtime/engine.py`, onde
+    o motor por desenho nunca inspeciona payload. Inalcançável por
+    configuração publicada (nenhum bloco do catálogo produz), e com dois
+    testes de plantão em `tests/api/test_execucao.py`: um `xfail(strict)` sobre
+    a lacuna e um que falha no dia em que ela virar alcançável pela tela.
     """
     tipos: dict[str, set[type]] = {}
     for item in pool.items:

@@ -204,12 +204,35 @@ def test_a_chave_da_fila_sintetica_nao_mudou():
     from orchestrator.synth.benchmark import SyntheticSource
 
     assert dataset_de_ref("synth:s1-n300-t0.15") == dataset_id(1, 300, 0.15)
-    # E o `ref` de verdade, não só a string escrita à mão aqui: sem isto, um
-    # dia em que `SyntheticSource.ref` mudasse de formato o teste acima
-    # continuaria verde comparando duas coisas que ninguém produz.
-    for seed, n, taxa in ((1, 300, 0.15), (7, 50, 0.0), (0, 1, 1.0)):
-        fonte = SyntheticSource(seed=seed, n=n, taxa_divergencia=taxa)
-        assert dataset_de_ref(fonte.ref) == dataset_id(seed, n, taxa)
+    # E o `ref` de VERDADE, não só a string escrita à mão acima: sem isto, um
+    # dia em que `SyntheticSource.ref` mudasse de formato o teste continuaria
+    # verde comparando duas coisas que ninguém produz.
+    #
+    # A grade de `taxa` inclui de propósito os valores cujo `repr` sai em
+    # NOTAÇÃO CIENTÍFICA. Uma versão anterior deste ramo casava o resto contra
+    # `s\d+-n\d+-t[\d.]+` — "a forma que `dataset_id` produz" — e `1e-05`
+    # não tem essa forma: a chave mudava e a fila em disco sumia sem erro
+    # nenhum. A grade antiga (0.0, 0.15, 1.0) passava, que é por que o defeito
+    # entrou. Cada valor abaixo é um formato de `repr` diferente.
+    taxas = (
+        0.0,        # 0.0
+        0.15,       # 0.15
+        1.0,        # 1.0
+        1e-05,      # 1e-05   — expoente negativo
+        1e-10,      # 1e-10
+        1e25,       # 1e+25   — expoente POSITIVO, com `+`
+        1 / 3,      # 0.3333333333333333 — 16 dígitos
+        0.1 + 0.2,  # 0.30000000000000004
+        5e-324,     # 5e-324  — o menor subnormal
+        1.5e300,
+    )
+    for seed in (0, 1, 7, 12345):
+        for n in (1, 30, 300, 5000):
+            for taxa in taxas:
+                fonte = SyntheticSource(seed=seed, n=n, taxa_divergencia=taxa)
+                assert dataset_de_ref(fonte.ref) == dataset_id(seed, n, taxa), (
+                    seed, n, taxa
+                )
 
 
 def test_a_chave_de_um_ref_de_arquivo_e_um_NOME_DE_ARQUIVO_valido(tmp_path):
@@ -245,20 +268,42 @@ def test_conteudo_diferente_no_mesmo_caminho_troca_a_fila():
     )
 
 
-def test_a_forma_legada_descreve_o_que_dataset_id_produz():
-    """O par que impede o join frágil.
+def test_o_ramo_legado_NAO_olha_a_forma_do_resto():
+    """A regressão, pinada pela causa e não pelo sintoma.
 
-    `_FORMA_LEGADA` é uma segunda expressão sobre o mesmo formato de
-    `dataset_id`. Se elas divergirem, o ramo de compatibilidade para de
-    reconhecer a chave antiga e toda fila em `data/fila/**` fica invisível —
-    em silêncio, porque nada mais compara as duas.
+    `_FORMA_LEGADA` não existe mais. Ela era uma segunda expressão sobre o
+    formato de `dataset_id`, e duas expressões que precisam concordar sobre o
+    mesmo formato são o join frágil de sempre — só que aqui o sintoma da
+    divergência é a fila humana sumir em silêncio, não um erro.
+
+    A condição do ramo é o ESQUEMA. Este teste afirma isso direto: qualquer
+    resto, por mais estranho que seja, sai inteiro sob `synth:` — desde que
+    caiba num componente de caminho, que é uma questão de sistema de arquivos e
+    não de formato de ref.
     """
-    from orchestrator.review.fila import _FORMA_LEGADA
+    import orchestrator.review.fila as modulo
+    from orchestrator.review.fila import dataset_de_ref
 
-    for seed in (0, 1, 7, 12345):
-        for n in (1, 30, 300, 5000):
-            for taxa in (0.0, 0.15, 1.0):
-                assert _FORMA_LEGADA.fullmatch(dataset_id(seed, n, taxa)), (seed, n, taxa)
+    assert not hasattr(modulo, "_FORMA_LEGADA")
+
+    for resto in ("s1-n30-t1e-05", "s1-n30-t1e+25", "s0-n0-tinf", "qualquer coisa",
+                  "NADA-a-ver-com-dataset_id", "t0.30000000000000004"):
+        assert dataset_de_ref(f"synth:{resto}") == resto, resto
+
+
+def test_uma_chave_legada_que_nao_cabe_num_CAMINHO_ainda_vira_hash():
+    """O único desvio que sobra no ramo legado, e ele não é sobre formato.
+
+    Uma chave com barra não é uma chave: é um diretório. `SyntheticSource.ref`
+    não consegue produzir uma (seed e n são `int`, taxa é `float`), então isto
+    é defesa de profundidade sobre uma entrada que o sistema não gera.
+    """
+    from orchestrator.review.fila import dataset_de_ref
+
+    for ruim in ("../fuga", "a/b", "", "."):
+        chave = dataset_de_ref(f"synth:{ruim}")
+        assert chave != ruim
+        assert not (set(chave) & set(r'/\:@*?"<>|'))
 
 
 def test_o_ESQUEMA_faz_parte_da_chave_fora_do_caso_legado():
