@@ -189,3 +189,57 @@ def test_registro_truncado_aponta_arquivo_e_linha(tmp_path):
     # coincidência mesmo se o número de linha estiver errado.
     assert "linha 2" in mensagem
     assert excinfo.value.__cause__ is not None
+
+
+def test_a_chave_da_fila_sintetica_nao_mudou():
+    """Se esta quebrar, toda fila em `data/fila/**` virou invisível.
+
+    A chave da fila passou a sair do `ref` da fonte — uniformemente, para toda
+    fonte — porque com um arquivo não existe `(seed, n, taxa)`. Isso só é
+    seguro porque `SyntheticSource.ref` sempre foi `dataset_id` com o esquema
+    na frente: a mesma string. Esta igualdade é o que garante que nenhuma
+    decisão humana já gravada em disco deixa de ser encontrada.
+    """
+    from orchestrator.review.fila import dataset_de_ref
+    from orchestrator.synth.benchmark import SyntheticSource
+
+    assert dataset_de_ref("synth:s1-n300-t0.15") == dataset_id(1, 300, 0.15)
+    # E o `ref` de verdade, não só a string escrita à mão aqui: sem isto, um
+    # dia em que `SyntheticSource.ref` mudasse de formato o teste acima
+    # continuaria verde comparando duas coisas que ninguém produz.
+    for seed, n, taxa in ((1, 300, 0.15), (7, 50, 0.0), (0, 1, 1.0)):
+        fonte = SyntheticSource(seed=seed, n=n, taxa_divergencia=taxa)
+        assert dataset_de_ref(fonte.ref) == dataset_id(seed, n, taxa)
+
+
+def test_a_chave_de_um_ref_de_arquivo_e_um_NOME_DE_ARQUIVO_valido(tmp_path):
+    """`caminho_da_fila` interpola a chave em `{dataset}.jsonl`.
+
+    Um ref `file:` carrega `/`, `@` e o `:` do esquema — diretório acidental no
+    Linux, nome ilegal no Windows. Por isso vira hash. O teste escreve DE FATO
+    no caminho produzido: uma chave ilegal falha aqui, não em produção.
+    """
+    from orchestrator.review.fila import dataset_de_ref
+
+    ref = "file:sub/itens.csv@" + "a" * 64
+    chave = dataset_de_ref(ref)
+
+    assert not (set(chave) & set(r'/\:@*?"<>|'))
+    caminho = caminho_da_fila("w", chave, raiz=tmp_path)
+    caminho.parent.mkdir(parents=True, exist_ok=True)
+    caminho.write_text("", encoding="utf-8")
+    assert caminho.is_file()
+    # O caminho relativo entra na identidade: dois arquivos diferentes com o
+    # MESMO conteúdo não compartilham fila.
+    assert chave != dataset_de_ref("file:outro.csv@" + "a" * 64)
+
+
+def test_conteudo_diferente_no_mesmo_caminho_troca_a_fila():
+    """O `ref` de arquivo carrega o sha256 do CONTEÚDO, então editar o arquivo
+    troca a chave. É o mesmo argumento do docstring de `dataset_id`: uma
+    decisão tomada olhando um conjunto não vale para outro."""
+    from orchestrator.review.fila import dataset_de_ref
+
+    assert dataset_de_ref("file:x.csv@" + "a" * 64) != dataset_de_ref(
+        "file:x.csv@" + "b" * 64
+    )

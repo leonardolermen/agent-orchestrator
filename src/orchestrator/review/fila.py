@@ -8,7 +8,9 @@ Escrita concorrente de dois processos não tem lock. Uma máquina, um usuário,
 `open("a")` por linha é seguro o bastante; multiusuário é multi-tenant, Tier 4.
 """
 
+import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +33,42 @@ def dataset_id(seed: int, n: int, taxa: float) -> str:
     olhando a semente 1 se aplicaria a um lançamento diferente na semente 7.
     """
     return f"s{seed}-n{n}-t{taxa}"
+
+
+# O que pode virar nome de arquivo sem surpresa em nenhum dos dois sistemas de
+# arquivos que este projeto roda (Windows no desenvolvimento, Linux no CI).
+_NOME_SEGURO = re.compile(r"[A-Za-z0-9._-]+")
+
+
+def dataset_de_ref(ref: str) -> str:
+    """A identidade do conjunto, a partir do `ref` da fonte.
+
+    A fila é chaveada por `(workflow, dataset)`, e até aqui o `dataset` saía de
+    `dataset_id(seed, n, taxa)`. Com uma fonte de ARQUIVO não existe seed, nem
+    n, nem taxa — então a chave passa a sair do `ref`, uniformemente, para toda
+    fonte. O `ref` sempre foi a identidade do conjunto; `dataset_id` era a
+    versão dele sem o esquema.
+
+    Precisa servir de NOME DE ARQUIVO — `caminho_da_fila` o interpola em
+    `{dataset}.jsonl`. Um ref `synth:` já é seguro e passa inteiro, e é por
+    isso que as filas escritas até hoje continuam sendo encontradas: o resto
+    depois do esquema é exatamente o que `dataset_id` produzia (ver
+    `SyntheticSource.ref`, que é esta mesma string com `synth:` na frente). Um
+    ref `file:` carrega `/`, `@` e o `:` do esquema — diretório acidental no
+    Linux, nome ilegal no Windows — e por isso vira hash.
+
+    `dataset_id` FICA: a CLI e o grill chamam, e lá seed/n/taxa existem de
+    verdade.
+    """
+    esquema, _, resto = ref.partition(":")
+    if _NOME_SEGURO.fullmatch(resto):
+        return resto
+    # O esquema também passa pela peneira antes de virar prefixo. Num ref sem
+    # `:` ele é o ref INTEIRO, que pode carregar barra — e um prefixo com barra
+    # transformaria `{dataset}.jsonl` num diretório, que é a mesma falha
+    # silenciosa que esta função existe para impedir.
+    prefixo = esquema if _NOME_SEGURO.fullmatch(esquema) else "ref"
+    return f"{prefixo}-{hashlib.sha256(ref.encode()).hexdigest()[:16]}"
 
 
 def caminho_da_fila(workflow_id: str, dataset: str, raiz: Path | None = None) -> Path:
