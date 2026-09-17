@@ -1,6 +1,7 @@
 """A fonte de arquivo: ler é fácil, a cerca é o trabalho."""
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -151,3 +152,115 @@ def test_teto_de_linhas_recusa_com_motivo(tmp_path):
 
     with pytest.raises(ValueError, match="linhas"):
         fonte.load()
+
+
+def test_linha_csv_truncada_e_recusada_nao_vira_id_none(tmp_path):
+    """Uma linha mais curta que o cabeçalho preenche os campos que faltam com
+    o `restval` do `DictReader` — a CHAVE fica presente, só o valor que falta.
+    Sem um sentinela que não se confunda com um valor real, a linha truncada
+    virava `WorkItem` com id `"None"`, fabricado, e ninguém era avisado."""
+    raiz = _raiz(tmp_path)
+    (raiz / "x.csv").write_text("x,id\num\n", encoding="utf-8")
+
+    fonte = ArquivoSource(caminho=raiz / "x.csv", kind="k", campo_id="id", raiz=raiz)
+
+    with pytest.raises(ValueError, match="truncada"):
+        fonte.load()
+
+
+def test_linha_csv_com_campos_extras_e_recusada_sem_TypeError(tmp_path):
+    """Uma linha mais longa que o cabeçalho vai para o `restkey` do
+    `DictReader` — e sem tratamento essa chave extra (um objeto, não uma
+    string) faz `sorted()` da mensagem de erro explodir em `TypeError`, que
+    esconde o problema real por trás de um traceback não relacionado."""
+    raiz = _raiz(tmp_path)
+    (raiz / "x.csv").write_text("id,x\n1,um,sobra\n", encoding="utf-8")
+
+    fonte = ArquivoSource(caminho=raiz / "x.csv", kind="k", campo_id="id", raiz=raiz)
+
+    with pytest.raises(ValueError, match="mais campos"):
+        fonte.load()
+
+
+def test_id_vazio_e_recusado(tmp_path):
+    """String vazia não identifica nada — mesmo espírito do `WorkItem`, que já
+    recusa id vazio, mas aqui com o número da linha."""
+    raiz = _raiz(tmp_path)
+    (raiz / "x.csv").write_text("id,x\n,um\n", encoding="utf-8")
+
+    fonte = ArquivoSource(caminho=raiz / "x.csv", kind="k", campo_id="id", raiz=raiz)
+
+    with pytest.raises(ValueError, match="vazio"):
+        fonte.load()
+
+
+def test_id_falsy_como_zero_e_aceito(tmp_path):
+    """`0` é um id legítimo — a guarda testa `valor == ""`, nunca `not valor`,
+    ou um id falsy qualquer (0, False) seria rejeitado à toa."""
+    raiz = _raiz(tmp_path)
+    (raiz / "x.json").write_text(
+        json.dumps([{"id": 0, "x": "um"}]), encoding="utf-8"
+    )
+
+    pool = ArquivoSource(
+        caminho=raiz / "x.json", kind="k", campo_id="id", raiz=raiz
+    ).load()
+
+    assert [i.id for i in pool.items] == ["0"]
+
+
+def test_ref_usa_barra_mesmo_em_subdiretorio(tmp_path):
+    """`Path` relativo imprime com `\\` no Windows e `/` no Linux — o MESMO
+    arquivo produziria dois `ref` diferentes conforme o SO em que o processo
+    roda. `.as_posix()` fixa o separador, e é isso que faz "estável" valer
+    entre quem gerou o `ref` e o CI que faz o replay."""
+    raiz = _raiz(tmp_path)
+    (raiz / "sub").mkdir()
+    (raiz / "sub" / "a.csv").write_text("id,x\n1,um\n", encoding="utf-8")
+
+    fonte = ArquivoSource(
+        caminho=raiz / "sub" / "a.csv", kind="k", campo_id="id", raiz=raiz
+    )
+
+    assert "/" in fonte.ref
+    assert "\\" not in fonte.ref
+
+
+def test_ref_e_load_leem_o_arquivo_uma_unica_vez(tmp_path, monkeypatch):
+    """`ref` e `load()` liam o disco em chamadas separadas — nada garantia que
+    os bytes hasheados por `ref` eram os mesmos que `load()` transformava em
+    `WorkItem`. Memoizado, a leitura acontece uma vez só, não importa quantas
+    vezes `ref`/`load()` sejam chamados."""
+    raiz = _raiz(tmp_path)
+    (raiz / "a.csv").write_text("id,x\n1,um\n", encoding="utf-8")
+    fonte = ArquivoSource(caminho=raiz / "a.csv", kind="k", campo_id="id", raiz=raiz)
+
+    chamadas = []
+    original = Path.read_bytes
+
+    def contando(self, *a, **kw):
+        chamadas.append(self)
+        return original(self, *a, **kw)
+
+    monkeypatch.setattr(Path, "read_bytes", contando)
+
+    _ = fonte.ref
+    fonte.load()
+    _ = fonte.ref
+
+    assert len(chamadas) == 1
+
+
+def test_teto_de_bytes_recusa_com_motivo(tmp_path):
+    """Um arquivo de 4 GB não pode ser lido inteiro antes de ser recusado — o
+    teto em bytes usa `stat()`, que roda ANTES de qualquer leitura, e por isso
+    protege `ref` também, que não passa por `load()`."""
+    raiz = _raiz(tmp_path)
+    (raiz / "grande.csv").write_text("id,x\n1,umvalor\n", encoding="utf-8")
+
+    fonte = ArquivoSource(
+        caminho=raiz / "grande.csv", kind="k", campo_id="id", raiz=raiz, max_bytes=5
+    )
+
+    with pytest.raises(ValueError, match="bytes"):
+        _ = fonte.ref

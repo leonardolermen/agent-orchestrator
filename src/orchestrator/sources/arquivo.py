@@ -20,6 +20,19 @@ from pathlib import Path
 from orchestrator.kernel.work import WorkItem, WorkSet
 
 MAX_LINHAS_PADRAO = 5000
+# Teto de bytes, não de linhas: `max_linhas` só se aplica DEPOIS de o arquivo
+# inteiro estar em memória e parseado. Sem um teto anterior, um arquivo de 4
+# GB é lido e hasheado por inteiro antes de qualquer contagem de linha ter
+# chance de recusar — a defesa chegaria tarde demais para o próprio `ref`.
+MAX_BYTES_PADRAO = 10 * 1024 * 1024  # 10 MiB
+
+# Sentinelas para as duas formas de uma linha de CSV não bater com o
+# cabeçalho. `csv.DictReader` usa `restval`/`restkey` para isso, e o padrão de
+# ambos é `None` — o que apaga a diferença entre "o campo faltou" e "o campo
+# tem o valor None de propósito". Foi exatamente essa ambiguidade que deixava
+# uma linha truncada virar `WorkItem(id="None")` em silêncio.
+_FALTA = object()  # restval: linha mais CURTA que o cabeçalho
+_EXTRA = object()  # restkey: linha mais LONGA que o cabeçalho
 
 
 class RaizViolada(ValueError):
@@ -40,7 +53,13 @@ class ArquivoSource:
     campo_id: str
     raiz: Path
     max_linhas: int = MAX_LINHAS_PADRAO
+    max_bytes: int = MAX_BYTES_PADRAO
     _resolvido: Path = field(init=False, repr=False)
+    # `None` até a primeira leitura. Fica de fora do `__post_init__` de
+    # propósito: construir um `ArquivoSource` não deve tocar o disco, e o
+    # teto de bytes (abaixo, em `_bytes()`) precisa poder recusar ANTES de
+    # qualquer leitura acontecer.
+    _conteudo: bytes | None = field(init=False, repr=False, default=None)
 
     def __post_init__(self) -> None:
         raiz = self.raiz.resolve()
@@ -55,17 +74,48 @@ class ArquivoSource:
             )
         object.__setattr__(self, "_resolvido", alvo)
 
+    def _bytes(self) -> bytes:
+        """O conteúdo do arquivo, lido do disco uma única vez.
+
+        `ref` e `load()` liam o disco em duas chamadas separadas
+        (`read_bytes()` e `read_text()`); nada garantia que os bytes hasheados
+        por `ref` eram os mesmos que `load()` transformava em `WorkItem` — um
+        arquivo trocado entre as duas chamadas faria o `ref` nomear um
+        conteúdo que nunca virou trabalho. Memoizado aqui, as duas views
+        compartilham a mesma leitura.
+
+        O teto de tamanho mora aqui, e não em `load()`, porque `stat()` é
+        barato e roda ANTES de qualquer byte entrar em memória — é a única
+        forma de o teto proteger `ref` também, que não passa por `load()`.
+        """
+        if self._conteudo is None:
+            tamanho = self._resolvido.stat().st_size
+            if tamanho > self.max_bytes:
+                raise ValueError(
+                    f"{self.caminho.name} tem {tamanho} bytes, acima do teto de "
+                    f"{self.max_bytes}. Reduza o arquivo ou suba o teto."
+                )
+            object.__setattr__(self, "_conteudo", self._resolvido.read_bytes())
+        return self._conteudo
+
     @property
     def ref(self) -> str:
-        """`file:<caminho relativo>@<sha256 do conteúdo>`.
+        """`file:<caminho relativo, com `/`>@<sha256 do conteúdo>`.
 
         Do CONTEÚDO, nunca do `mtime`: copiar ou tocar um arquivo muda a data e
         não muda o trabalho, e o replay quebraria por nada. Relativo à raiz
         porque o caminho absoluto da máquina não é parte da identidade do
         trabalho — mover a raiz não deveria invalidar decisões já tomadas.
+
+        `.as_posix()`, nunca a formatação padrão de `Path`: em Windows um
+        `Path` relativo imprime com `\\`, em Linux com `/` — o MESMO arquivo
+        produziria dois `ref` diferentes conforme onde o processo roda, e
+        "estável" deixaria de valer entre a máquina de quem gerou o `ref` e o
+        CI que faz o replay.
         """
-        digest = hashlib.sha256(self._resolvido.read_bytes()).hexdigest()
-        return f"file:{self._resolvido.relative_to(self.raiz.resolve())}@{digest}"
+        digest = hashlib.sha256(self._bytes()).hexdigest()
+        relativo = self._resolvido.relative_to(self.raiz.resolve()).as_posix()
+        return f"file:{relativo}@{digest}"
 
     def load(self) -> WorkSet:
         linhas = self._linhas()
@@ -74,24 +124,57 @@ class ArquivoSource:
                 f"{self.caminho.name} tem {len(linhas)} linhas, acima do teto de "
                 f"{self.max_linhas}. Reduza o arquivo ou suba o teto."
             )
-        itens = []
-        for i, linha in enumerate(linhas, start=1):
-            if self.campo_id not in linha:
-                # Alto, com o número da linha. Pular em silêncio produziria um
-                # pool menor que o arquivo, e ninguém saberia.
-                raise ValueError(
-                    f"linha {i} de {self.caminho.name} não tem o campo_id "
-                    f"{self.campo_id!r}. campos: {sorted(linha)}"
-                )
-            itens.append(
-                WorkItem(id=str(linha[self.campo_id]), kind=self.kind, payload=linha)
-            )
+        itens = [self._item(linha, i) for i, linha in enumerate(linhas, start=1)]
         # `WorkSet.__post_init__` recusa id repetido — deixar a guarda dele
         # falar evita uma segunda mensagem para a mesma falha.
         return WorkSet(items=tuple(itens))
 
+    def _item(self, linha: dict, i: int) -> WorkItem:
+        """Uma linha vira `WorkItem`, ou a razão de não virar, com o número da
+        linha. As quatro formas de uma linha ser inutilizável são distintas de
+        propósito — cada uma aponta para um defeito diferente no arquivo."""
+        if _EXTRA in linha:
+            # Checado ANTES de `campo_id not in linha`: com o restkey sobrando
+            # no dict, `sorted(linha)` da mensagem abaixo misturaria `str` com
+            # o objeto sentinela e o `TypeError` da comparação escondia o erro
+            # que a mensagem deveria explicar.
+            raise ValueError(
+                f"linha {i} de {self.caminho.name} tem mais campos que o "
+                f"cabeçalho (sobra {linha[_EXTRA]!r}) — o arquivo não bate com "
+                f"a própria primeira linha"
+            )
+        if self.campo_id not in linha:
+            # Campo ausente de verdade: no JSON, a chave não existe; no CSV,
+            # nem o cabeçalho tem essa coluna. Alto, com o número da linha —
+            # pular em silêncio produziria um pool menor que o arquivo, e
+            # ninguém saberia.
+            raise ValueError(
+                f"linha {i} de {self.caminho.name} não tem o campo_id "
+                f"{self.campo_id!r}. campos: {sorted(linha)}"
+            )
+        valor = linha[self.campo_id]
+        if valor is _FALTA:
+            # A chave existe (o `DictReader` a preencheu com o restval), mas a
+            # linha era mais curta que o cabeçalho — é o caso que virava
+            # `WorkItem(id="None")` quando o sentinela era `None` em vez de um
+            # objeto que não se confunde com um valor real.
+            raise ValueError(
+                f"linha {i} de {self.caminho.name} está truncada: falta o "
+                f"valor de {self.campo_id!r} (linha mais curta que o cabeçalho)"
+            )
+        if valor == "":
+            # Vazio não identifica nada — mesmo espírito do `WorkItem` que já
+            # recusa id vazio, dito aqui com o número da linha. Comparação por
+            # `== ""`, nunca `not valor`: um id JSON `0` ou `False` é legítimo,
+            # e um teste genérico de "falsy" rejeitaria os dois à toa.
+            raise ValueError(
+                f"linha {i} de {self.caminho.name} tem {self.campo_id!r} vazio "
+                f"— string vazia não identifica um item"
+            )
+        return WorkItem(id=str(valor), kind=self.kind, payload=linha)
+
     def _linhas(self) -> list[dict]:
-        texto = self._resolvido.read_text(encoding="utf-8")
+        texto = self._bytes().decode("utf-8")
         if self._resolvido.suffix.lower() == ".json":
             dados = json.loads(texto)
             if not isinstance(dados, list):
@@ -100,4 +183,6 @@ class ArquivoSource:
                     f"e veio {type(dados).__name__}"
                 )
             return dados
-        return list(csv.DictReader(texto.splitlines()))
+        return list(
+            csv.DictReader(texto.splitlines(), restval=_FALTA, restkey=_EXTRA)
+        )
