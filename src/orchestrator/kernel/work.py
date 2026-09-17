@@ -43,6 +43,13 @@ class WorkItem:
     id: str
     kind: str
     payload: Any
+    # Qual resolver produziu este item. Vazio quando ele veio da fonte.
+    #
+    # Sem proveniência a cadeia de auditoria quebra no PRIMEIRO salto: com um
+    # pool que transforma, "de onde veio este rascunho" deixa de ter resposta
+    # assim que existe mais de um produtor, e o replay não consegue
+    # reconstruir o caminho. É a mesma razão de `Resolution.produced_by`.
+    origem: str = ""
 
     def __post_init__(self) -> None:
         # Id vazio não identifica nada, e um pool com dois itens de id "" faria
@@ -108,3 +115,24 @@ class WorkSet:
         if not consumidos:
             return self
         return WorkSet(items=tuple(i for i in self.items if i.id not in consumidos))
+
+    def com(self, novos: Iterable[WorkItem]) -> "WorkSet":
+        """O pool mais os itens que um resolver produziu.
+
+        O espelho de `without()`, e a peça que transforma a cascata em grafo:
+        sem produzir, um stage só recebe o que o anterior NÃO resolveu, e não
+        existe fluxo de dado para frente.
+
+        Recebe `WorkItem`, NUNCA um `ResolverOutput` — pelo mesmo motivo que
+        `without()` recebe `Resolution`. Não existe assinatura pela qual uma
+        PROPOSTA chegue aqui, e é isso que mantém "proposta não resolve" como
+        coisa que o tipo não sabe expressar, agora que há uma segunda maneira
+        de o pool mudar.
+
+        A validação de id repetido não é feita aqui: `__post_init__` já a faz,
+        e duplicá-la criaria duas mensagens de erro para a mesma falha.
+        """
+        novos = tuple(novos)
+        if not novos:
+            return self
+        return WorkSet(items=self.items + novos)
