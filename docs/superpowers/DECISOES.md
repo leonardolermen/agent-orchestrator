@@ -2938,3 +2938,50 @@ Duas lacunas irmãs, registradas aqui para não se perderem:
   vez de descartar em silêncio.
 - **`Crew` não tem bloco.** Existe como resolver de classe `CREW` desde o M8 e
   não aparece na composição.
+
+## Execução como grafo
+
+### P7.1. `redacao` (Task 8) — sem atrito no kernel; o atrito é um degrau acima, no catálogo
+
+O quarto domínio do teste de generalidade, e o primeiro que é um pool que
+TRANSFORMA em vez de encolher (`topico → achados → rascunho → texto_final`,
+três degraus `Tarefa`, um por `kind` produzido). Escrevê-lo mediu duas coisas
+separadas.
+
+**O kernel de execução (Tasks 1–7): zero atrito.** `Stage.consome`/`produz`,
+`WorkflowDefinition.entrega`, `WorkItem.origem` e `Tarefa`/`TarefaSpec`
+bastaram sem alteração nenhuma — os três testes de
+`tests/domains/test_redacao.py` passaram na primeira implementação depois do
+RED esperado (`ModuleNotFoundError`). É o terceiro domínio seguido (depois de
+`procurement` e `swe`) que não pede mudança no kernel, e para um domínio cuja
+FORMA (transforma, não julga) é estruturalmente diferente dos outros três —
+evidência de que a peça certa (produzir `kind` novo por degrau) já estava no
+lugar certo desde a Task 3/4.
+
+**O catálogo declarativo (`agent/declarado.py` + `domains/registro.py`): um
+atrito real, e deliberadamente não corrigido aqui.** `Dominio.agentes` só
+aceita `AgenteDeclarado`, que descreve um resolver que julga UM item e devolve
+`Proposal` sobre ele mesmo — não existe campo para "que `kind` este degrau
+produz". Catalogar `redacao` ali exigiria uma de duas coisas ruins: mentir
+sobre o domínio (declará-lo como `AgenteDeclarado` que não transforma nada) ou
+registrá-lo com `agentes=()` e `regras=()`, um item de catálogo sem conteúdo —
+que `tests/domains/test_registro.py::test_os_TRES_dominios_se_declaram`
+(fixo em exatamente três domínios, e este plano não edita testes
+pré-existentes) recusa, corretamente: um catálogo maior só por contagem não é
+o mesmo que uma plataforma mais geral se o item novo não compõe nada de
+verdade.
+
+**Decisão:** `redacao` roda de verdade (`domains/redacao/workflow.py`,
+`definition(cliente)` + `pool(...)`, três testes verdes) e simplesmente NÃO
+entra em `DOMINIOS` — a nota em `domains/registro.py`, ao lado de onde a
+entrada iria, explica por quê. Alternativa rejeitada: estender
+`AgenteDeclarado` com um campo `produz` agora, para fechar o catálogo. O
+próprio plano de execução-como-grafo já reserva essa extensão para depois
+deste domínio existir (X7/X8 — `AgenteDeclarado.produz`, `Composicao.etapas`,
+o entrevistador e o canvas com arestas derivadas), porque o formato certo da
+extensão só fica claro depois de ver o atrito — e agora ele está visto e
+registrado, em vez de resolvido às pressas dentro de uma tarefa que não é a
+dele. Custo se errado: `redacao` fica invisível para quem compõe pela tela até
+o X7/X8 rodar; zero custo de execução, porque quem chama
+`domains.redacao.workflow.definition()` direto (como o teste faz) nunca passa
+por `DOMINIOS`.

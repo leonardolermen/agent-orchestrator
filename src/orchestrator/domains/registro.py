@@ -211,6 +211,31 @@ PROCUREMENT = Dominio(
 )
 
 
+# --------------------------------------------------------------------------
+# Redação — roda, mas não entra em `DOMINIOS`. Ver a nota abaixo.
+# --------------------------------------------------------------------------
+#
+# `domains/redacao/workflow.py` existe e é executável (`definition(cliente)` +
+# `pool(...)`, exercitado por `tests/domains/test_redacao.py`). O que falta AQUI
+# não é escrevê-lo — é catalogá-lo: os três degraus são `Tarefa`, que
+# TRANSFORMA um item no próximo (produz um `kind` novo por degrau, ao contrário
+# de julgar o item que recebeu). Nem `AgenteDeclarado` nem `RegraDisponivel`
+# sabem descrever isso — os dois descrevem um resolver que decide sobre UM
+# item e devolve `Proposal`/`Resolution` a respeito DELE, nunca um item de
+# outro `kind` para o próximo degrau consumir. Forçar `redacao` num
+# `AgenteDeclarado` mentiria sobre o que ele faz; e um `Dominio` com
+# `agentes=()` e `regras=()` seria um item de catálogo vazio, o que
+# `test_os_TRES_dominios_se_declaram` (fixo em EXATAMENTE três, sem editar)
+# recusa por bom motivo — cardápio maior não é o mesmo que plataforma mais
+# geral se o item novo não compõe nada de verdade.
+#
+# Ensinar `AgenteDeclarado` a declarar `produz` é exatamente o X7/X8 que o
+# plano de execução-como-grafo deixa de propósito para depois de `redacao`
+# existir como esqueleto executável — ver a nota de frição em
+# `tests/domains/test_generalidade.py` e a entrada correspondente em
+# `docs/superpowers/DECISOES.md`.
+
+
 DOMINIOS: dict[str, Dominio] = {d.id: d for d in (CONCILIACAO, SWE, PROCUREMENT)}
 
 
