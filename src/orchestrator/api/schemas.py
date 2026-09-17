@@ -381,6 +381,19 @@ class ComposicaoRequest(BaseModel):
         return v
 
 
+class CatalogoJSON(BaseModel):
+    """Tudo que dá para compor, sem agrupamento.
+
+    Regra e agente NÃO vão na mesma lista: o que a tela edita em cada um é
+    diferente, e uma lista só obrigaria a inspecionar o tipo em cada linha de
+    render. É a mesma separação que `DominioJSON` fazia, agora sem a partição.
+    """
+
+    ferramentas: list[FerramentaJSON]
+    regras: list[RegraJSON]
+    agentes: list[AgenteDeclaradoJSON]
+
+
 class ComposicaoResumoJSON(BaseModel):
     """Uma composição em disco.
 

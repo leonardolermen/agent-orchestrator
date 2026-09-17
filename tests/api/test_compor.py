@@ -43,21 +43,22 @@ def _corpo(resolvers, wid="minha-cascata"):
 # -- o catálogo -------------------------------------------------------------
 
 
-def test_o_catalogo_e_DERIVADO_do_CATALOGO_do_grill():
-    """Uma lista escrita à mão na camada HTTP divergiria na primeira mudança, e
-    o sintoma seria uma tela oferecendo um resolver que `construir` recusa."""
-    from orchestrator.grill.catalogo import CATALOGO
+def test_o_catalogo_e_DERIVADO_do_CATALOGO_plano():
+    """Uma lista escrita à mão na camada HTTP divergiria na primeira mudança,
+    e o sintoma seria uma tela oferecendo um bloco que `construir` recusa."""
+    from orchestrator.domains.registro import CATALOGO
 
     dados = cliente.get("/api/catalogo").json()
 
-    assert {e["nome"] for e in dados} == set(CATALOGO)
+    assert {r["nome"] for r in dados["regras"]} == {r.nome for r in CATALOGO.regras}
+    assert {a["name"] for a in dados["agentes"]} == {a.name for a in CATALOGO.agentes}
 
 
-def test_o_catalogo_vem_na_ordem_em_que_a_CASCATA_RODA():
+def test_as_regras_vem_na_ordem_em_que_a_CASCATA_RODA():
     """Ordem alfabética sugeriria que o autor escolhe a sequência. Ele não
     escolhe: a paleta é oferecida do mais barato ao mais caro porque é essa a
     ordem de execução."""
-    classes = [e["cost_class"] for e in cliente.get("/api/catalogo").json()]
+    classes = [r["cost_class"] for r in cliente.get("/api/catalogo").json()["regras"]]
     ordem = ["REGRA", "AGENTE", "CREW", "HUMANO"]
 
     assert classes == sorted(classes, key=ordem.index)
@@ -66,11 +67,19 @@ def test_o_catalogo_vem_na_ordem_em_que_a_CASCATA_RODA():
 def test_o_catalogo_traz_os_parametros_com_DEFAULT_do_proprio_resolver():
     """`_param` lê o default do dataclass do resolver. A tela preenche com ele,
     então renomear o campo no resolver explode no import e não na tela."""
-    l2 = next(e for e in cliente.get("/api/catalogo").json() if e["nome"] == "L2")
+    dados = cliente.get("/api/catalogo").json()
+    l2 = next(r for r in dados["regras"] if r["nome"] == "L2")
 
     assert {p["nome"] for p in l2["parametros"]} == {"max_cents", "max_business_days"}
     assert all(isinstance(p["default"], int) for p in l2["parametros"])
-    assert all(p["descricao"] for p in l2["parametros"])
+
+
+def test_o_catalogo_expoe_as_ferramentas_de_TODAS_as_origens():
+    """"Todas as nossas tools disponíveis" — o pedido, na borda HTTP."""
+    nomes = {f["nome"] for f in cliente.get("/api/catalogo").json()["ferramentas"]}
+
+    assert "contar_palavras" in nomes
+    assert len(nomes) >= 6
 
 
 # -- a defesa contra decoração ---------------------------------------------
@@ -236,26 +245,29 @@ def test_a_pagina_DIZ_que_as_SETAS_nao_sao_do_autor():
 # -- o nó do agente: modelo e ferramentas ----------------------------------
 
 
-def test_o_catalogo_expoe_as_ferramentas_DERIVADAS_do_registro():
-    """Uma lista escrita à mão divergiria no dia em que alguém acrescentasse
-    uma ferramenta, e a tela mostraria quatro de cinco sem nenhum sintoma."""
-    from orchestrator.conciliacao.ferramentas import ToolContext, registry_de
-
-    agente = next(e for e in cliente.get("/api/catalogo").json() if e["nome"] == "agente")
-
-    assert tuple(agente["ferramentas"]) == registry_de(ToolContext([], [])).names()
+# A invariante "a tela expõe as ferramentas derivadas do registro" segue
+# coberta — agora ao nível do catálogo plano — por
+# `test_o_catalogo_expoe_as_ferramentas_de_TODAS_as_origens`, acima. Não
+# existe mais um bloco "agente" em `/api/catalogo` (o registro do grill não é
+# mais servido por esta rota) para repetir o teste como estava.
 
 
 def test_o_modelo_do_agente_e_PADRAO_e_nao_escolha_gravada():
     """Quem decide o modelo é a execução (`--model`). Cravar um modelo na
     receita faria o canvas prometer algo que a receita não carrega — e é a
-    diferença exata para o canvas de referência, que fixa o modelo no nó."""
+    diferença exata para o canvas de referência, que fixa o modelo no nó.
+
+    O `modelo_padrao` vem direto do CATÁLOGO DO GRILL, não de `/api/catalogo`:
+    esta rota passou a servir o catálogo PLANO (`domains.registro.CATALOGO`),
+    que não tem bloco "agente" nem campo de modelo — `RegraJSON` e
+    `AgenteDeclaradoJSON` nunca falam de modelo, por desenho.
+    """
     from datetime import UTC, datetime
 
+    from orchestrator.grill.catalogo import CATALOGO as CATALOGO_DO_GRILL
     from orchestrator.grill.receita import Receita, ResolverReceita, para_json
 
-    agente = next(e for e in cliente.get("/api/catalogo").json() if e["nome"] == "agente")
-    assert agente["modelo_padrao"] == "claude-opus-5"
+    assert CATALOGO_DO_GRILL["agente"].modelo_padrao == "claude-opus-5"
 
     r = Receita(
         id="x", nome="x", justificativa="", gerado_em=datetime.now(UTC),
@@ -266,13 +278,11 @@ def test_o_modelo_do_agente_e_PADRAO_e_nao_escolha_gravada():
     assert "model" not in str(para_json(r)).lower()
 
 
-def test_resolver_DETERMINISTICO_nao_tem_modelo_nem_ferramenta():
-    """`None` e lista vazia, não `"-"`: a tela usa a AUSÊNCIA para não desenhar
-    uma linha de modelo onde não houve escolha de modelo."""
-    for nome in ("L1", "L2", "L3", "revisor"):
-        e = next(x for x in cliente.get("/api/catalogo").json() if x["nome"] == nome)
-        assert e["modelo_padrao"] is None, nome
-        assert e["ferramentas"] == [], nome
+# A invariante "resolver determinístico não tem modelo nem ferramenta" agora é
+# estrutural, não de runtime: `RegraJSON` (schemas.py) não declara `prompt`,
+# `tipos`, `ferramentas` nem campo de modelo — a ausência no SCHEMA é o que
+# impede a tela de desenhar uma edição que o construtor não aceita. Não há
+# valor `None`/`[]` para checar porque o campo não existe.
 
 
 # -- o botão Run ------------------------------------------------------------

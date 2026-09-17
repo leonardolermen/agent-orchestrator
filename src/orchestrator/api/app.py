@@ -27,16 +27,17 @@ from typing import Literal
 from fastapi import FastAPI, HTTPException, Query, WebSocket
 from fastapi.staticfiles import StaticFiles
 
-from orchestrator.agent.declarado import AgenteDeclarado
+from orchestrator.agent.declarado import AgenteDeclarado, RegraDisponivel
+from orchestrator.agent.tools.registry import ToolRegistry
 from orchestrator.api.entrevista import conduzir
 from orchestrator.api.schemas import (
     AgenteDeclaradoJSON,
     AmbienteJSON,
+    CatalogoJSON,
     ComposicaoRequest,
     ComposicaoResumoJSON,
     DecisaoRequest,
     DominioJSON,
-    EntradaCatalogoJSON,
     FerramentaJSON,
     FilaJSON,
     GapJSON,
@@ -63,8 +64,8 @@ from orchestrator.authoring.composicao import (
     listar,
 )
 from orchestrator.conciliacao import reconcile
-from orchestrator.domains.registro import DOMINIOS
-from orchestrator.grill.catalogo import CATALOGO, MODELO_INERTE
+from orchestrator.domains.registro import CATALOGO, DOMINIOS
+from orchestrator.grill.catalogo import MODELO_INERTE
 from orchestrator.grill.receita import Receita, ResolverReceita, construir
 from orchestrator.grill.registro import gravar_receita, listar_receitas
 from orchestrator.kernel.cost import Cost, CostClass
@@ -120,28 +121,58 @@ def listar_workflows() -> list[WorkflowResumoJSON]:
     return resumos
 
 
-@app.get("/api/catalogo", response_model=list[EntradaCatalogoJSON])
-def catalogo() -> list[EntradaCatalogoJSON]:
-    """O que dá para compor. Derivado do `CATALOGO`, nunca escrito à mão.
+def _ferramenta_json(ferramentas: ToolRegistry, nome: str) -> FerramentaJSON:
+    return FerramentaJSON(nome=nome, descricao=ferramentas.spec(nome).description)
 
-    Ordenado por classe de custo e depois por nome: é a ordem em que a cascata
-    VAI RODAR, então é a ordem em que a tela deve oferecer. Uma paleta em ordem
-    alfabética sugeriria que o autor escolhe a sequência — e ele não escolhe.
+
+def _regra_json(r: RegraDisponivel) -> RegraJSON:
+    return RegraJSON(
+        nome=r.nome,
+        cost_class=r.cost_class.name,
+        resumo=r.resumo,
+        parametros=[
+            ParametroJSON(nome=p.nome, default=p.default, descricao=p.descricao)
+            for p in r.parametros
+        ],
+    )
+
+
+def _agente_json(a: AgenteDeclarado) -> AgenteDeclaradoJSON:
+    return AgenteDeclaradoJSON(
+        name=a.name,
+        system=a.system,
+        kind=a.kind,
+        prompt=a.prompt,
+        tipos=list(a.tipos),
+        abstem_com=a.abstem_com,
+        ferramentas=list(a.ferramentas),
+        max_turns=a.max_turns,
+        budget_microcents=a.budget_microcents,
+    )
+
+
+@app.get("/api/catalogo", response_model=CatalogoJSON)
+def catalogo() -> CatalogoJSON:
+    """Tudo que dá para compor. Derivado do `CATALOGO`, nunca escrito à mão.
+
+    As regras saem ordenadas por classe de custo e depois por nome: é a ordem
+    em que a cascata VAI RODAR, então é a ordem em que a tela deve oferecer.
+    Uma paleta em ordem alfabética sugeriria que o autor escolhe a sequência —
+    e ele não escolhe.
+
+    Esta rota SUBSTITUIU o cardápio do grill, que era só de conciliação. Foi
+    ele que fez o chat propor `L1`/`L2`/`L3` para triagem de issues.
     """
-    return [
-        EntradaCatalogoJSON(
-            nome=e.nome,
-            cost_class=e.cost_class.name,
-            resumo=e.resumo,
-            parametros=[
-                ParametroJSON(nome=p.nome, default=p.default, descricao=p.descricao)
-                for p in e.parametros
-            ],
-            ferramentas=list(e.ferramentas),
-            modelo_padrao=e.modelo_padrao,
-        )
-        for e in sorted(CATALOGO.values(), key=lambda e: (e.cost_class, e.nome))
-    ]
+    return CatalogoJSON(
+        ferramentas=[
+            _ferramenta_json(CATALOGO.ferramentas, n) for n in CATALOGO.ferramentas.names()
+        ],
+        regras=[
+            _regra_json(r)
+            for r in sorted(CATALOGO.regras, key=lambda r: (r.cost_class, r.nome))
+        ],
+        agentes=[_agente_json(a) for a in CATALOGO.agentes],
+    )
 
 
 @app.get("/api/dominios", response_model=list[DominioJSON])
@@ -162,38 +193,9 @@ def dominios() -> list[DominioJSON]:
             id=d.id,
             nome=d.nome,
             kinds=list(d.kinds),
-            ferramentas=[
-                FerramentaJSON(nome=n, descricao=d.ferramentas.spec(n).description)
-                for n in d.ferramentas.names()
-            ],
-            regras=[
-                RegraJSON(
-                    nome=r.nome,
-                    cost_class=r.cost_class.name,
-                    resumo=r.resumo,
-                    parametros=[
-                        ParametroJSON(
-                            nome=p.nome, default=p.default, descricao=p.descricao
-                        )
-                        for p in r.parametros
-                    ],
-                )
-                for r in d.regras
-            ],
-            agentes=[
-                AgenteDeclaradoJSON(
-                    name=a.name,
-                    system=a.system,
-                    kind=a.kind,
-                    prompt=a.prompt,
-                    tipos=list(a.tipos),
-                    abstem_com=a.abstem_com,
-                    ferramentas=list(a.ferramentas),
-                    max_turns=a.max_turns,
-                    budget_microcents=a.budget_microcents,
-                )
-                for a in d.agentes
-            ],
+            ferramentas=[_ferramenta_json(d.ferramentas, n) for n in d.ferramentas.names()],
+            regras=[_regra_json(r) for r in d.regras],
+            agentes=[_agente_json(a) for a in d.agentes],
         )
         for d in DOMINIOS.values()
     ]
