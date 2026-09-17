@@ -137,15 +137,26 @@ def execute(
             # mesma distinção do comentário em `matches_by_resolver` acima.
             matches_por_resolver[resolver.name] = len(saida.resolutions)
             matches_por_classe.setdefault(resolver.cost_class, []).extend(saida.resolutions)
-            # Só `resolutions` encolhe o pool. `saida.proposals` não aparece
-            # nesta expressão, e é essa ausência que torna a invariante
-            # estrutural em vez de uma regra que alguém precisa lembrar.
-            work = work.without(saida.resolutions)
+            # Só `resolutions` encolhe o pool e só `produced` o aumenta.
+            # `saida.proposals` não aparece em nenhuma das duas expressões, e é
+            # essa ausência que torna a invariante estrutural em vez de uma
+            # regra que alguém precisa lembrar.
+            work = work.without(saida.resolutions).com(saida.produced)
             for r in saida.resolutions:
                 emitir(
                     EventKind.ITEM_RESOLVIDO,
                     resolver=resolver.name,
                     item_ids=sorted(r.item_ids),
+                )
+            for novo in saida.produced:
+                emitir(
+                    EventKind.ITEM_PRODUZIDO,
+                    resolver=resolver.name,
+                    item=novo.id,
+                    # `item_kind`, não `kind`: `emitir()` já usa `kind` para o
+                    # tipo do evento, e um payload `kind=` colidiria com esse
+                    # parâmetro posicional.
+                    item_kind=novo.kind,
                 )
             for prop in saida.proposals:
                 emitir(
@@ -160,6 +171,7 @@ def execute(
                 resolver=resolver.name,
                 resolveu=len(saida.resolutions),
                 propos=len(saida.proposals),
+                produziu=len(saida.produced),
                 # Latência por resolver. `Cost` só mede token, e "o L3 levou
                 # 900ms" é a informação que separa uma cascata cara de uma
                 # cascata LENTA — duas coisas diferentes que até aqui eram
