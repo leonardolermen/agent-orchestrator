@@ -52,6 +52,15 @@ class SaidaDaTarefa:
 # o texto não é utilizável — e é esse `None` que dispara o retry de formato em
 # `conversar`. Devolve `SaidaDaTarefa` (com `resolution` preenchido) quando dá
 # certo.
+#
+# O quarto argumento — `trace` — é o rastro da conversa inteira até aqui:
+# turnos, chamadas de ferramenta, custo por turno. `Tarefa.resolve` NÃO o
+# anexa a lugar nenhum por conta própria; quem decide se ele sobrevive é o
+# próprio `Transformador`, colocando-o em `Resolution.evidence` ao construir
+# a resolução — o campo já existe para isso (`kernel/resolution.py`). Um
+# `transformar` que descarta este argumento produz uma `Resolution` sem
+# rastro, e "uma proposta sem rastro é uma afirmação sem fonte"
+# (`kernel/resolution.py`) vale igual para uma resolução.
 Transformador = Callable[[str, str, Cost, list[TraceEvent]], SaidaDaTarefa | None]
 
 
@@ -67,6 +76,15 @@ class TarefaSpec:
     max_turns: int = 6
     max_format_retries: int = 2
     budget_microcents: int = 4_000_000
+
+    # I1 — teto por EXECUÇÃO, além do teto por item. Sem ele, um pool de N
+    # itens pode gastar até N × `budget_microcents` sem nenhum disjuntor — e
+    # `Tarefa` é MAIS exposta a isso que `Agent`: ela existe para mastigar
+    # pools inteiros de itens transformáveis, e uma execução descontrolada aí
+    # é conta real. Mesmo padrão e mesmo padrão de `AgentSpec`: cobre um lote
+    # de ~100 itens no pior caso, o que já é caro demais para um operador não
+    # perceber antes de acontecer de novo.
+    budget_total_microcents: int = 400_000_000
 
 
 def _abster(item_id: str, motivo: str, custo: Cost, trace: list[TraceEvent]) -> SaidaDaTarefa:
@@ -111,6 +129,11 @@ class Tarefa:
             raise ValueError(
                 f"budget_microcents não pode ser negativo: {self.spec.budget_microcents}"
             )
+        if self.spec.budget_total_microcents < 0:
+            raise ValueError(
+                f"budget_total_microcents não pode ser negativo: "
+                f"{self.spec.budget_total_microcents}"
+            )
         # Modelo sem preço conhecido não é abstenção, é erro de configuração.
         # Abster em todo item gastaria a execução inteira sem produzir nada, e
         # o custo — métrica central do produto — ficaria incalculável. Falhar
@@ -132,6 +155,17 @@ class Tarefa:
         """
         resolucoes, produzidos, total = [], [], Cost.zero()
         for item in work.items:
+            if total.microcents(self.client.model) > self.spec.budget_total_microcents:
+                # I1: estourar o teto da EXECUÇÃO é evento observável, não
+                # exceção — pula o restante do lote sem sequer chamar o
+                # modelo. Diferente de `Agent`, não há proposta a emitir
+                # aqui: o item pulado simplesmente não resolve e fica no
+                # pool, do mesmo jeito que qualquer abstenção já fica.
+                saida = _abster(
+                    item.id, "orçamento total da execução esgotado", Cost.zero(), []
+                )
+                total = total + saida.cost
+                continue
             saida = conversar(
                 client=self.client,
                 tools=self.tools,

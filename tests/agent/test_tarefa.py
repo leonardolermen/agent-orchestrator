@@ -91,6 +91,35 @@ def test_desistir_deixa_o_item_no_pool_sem_resolver():
     assert saida.cost != Cost.zero()
 
 
+def test_orcamento_total_interrompe_o_lote_sem_chamar_o_modelo():
+    """Estourar o orçamento da EXECUÇÃO pula o resto do lote sem chamar o
+    modelo — o mesmo teto de `Agent.resolve`, mas sem proposta a emitir: o
+    item pulado simplesmente não resolve e fica no pool.
+
+    `FakeLLMClient` só recebe UMA resposta preparada: se o laço tentasse
+    chamar o modelo para o segundo ou o terceiro item, ele levantaria
+    `AssertionError` sozinho — a asserção se auto-impõe.
+    """
+    pool = WorkSet(
+        items=(
+            WorkItem(id="i1", kind="achados", payload="a"),
+            WorkItem(id="i2", kind="achados", payload="b"),
+            WorkItem(id="i3", kind="achados", payload="c"),
+        )
+    )
+    client = FakeLLMClient([_resposta("t1")])
+    t = Tarefa(
+        spec=_spec(budget_total_microcents=10_000),
+        client=client,
+        tools=ToolRegistry([]),
+    )
+
+    saida = t.resolve(pool)
+
+    assert [r.item_ids for r in saida.resolutions] == [frozenset({"i1"})]
+    assert len(client.chamadas) == 1
+
+
 def test_custo_de_varios_itens_e_somado():
     pool = WorkSet(
         items=(
