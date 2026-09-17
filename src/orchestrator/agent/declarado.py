@@ -30,7 +30,7 @@ foi descoberta medindo; aqui ela é recusada na construção.
 
 import json
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field, is_dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from typing import Any
 
 from orchestrator.agent.agent import Agent, AgentSpec, AgentTask
@@ -216,8 +216,8 @@ def construir_agente(
 
     `ferramentas` é filtrado por `decl.ferramentas`: um agente recebe as
     ferramentas que ele DECLARA, não as que por acaso existem no registro. Sem
-    esse recorte, acrescentar uma ferramenta a um domínio mudaria o custo e o
-    comportamento de todo agente dele, sem ninguém pedir.
+    esse recorte, acrescentar uma ferramenta ao catálogo mudaria o custo e o
+    comportamento de todo agente composto sobre ele, sem ninguém pedir.
     """
     registro = ferramentas or ToolRegistry([])
     desconhecidas = sorted(set(decl.ferramentas) - set(registro.names()))
@@ -267,7 +267,7 @@ class ParametroDeRegra:
 
 @dataclass(frozen=True)
 class RegraDisponivel:
-    """Uma regra determinística que um domínio oferece para compor.
+    """Uma regra determinística que o catálogo oferece para compor.
 
     **Por que regra continua sendo CÓDIGO e não declaração.** Casar por
     documento e valor é lógica de domínio; não há declaração que a substitua, e
@@ -295,56 +295,6 @@ class RegraDisponivel:
                 f"modelo — se ela chama, é agente, e declará-la como regra a "
                 f"faria rodar ANTES dos agentes baratos na cascata"
             )
-
-
-@dataclass(frozen=True)
-class Dominio:
-    """Um domínio: os tipos de trabalho que ele conhece e o que sabe fazer.
-
-    É o que torna a plataforma geral sem virar sopa: resolvers de domínios
-    diferentes não são misturáveis, porque trabalham `WorkItem.kind`
-    diferentes. Uma cascata com um resolver de conciliação e um de compras não é
-    uma cascata ruim — é uma que não significa nada, porque o segundo roda sobre
-    um pool que o primeiro nem enxerga.
-    """
-
-    id: str
-    nome: str
-    kinds: tuple[str, ...]
-    # Ferramentas que os agentes DESTE domínio podem declarar. Vêm em código,
-    # porque uma ferramenta é uma função — o que a tela compõe é QUAIS delas
-    # cada agente recebe.
-    ferramentas: ToolRegistry = field(default_factory=ToolRegistry)
-    # Agentes já declarados, prontos para usar ou copiar.
-    agentes: tuple[AgenteDeclarado, ...] = ()
-    # As regras determinísticas e a revisão humana que o domínio oferece. São
-    # os blocos que a tela compõe junto com os agentes — e são eles que dão a
-    # um domínio novo um PISO BARATO. Sem regra, a cascata começa 100% na
-    # classe AGENTE, que é o pior custo possível.
-    regras: tuple[RegraDisponivel, ...] = ()
-
-    def __post_init__(self) -> None:
-        if not self.kinds:
-            raise ValueError(
-                f"domínio {self.id!r} sem `kinds`: nada saberia quais itens ele "
-                f"trabalha, e a guarda contra misturar domínios cairia"
-            )
-        vistos = {r.nome for r in self.regras}
-        if len(vistos) != len(self.regras):
-            raise ValueError(f"domínio {self.id!r} tem regra com nome repetido")
-        for a in self.agentes:
-            if a.name in vistos:
-                raise ValueError(
-                    f"domínio {self.id!r}: {a.name!r} é nome de agente E de "
-                    f"regra. a composição indexa blocos por nome, e dois iguais "
-                    f"fariam a cascata depender de quem foi procurado primeiro"
-                )
-            if a.kind not in self.kinds:
-                raise ValueError(
-                    f"agente {a.name!r} trabalha kind {a.kind!r}, que não é do "
-                    f"domínio {self.id!r} ({list(self.kinds)})"
-                )
-            construir_agente(a, ClienteDeValidacao(), self.ferramentas)
 
 
 class ClienteDeValidacao:

@@ -101,7 +101,6 @@ export type BlocoPedido =
 export interface ComposicaoResumo {
   id: string;
   nome: string;
-  dominio: string;
   version: string;
   gerado_em: string;
   // NOMES e não contagem: "3 blocos" não distingue uma cascata que começa numa

@@ -1,111 +1,85 @@
-"""Os domínios declarados: a prova de que a plataforma deixou de ser um
+"""O catálogo declarado: a prova de que a plataforma deixou de ser um
 conciliador.
 
-O teste que carrega o peso é `test_os_TRES_dominios_se_declaram`: se ele voltar
-a listar só conciliação, a plataforma voltou a ser um cardápio.
+O teste que carrega o peso é `test_o_catalogo_e_PLANO_e_traz_tudo_junto`: se ele
+voltar a listar só blocos de conciliação, a plataforma voltou a ser um cardápio.
+Ele é o herdeiro de `test_os_TRES_dominios_se_declaram`, que fazia a mesma
+pergunta contando DOMÍNIOS — e contar domínios deixou de significar alguma coisa
+quando o catálogo ficou plano.
 """
 
 import pytest
 
-from orchestrator.agent.declarado import AgenteDeclarado, Dominio, construir_agente
+from orchestrator.agent.declarado import AgenteDeclarado, construir_agente
 from orchestrator.agent.llm import FakeLLMClient
 from orchestrator.agent.tools.registry import ToolRegistry
-from orchestrator.domains.registro import CATALOGO, DOMINIOS, Catalogo, dominio
+from orchestrator.domains.registro import CATALOGO, Catalogo
 from orchestrator.kernel.cost import CostClass
 
 
-def test_os_TRES_dominios_se_declaram():
-    """A pergunta do dono, virada em teste.
+def test_o_conceito_de_DOMINIO_nao_existe_mais():
+    """A metade "remover" da fatia, ancorada.
 
-    Existiam seis resolvers escritos que o canvas não oferecia, porque a paleta
-    era o `CATALOGO` do grill — o cardápio da conciliação.
+    Sem isto, um `Dominio` esquecido continuaria importável, e o próximo
+    leitor não saberia se ele decide alguma coisa. Um conceito morto que
+    ainda compila é o próximo a ser usado por engano.
     """
-    assert set(DOMINIOS) == {"conciliacao", "swe", "procurement"}
+    import orchestrator.agent.declarado as declarado
+    import orchestrator.domains.registro as registro
+
+    assert not hasattr(declarado, "Dominio")
+    assert not hasattr(registro, "DOMINIOS")
 
 
-def test_cada_dominio_tem_KIND_proprio_e_e_por_isso_que_nao_se_misturam():
-    """`L1` trabalha `lancamento`, o triador trabalha `issue`. Uma cascata com
-    os dois não é ruim — é vazia de sentido, porque o segundo roda sobre um
-    pool que o primeiro nem enxerga."""
-    kinds = [k for d in DOMINIOS.values() for k in d.kinds]
-
-    assert len(kinds) == len(set(kinds)), "dois domínios disputando o mesmo kind"
-
-
-def test_TODO_agente_declarado_CONSTROI():
-    """"Validar é construir". `Dominio.__post_init__` já faz isso na importação;
-    este teste existe para que a falha apareça com nome de teste e não como
-    ImportError no meio de outra suíte."""
-    for d in DOMINIOS.values():
-        for a in d.agentes:
-            agente = construir_agente(a, FakeLLMClient([]), d.ferramentas)
-            assert agente.name == a.name
+def test_TODO_agente_do_CATALOGO_CONSTROI():
+    """"Validar é construir". `Catalogo.__post_init__` já faz isso na
+    importação; este teste existe para que a falha apareça com nome de teste e
+    não como ImportError no meio de outra suíte."""
+    for a in CATALOGO.agentes:
+        agente = construir_agente(a, FakeLLMClient([]), CATALOGO.ferramentas)
+        assert agente.name == a.name
 
 
 def test_nenhum_agente_confunde_ABSTENCAO_com_TIPO():
     """A invariante do P6.86 valendo para todos, não só para o `swe` onde ela
     foi descoberta — medindo, e depois de três execuções pagas."""
-    for d in DOMINIOS.values():
-        for a in d.agentes:
-            assert a.abstem_com not in a.tipos, f"{d.id}/{a.name}"
+    for a in CATALOGO.agentes:
+        assert a.abstem_com not in a.tipos, a.name
 
 
-def test_as_ferramentas_de_um_dominio_sao_CATALOGO_e_nao_registro_executavel():
+def test_as_ferramentas_do_CATALOGO_nao_sao_um_registro_executavel():
     """Um registro ligado a um `ToolContext` vazio listaria igual e executaria
-    devolvendo nada. `ligado` torna a diferença verificável."""
-    conciliacao = dominio("conciliacao")
-
-    assert conciliacao.ferramentas.names()
-    assert not conciliacao.ferramentas.ligado
-
-
-def test_dominio_SEM_ferramenta_declara_isso_em_vez_de_inventar():
-    """`procurement` é esqueleto. Um registro vazio DIZ isso; inventar
-    ferramentas para preencher a tela seria pior que a lacuna."""
-    compras = dominio("procurement")
-
-    assert compras.ferramentas.names() == ()
-    # E `contexto=None` explícito: "não preciso de dados" é diferente de
-    # "esqueci de ligar".
-    assert compras.ferramentas.ligado
+    devolvendo nada. `ligado` torna a diferença verificável — e é o que separa
+    COMPOR de EXECUTAR: quem executa chama `com_contexto`."""
+    assert CATALOGO.ferramentas.names()
+    assert not CATALOGO.ferramentas.ligado
 
 
-def test_o_agente_de_um_dominio_so_declara_ferramentas_DELE():
-    for d in DOMINIOS.values():
-        disponiveis = set(d.ferramentas.names())
-        for a in d.agentes:
-            assert set(a.ferramentas) <= disponiveis, f"{d.id}/{a.name}"
+def test_todo_agente_do_catalogo_so_declara_ferramentas_QUE_EXISTEM():
+    disponiveis = set(CATALOGO.ferramentas.names())
+
+    for a in CATALOGO.agentes:
+        assert set(a.ferramentas) <= disponiveis, a.name
 
 
-def test_dominio_desconhecido_lista_os_disponiveis():
-    with pytest.raises(KeyError, match="disponíveis"):
-        dominio("nao-existe")
-
-
-def test_um_dominio_NOVO_nao_precisa_de_codigo_de_agente():
+def test_um_TRABALHO_NOVO_nao_precisa_de_codigo_de_agente():
     """A prova da generalidade, do lado de fora.
 
-    Declarar um domínio com um agente funcional é DADO: nenhuma função
-    `units`, `parse` ou `abstain` é escrita. Se isto exigisse Python, o
-    catálogo voltaria a ser um cardápio de coisas prontas.
+    Declarar um agente funcional para um tipo de trabalho que a plataforma
+    nunca viu é DADO: nenhuma função `units`, `parse` ou `abstain` é escrita.
+    Se isto exigisse Python, o catálogo voltaria a ser um cardápio de coisas
+    prontas.
     """
-    novo = Dominio(
-        id="suporte",
-        nome="Triagem de chamados",
-        kinds=("chamado",),
-        agentes=(
-            AgenteDeclarado(
-                name="classificador",
-                system="classifique o chamado",
-                kind="chamado",
-                prompt="{assunto}\n\n{descricao}",
-                tipos=("INCIDENTE", "SOLICITACAO"),
-                abstem_com="NAO_SEI",
-            ),
-        ),
+    novo = AgenteDeclarado(
+        name="classificador",
+        system="classifique o chamado",
+        kind="chamado",
+        prompt="{assunto}\n\n{descricao}",
+        tipos=("INCIDENTE", "SOLICITACAO"),
+        abstem_com="NAO_SEI",
     )
 
-    agente = construir_agente(novo.agentes[0], FakeLLMClient([]))
+    agente = construir_agente(novo, FakeLLMClient([]))
 
     assert agente.name == "classificador"
 
@@ -113,8 +87,13 @@ def test_um_dominio_NOVO_nao_precisa_de_codigo_de_agente():
 def test_o_catalogo_e_PLANO_e_traz_tudo_junto():
     """Um catálogo só, sem agrupamento. É o quadro em branco do §0.1.
 
-    As contagens vêm das três origens somadas: 3 regras de conciliação + 2 de
-    compras + o `revisor`, e 1 agente de cada domínio.
+    O teste que carrega o peso deste arquivo, e o herdeiro direto de
+    `test_os_TRES_dominios_se_declaram`: a pergunta do dono era "por que só tem
+    blocos de conciliação?", e a resposta verificável não é quantos domínios
+    existem — é que os blocos das TRÊS origens estão na mesma paleta, nomeados.
+
+    3 regras de conciliação + 2 de compras + o `revisor`, e um agente de cada
+    origem.
     """
     nomes_de_regra = {r.nome for r in CATALOGO.regras}
 
@@ -123,7 +102,7 @@ def test_o_catalogo_e_PLANO_e_traz_tudo_junto():
 
 
 def test_o_catalogo_carrega_o_degrau_HUMANO():
-    """O `revisor` existia só no catálogo do grill e em `Dominio` nenhum.
+    """O `revisor` existia só no catálogo do grill, e domínio nenhum o carregava.
 
     Fundir os dois sem ele perderia o degrau que FECHA a cascata — e a
     invariante "proposta não resolve" depende de existir alguém que resolva.
@@ -133,7 +112,7 @@ def test_o_catalogo_carrega_o_degrau_HUMANO():
     assert revisor.cost_class is CostClass.HUMANO
 
 
-def test_as_ferramentas_dos_TRES_dominios_estao_no_MESMO_registro():
+def test_as_ferramentas_das_TRES_origens_estao_no_MESMO_registro():
     """"Todas as nossas tools disponíveis pra ele" — o pedido, virado teste."""
     nomes = CATALOGO.ferramentas.names()
 
@@ -142,8 +121,8 @@ def test_as_ferramentas_dos_TRES_dominios_estao_no_MESMO_registro():
 
 
 def test_o_catalogo_RECUSA_bloco_com_nome_repetido():
-    """A guarda que migrou de `Dominio.__post_init__`, e que fica MAIS
-    perigosa aqui.
+    """A guarda que migrou da validação por domínio, e que fica MAIS perigosa
+    aqui.
 
     Antes a colisão só podia acontecer dentro de um domínio; num catálogo
     plano ela pode acontecer entre quaisquer dois blocos do sistema. A

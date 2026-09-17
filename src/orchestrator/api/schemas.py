@@ -254,12 +254,13 @@ class AmbienteJSON(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Domínios: o que a plataforma sabe fazer, e para que tipo de trabalho.
+# O catálogo: tudo que a plataforma sabe compor, sem agrupamento.
 #
-# É o que tira o catálogo da conciliação. Antes havia UMA lista de resolvers —
-# a de conciliação — e a tela não tinha como oferecer outra coisa. Agora a
-# pergunta que a tela faz primeiro é "que trabalho você quer orquestrar", e a
-# paleta segue dessa resposta.
+# Antes havia UMA lista de resolvers — a de conciliação — e a tela não tinha
+# como oferecer outra coisa. A correção intermediária foi particionar por
+# domínio e fazer a tela perguntar "que trabalho você quer orquestrar" antes de
+# mostrar qualquer bloco; a partição foi embora junto com `Dominio`, porque
+# quem recusa kinds que não conectam é o grafo, não o índice do catálogo.
 # ---------------------------------------------------------------------------
 
 
@@ -300,18 +301,6 @@ class RegraJSON(BaseModel):
     parametros: list[ParametroJSON]
 
 
-class DominioJSON(BaseModel):
-    id: str
-    nome: str
-    kinds: list[str]
-    ferramentas: list[FerramentaJSON]
-    # Os blocos, separados por natureza. Regra e agente NÃO vão na mesma lista:
-    # o que a tela edita em cada um é diferente, e uma lista só obrigaria a
-    # inspecionar o tipo em cada linha de render.
-    regras: list[RegraJSON]
-    agentes: list[AgenteDeclaradoJSON]
-
-
 # ---------------------------------------------------------------------------
 # Composição: o formato GERAL, que a `Receita` não sabia carregar.
 #
@@ -343,7 +332,7 @@ BlocoJSON = Annotated[BlocoRegraJSON | BlocoAgenteJSON, Field(discriminator="tip
 
 
 class ComposicaoRequest(BaseModel):
-    """Uma cascata de QUALQUER domínio, composta na tela.
+    """Uma cascata composta na tela, a partir do catálogo.
 
     Sem campo de ordem, pelo mesmo motivo de `ReceitaRequest`: quem ordena é
     `Stage.ordered()`, por classe de custo. Sem `gerado_em`: o relógio é do
@@ -353,17 +342,6 @@ class ComposicaoRequest(BaseModel):
 
     id: str
     nome: str
-    # ANDAIME DE UMA FATIA, e ele sai junto com `Composicao.dominio`.
-    #
-    # A tela não tem mais seletor de domínio e por isso não manda este campo. O
-    # domínio, porém, ainda é o que `construir_composicao` usa para achar as
-    # regras e ligar as ferramentas — enquanto isso for verdade, exigir o campo
-    # faria toda composição vinda da tela morrer num "field required" do
-    # Pydantic, que é o erro mais mudo possível para quem só clicou em "Compor".
-    # O default mantém o caminho vivo; a cascata de OUTRO domínio continua sendo
-    # recusada com o texto que explica por quê, e é essa recusa que desaparece
-    # quando `Dominio` morrer.
-    dominio: str = "conciliacao"
     justificativa: str = ""
     blocos: list[BlocoJSON] = Field(min_length=1)
 
@@ -384,7 +362,7 @@ class CatalogoJSON(BaseModel):
 
     Regra e agente NÃO vão na mesma lista: o que a tela edita em cada um é
     diferente, e uma lista só obrigaria a inspecionar o tipo em cada linha de
-    render. É a mesma separação que `DominioJSON` fazia, agora sem a partição.
+    render.
     """
 
     ferramentas: list[FerramentaJSON]
@@ -402,7 +380,6 @@ class ComposicaoResumoJSON(BaseModel):
 
     id: str
     nome: str
-    dominio: str
     version: str
     gerado_em: str
     blocos: list[str]

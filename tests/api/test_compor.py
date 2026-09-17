@@ -267,8 +267,10 @@ def test_a_tela_NAO_pergunta_o_dominio_antes_de_mostrar_bloco():
     depende de uma partição que ela não mostra, que é a versão pior do defeito
     que esta fatia remove.
 
-    `/api/dominios` ainda RESPONDE — quem a apaga é a fatia seguinte. O que
-    este teste fixa é que a tela não a consome mais.
+    A rota já não existe (ver `test_a_rota_de_dominios_nao_existe_mais`); este
+    teste continua valendo porque ele fixa a ORIGEM da paleta no bundle, e não
+    a existência da rota — um bundle que voltasse a montar a paleta por
+    partição quebraria aqui antes de quebrar em qualquer outro lugar.
     """
     from pathlib import Path
 
@@ -353,6 +355,10 @@ def test_a_pagina_tem_o_botao_RUN():
     assert "Run" in fonte
     # E a mensagem que explica por que ele fica desabilitado numa cascata paga.
     assert "etapa paga" in fonte
+
+
+def test_a_rota_de_dominios_nao_existe_mais():
+    assert cliente.get("/api/dominios").status_code == 404
 
 
 def test_cascata_GRATIS_composta_pela_tela_RODA_de_verdade():

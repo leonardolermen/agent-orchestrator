@@ -37,7 +37,6 @@ from orchestrator.api.schemas import (
     ComposicaoRequest,
     ComposicaoResumoJSON,
     DecisaoRequest,
-    DominioJSON,
     FerramentaJSON,
     FilaJSON,
     GapJSON,
@@ -64,7 +63,7 @@ from orchestrator.authoring.composicao import (
     listar,
 )
 from orchestrator.conciliacao import reconcile
-from orchestrator.domains.registro import CATALOGO, DOMINIOS
+from orchestrator.domains.registro import CATALOGO
 from orchestrator.grill.catalogo import MODELO_INERTE
 from orchestrator.grill.receita import Receita, ResolverReceita, construir
 from orchestrator.grill.registro import gravar_receita, listar_receitas
@@ -175,32 +174,6 @@ def catalogo() -> CatalogoJSON:
     )
 
 
-@app.get("/api/dominios", response_model=list[DominioJSON])
-def dominios() -> list[DominioJSON]:
-    """O que a plataforma sabe orquestrar, e com que blocos.
-
-    É a primeira pergunta da tela de composição. Antes ela não existia: a
-    paleta era o `CATALOGO` do grill, que é o cardápio da CONCILIAÇÃO, e por
-    isso o canvas só oferecia blocos de conciliação por seis meses de
-    desenvolvimento sem ninguém notar.
-
-    As ferramentas saem do CATÁLOGO do domínio — sem dados. Um registro ligado
-    a um `ToolContext` vazio listaria igual e executaria devolvendo nada, que é
-    a falha silenciosa que `ToolRegistry.ligado` agora torna impossível.
-    """
-    return [
-        DominioJSON(
-            id=d.id,
-            nome=d.nome,
-            kinds=list(d.kinds),
-            ferramentas=[_ferramenta_json(d.ferramentas, n) for n in d.ferramentas.names()],
-            regras=[_regra_json(r) for r in d.regras],
-            agentes=[_agente_json(a) for a in d.agentes],
-        )
-        for d in DOMINIOS.values()
-    ]
-
-
 @app.get("/api/ambiente", response_model=AmbienteJSON)
 def ambiente() -> AmbienteJSON:
     """O que uma execução usa, e o que o servidor tem configurado.
@@ -273,16 +246,16 @@ def criar_receita(pedido: ReceitaRequest) -> WorkflowJSON:
 
 @app.post("/api/composicoes", response_model=WorkflowJSON, status_code=201)
 def criar_composicao(pedido: ComposicaoRequest) -> WorkflowJSON:
-    """Compõe uma cascata de QUALQUER domínio. VALIDA CONSTRUINDO.
+    """Compõe uma cascata a partir do catálogo. VALIDA CONSTRUINDO.
 
     É o irmão de `/api/receitas` para o formato geral. A diferença que importa
     está no corpo: uma receita é uma lista de nomes do catálogo; uma composição
     carrega o agente INTEIRO — prompt, vocabulário, ferramentas, orçamento —
     porque esse agente não existe em catálogo nenhum até a pessoa criá-lo.
 
-    **Não passa `contexto`.** Compor não executa, e sem dados o registro do
-    domínio segue sendo catálogo: se alguém executasse esta definição, as
-    ferramentas recusariam com texto em vez de estourar sobre dados ausentes.
+    **Não passa `contexto`.** Compor não executa, e sem dados o registro segue
+    sendo catálogo: se alguém executasse esta definição, as ferramentas
+    recusariam com texto em vez de estourar sobre dados ausentes.
 
     **Não passa `cliente`.** O default de `construir_composicao` é
     `ClienteDeValidacao`, que constrói o agente e recusa falar com modelo. É a
@@ -324,7 +297,6 @@ def criar_composicao(pedido: ComposicaoRequest) -> WorkflowJSON:
         composicao = Composicao(
             id=pedido.id,
             nome=pedido.nome,
-            dominio=pedido.dominio,
             justificativa=pedido.justificativa,
             # Relógio do SERVIDOR, como em `/api/receitas`: um timestamp do
             # cliente permitiria gravar uma composição "criada" antes de outra
@@ -333,10 +305,6 @@ def criar_composicao(pedido: ComposicaoRequest) -> WorkflowJSON:
             blocos=tuple(blocos),
         )
         definicao = construir_composicao(composicao)
-    except KeyError as erro:
-        # Domínio desconhecido. `KeyError` formata com aspas extras em `str()`,
-        # então usa o argumento — a mensagem já lista os disponíveis.
-        raise HTTPException(status_code=422, detail=erro.args[0]) from erro
     except ValueError as erro:
         raise HTTPException(status_code=422, detail=str(erro)) from erro
 
@@ -360,7 +328,6 @@ def listar_composicoes() -> list[ComposicaoResumoJSON]:
         ComposicaoResumoJSON(
             id=c.id,
             nome=c.nome,
-            dominio=c.dominio,
             version=c.version,
             gerado_em=c.gerado_em.isoformat(),
             blocos=list(c.nomes),

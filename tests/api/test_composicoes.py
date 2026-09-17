@@ -4,7 +4,7 @@
 tudo que se compõe já existe pronto — e foi por isso que o canvas ofereceu só
 blocos de conciliação até alguém perguntar por quê.
 
-`/api/composicoes` compõe a partir de BLOCOS: uma regra do domínio com
+`/api/composicoes` compõe a partir de BLOCOS: uma regra do catálogo com
 parâmetros, ou um agente inteiro, criado ali, que não existe em catálogo nenhum.
 
 O teste que carrega o peso é `test_um_agente_INVENTADO_na_tela_vira_cascata`: se
@@ -46,11 +46,10 @@ def _agente(**kw):
     return {"tipo": "agente", "declaracao": declaracao}
 
 
-def _corpo(blocos, dominio="swe", cid="minha-cascata"):
+def _corpo(blocos, cid="minha-cascata"):
     return {
         "id": cid,
         "nome": "Minha cascata",
-        "dominio": dominio,
         "justificativa": "porque sim",
         "blocos": blocos,
     }
@@ -95,8 +94,7 @@ def test_a_ordem_enviada_e_IGNORADA():
         [
             _agente(name="buscador-meu", kind="requisicao"),
             {"tipo": "regra", "nome": "preferido"},
-        ],
-        dominio="procurement",
+        ]
     )
 
     r = cliente.post("/api/composicoes", json=corpo)
@@ -134,29 +132,30 @@ def test_prompt_que_nao_interpola_NADA_e_recusado():
     assert "não interpola" in r.json()["detail"]
 
 
-def test_agente_de_KIND_ESTRANHO_ao_dominio_e_recusado():
-    r = cliente.post("/api/composicoes", json=_corpo([_agente(kind="lancamento")]))
-
-    assert r.status_code == 422
-    assert "não é do domínio" in r.json()["detail"]
-
-
-def test_regra_de_OUTRO_dominio_e_recusada_listando_as_de_CASA():
+def test_bloco_FORA_do_catalogo_e_recusado_listando_os_disponiveis():
+    """A mensagem que a tela mostra é a do domínio, e ela precisa dizer o que
+    HÁ — quem compõe (e o modelo, no chat) se corrige com a lista."""
     r = cliente.post(
         "/api/composicoes",
-        json=_corpo([{"tipo": "regra", "nome": "L1"}], dominio="swe"),
+        json=_corpo([{"tipo": "regra", "nome": "nao-existe"}]),
     )
 
     assert r.status_code == 422
-    assert "regra desconhecida" in r.json()["detail"]
+    assert "bloco desconhecido no catálogo" in r.json()["detail"]
     assert "disponíveis" in r.json()["detail"]
 
 
-def test_dominio_desconhecido_LISTA_os_disponiveis():
-    r = cliente.post("/api/composicoes", json=_corpo([_agente()], dominio="nao-existe"))
+def test_um_agente_de_KIND_qualquer_e_ACEITO():
+    """O quadro em branco chegando à borda HTTP.
 
-    assert r.status_code == 422
-    assert "conciliacao" in r.json()["detail"]
+    `kind="lancamento"` num agente inventado era recusado com "não é do
+    domínio", porque o pedido carregava um domínio e o catálogo era
+    particionado por ele. Não é mais: quem recusa kinds que não conectam é
+    `WorkflowDefinition.__post_init__`, sobre o grafo que vai rodar.
+    """
+    r = cliente.post("/api/composicoes", json=_corpo([_agente(kind="lancamento")]))
+
+    assert r.status_code == 201, r.text
 
 
 def test_bloco_REPETIDO_e_recusado_com_o_motivo():
@@ -164,8 +163,7 @@ def test_bloco_REPETIDO_e_recusado_com_o_motivo():
         [
             {"tipo": "regra", "nome": "preferido"},
             {"tipo": "regra", "nome": "preferido"},
-        ],
-        dominio="procurement",
+        ]
     )
 
     r = cliente.post("/api/composicoes", json=corpo)
@@ -176,8 +174,7 @@ def test_bloco_REPETIDO_e_recusado_com_o_motivo():
 
 def test_parametro_desconhecido_de_REGRA_e_recusado():
     corpo = _corpo(
-        [{"tipo": "regra", "nome": "L2", "parametros": {"nao_existe": 3}}],
-        dominio="conciliacao",
+        [{"tipo": "regra", "nome": "L2", "parametros": {"nao_existe": 3}}]
     )
 
     r = cliente.post("/api/composicoes", json=corpo)
@@ -209,7 +206,7 @@ def test_o_que_foi_composto_APARECE_na_listagem():
     (c,) = cliente.get("/api/composicoes").json()
 
     assert c["id"] == "minha-cascata"
-    assert c["dominio"] == "swe"
+    assert "dominio" not in c
     # NOMES e não contagem: "1 bloco" não distingue uma cascata que começa numa
     # regra barata de uma que começa direto no modelo.
     assert c["blocos"] == ["meu-triador"]

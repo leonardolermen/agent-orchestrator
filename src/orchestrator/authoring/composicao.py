@@ -1,4 +1,4 @@
-"""Uma cascata composta, de qualquer domínio.
+"""Uma cascata composta a partir do catálogo, com agente declarado inline.
 
 **Por que não estender a `Receita` do grill.** Ela é `resolvers: tuple[
 ResolverReceita(nome, parametros)]` — uma lista de NOMES do `CATALOGO`, que é o
@@ -16,13 +16,17 @@ caso particular em que todos os blocos já existem por nome.
 
 **O que uma composição garante, e a garantia é estrutural:**
 
-1. **Um domínio só.** Blocos de domínios diferentes trabalham `WorkItem.kind`
-   diferentes — uma cascata com os dois não é ruim, é vazia de sentido, porque o
-   segundo roda sobre um pool que o primeiro nem enxerga.
-2. **A ordem não é do autor.** `Stage.ordered()` ordena por `CostClass`, e não
+1. **A ordem não é do autor.** `Stage.ordered()` ordena por `CostClass`, e não
    existe campo de ordem aqui. É a mesma defesa contra decoração que o canvas
    tem, agora no formato persistido.
-3. **Valida construindo.** Se `construir_composicao` retorna, a cascata roda.
+2. **Valida construindo.** Se `construir_composicao` retorna, a cascata roda.
+
+A terceira garantia era "um domínio só": blocos cujos `WorkItem.kind` não
+conversam produzem uma cascata vazia de sentido, porque o segundo roda sobre um
+pool que o primeiro nem enxerga. Ela não sumiu — mudou de lugar e ficou mais
+forte. `Stage.consome`/`Stage.produz` declara a fiação POR DEGRAU e
+`WorkflowDefinition.__post_init__` recusa um grafo cujos kinds não conectam, o
+que valida o grafo que VAI RODAR em vez de uma partição de catálogo.
 """
 
 import hashlib
@@ -35,11 +39,10 @@ from typing import Any
 from orchestrator.agent.declarado import (
     AgenteDeclarado,
     ClienteDeValidacao,
-    Dominio,
     construir_agente,
 )
 from orchestrator.agent.llm import LLMClient
-from orchestrator.domains.registro import dominio as buscar_dominio
+from orchestrator.domains.registro import CATALOGO
 from orchestrator.kernel.definition import Stage, WorkflowDefinition
 from orchestrator.kernel.resolver import Resolver
 
@@ -48,7 +51,7 @@ _RAIZ_PADRAO = Path("data") / "composicoes"
 
 @dataclass(frozen=True)
 class BlocoRegra:
-    """Uma regra do domínio, com os parâmetros ajustados."""
+    """Uma regra do catálogo, com os parâmetros ajustados."""
 
     nome: str
     parametros: dict[str, int] = field(default_factory=dict)
@@ -68,7 +71,6 @@ Bloco = BlocoRegra | BlocoAgente
 class Composicao:
     id: str
     nome: str
-    dominio: str
     blocos: tuple[Bloco, ...]
     gerado_em: datetime
     justificativa: str = ""
@@ -116,22 +118,22 @@ def construir_composicao(
     para serem LIDAS — o arquiteto (§9 do spec da plataforma) devolve o erro ao
     modelo para ele se corrigir, e a pessoa na tela merece o mesmo texto.
 
-    `contexto` é o do DOMÍNIO — `ToolContext` na conciliação, `None` em domínios
-    cujas ferramentas não precisam de dados. Ele é ligado ao registro aqui, na
-    construção, e não fica guardado no catálogo (ver `ToolRegistry.ligado`).
+    `contexto` é o que as ferramentas precisam para EXECUTAR — `ToolContext` nas
+    de conciliação, e nada nas que não leem dados. Ele é ligado ao registro
+    aqui, na construção, e não fica guardado no catálogo (ver
+    `ToolRegistry.ligado`).
     """
-    d = buscar_dominio(c.dominio)
-    por_nome = {r.nome: r for r in d.regras}
-    # Sem contexto, o registro do domínio passa INTACTO — e o do `conciliacao`
-    # é um catálogo, que recusa executar. É o que faz "compor" e "executar"
-    # serem coisas diferentes: `com_contexto(None)` ligaria o registro a nada e
-    # as ferramentas estourariam em `None.bank` na primeira chamada, o que é
-    # pior que a recusa clara de um registro não ligado.
-    #
-    # Um domínio cujas ferramentas de fato não precisam de dados declara
-    # `contexto=None` na PRÓPRIA construção (ver `procurement` em
-    # `domains/registro.py`), e essa declaração sobrevive a este caminho.
-    ferramentas = d.ferramentas if contexto is None else d.ferramentas.com_contexto(contexto)
+    por_nome = {r.nome: r for r in CATALOGO.regras}
+    # Sem contexto, o registro do catálogo passa INTACTO — e catálogo recusa
+    # executar. É o que faz "compor" e "executar" serem coisas diferentes:
+    # `com_contexto(None)` ligaria o registro a nada e as ferramentas
+    # estourariam em `None.bank` na primeira chamada, o que é pior que a recusa
+    # clara de um registro não ligado.
+    ferramentas = (
+        CATALOGO.ferramentas
+        if contexto is None
+        else CATALOGO.ferramentas.com_contexto(contexto)
+    )
     cliente = cliente or ClienteDeValidacao()
 
     vistos: set[str] = set()
@@ -150,8 +152,8 @@ def construir_composicao(
             regra = por_nome.get(bloco.nome)
             if regra is None:
                 raise ValueError(
-                    f"regra desconhecida no domínio {c.dominio!r}: "
-                    f"{bloco.nome!r}. disponíveis: {sorted(por_nome)}"
+                    f"bloco desconhecido no catálogo: {bloco.nome!r}. "
+                    f"disponíveis: {sorted(por_nome)}"
                 )
             conhecidos = {p.nome for p in regra.parametros}
             desconhecidos = sorted(set(bloco.parametros) - conhecidos)
@@ -162,14 +164,10 @@ def construir_composicao(
                 )
             resolvers.append(regra.construir(dict(bloco.parametros)))
         else:
-            decl = bloco.declaracao
-            if decl.kind not in d.kinds:
-                raise ValueError(
-                    f"o agente {decl.name!r} trabalha kind {decl.kind!r}, que "
-                    f"não é do domínio {c.dominio!r} ({list(d.kinds)}). ele "
-                    f"rodaria sobre um pool que não enxerga"
-                )
-            resolvers.append(construir_agente(decl, cliente, ferramentas))
+            # Sem checagem de `kind` contra uma lista de domínio: quem recusa
+            # kinds que não conectam é `WorkflowDefinition.__post_init__`, sobre
+            # o grafo que vai rodar. Ver o cabeçalho do módulo.
+            resolvers.append(construir_agente(bloco.declaracao, cliente, ferramentas))
 
     return WorkflowDefinition(
         id=c.id,
@@ -177,7 +175,12 @@ def construir_composicao(
         # Um estágio só. Vários estágios são uma decisão de produto que ainda
         # não tem caso — e `Stage.ordered()` já dá a cascata inteira ordenada
         # por custo dentro de um.
-        stages=(Stage(name=d.nome, cascade=tuple(resolvers)),),
+        #
+        # O estágio herda o nome da COMPOSIÇÃO. Antes ele herdava o nome do
+        # domínio, e o domínio era o mesmo para toda cascata composta sobre
+        # ele — o que fazia todo estágio de conciliação se chamar "Conciliação
+        # bancária", independentemente do que a pessoa tinha montado.
+        stages=(Stage(name=c.nome, cascade=tuple(resolvers)),),
     )
 
 
@@ -236,7 +239,6 @@ def para_json(c: Composicao) -> dict[str, Any]:
     return {
         "id": c.id,
         "nome": c.nome,
-        "dominio": c.dominio,
         "justificativa": c.justificativa,
         "gerado_em": c.gerado_em.isoformat(),
         "version": c.version,
@@ -266,7 +268,6 @@ def de_json(d: dict[str, Any]) -> Composicao:
     return Composicao(
         id=d["id"],
         nome=d["nome"],
-        dominio=d["dominio"],
         justificativa=d.get("justificativa", ""),
         gerado_em=gerado,
         blocos=tuple(blocos),
@@ -334,7 +335,6 @@ __all__ = [
     "BlocoAgente",
     "BlocoRegra",
     "Composicao",
-    "Dominio",
     "agora",
     "caminho",
     "construir_composicao",
