@@ -2835,3 +2835,106 @@ poderiam alegar ter medido a mesma cascata sem terem medido.
 `gravar` recusa sobrescrever: runs antigos apontam para a composição pela
 versão, e trocar o conteúdo sob o mesmo id faria um run apontar para uma cascata
 que nunca rodou.
+
+### P6.121. `ToolRegistry.recortar` — o defeito mais caro que a suíte não via
+
+`construir_agente` recortava as ferramentas declaradas assim:
+
+    escolhidas = ToolRegistry([registro.spec(n) for n in decl.ferramentas])
+
+O `_contexto` não vai junto. **Todo agente construído a partir de uma declaração
+saía com um registro DESLIGADO**, mesmo quando o domínio tinha sido ligado a
+dados de verdade.
+
+O sintoma é a pior combinação que este projeto conhece: `ToolRegistry.call`
+nunca levanta — por decisão explícita, erro de ferramenta volta ao modelo como
+texto para ele se corrigir. Então cada chamada voltava
+`"registro não ligado a dados"`, o laço seguia, o modelo insistia, e a conta
+crescia. Silencioso, sobre dados ausentes, e pago.
+
+**Nenhum dos 820 testes viu**, e o motivo é estrutural: todo teste de composição
+usa `FakeLLMClient`, que nunca pede ferramenta. Foi encontrado LENDO o código
+para escrever a tela — a terceira vez neste projeto que um defeito aparece pelo
+caminho de execução e não pela suíte.
+
+O recorte virou método do registro (`recortar`) em vez de construção por quem
+chama. Um segundo dicionário fora do registro é o join frágil de sempre, e foi
+exatamente ele que perdeu o contexto. Testes nos dois sentidos: recortar um
+registro ligado preserva a ligação; recortar um catálogo não liga nada.
+
+### P6.122. Compor não liga ferramenta a dados, e o cliente default é a tranca
+
+Duas mudanças com a mesma forma: **o caminho que só valida não pode parecer o
+caminho que executa.**
+
+`construir_composicao` passava `d.ferramentas.com_contexto(contexto)` sempre.
+Com `contexto=None` — que é o caso de quem só compõe — o registro ficava LIGADO
+a nada, e a primeira chamada de ferramenta de conciliação estouraria em
+`None.bank`. Agora, sem contexto, o registro do domínio passa intacto: o de
+`conciliacao` é catálogo e recusa com texto. Um domínio cujas ferramentas de
+fato não precisam de dados declara `contexto=None` na própria construção
+(`procurement`), e essa declaração sobrevive.
+
+`cliente` deixou de ser obrigatório e o default virou `ClienteDeValidacao`
+(promovido de `_ClienteDeValidacao`), que constrói o agente e recusa falar com
+modelo. É a mesma escolha que `ClienteAusente` já era em
+`grill.receita.construir`: quem só quer validar não deve precisar lembrar de
+desarmar a execução; quem quer executar passa um cliente de verdade, e isso
+aparece no diff.
+
+É o que mantém verdadeira a regra de `api/app.py` — compor pela web não gasta
+dinheiro — para um endpoint cuja cascata é quase sempre de classe `AGENTE`.
+
+### P6.123. O bloco é união discriminada, e a tela não valida nada
+
+`POST /api/composicoes` recebe `BlocoRegraJSON | BlocoAgenteJSON` com
+`Field(discriminator="tipo")`.
+
+A alternativa seria um objeto com `parametros?` ao lado de `declaracao?`. Ele
+aceitaria os quatro cruzamentos, dois dos quais não significam nada, e recusá-los
+viraria validação escrita à mão na camada HTTP — uma segunda cópia das regras do
+domínio, que divergiria da primeira.
+
+**O editor de agente na tela não valida.** Quem recusa é
+`AgenteDeclarado.__post_init__`, e a mensagem dele vira o 422 que aparece no
+painel. Os dois avisos inline que existem — prompt sem interpolação e
+`abstem_com` colidindo com um tipo — são ALERTAS, não bloqueios: eles não
+impedem o envio, e se divergirem do servidor quem ganha é o servidor. Uma
+validação de tela que bloqueia é uma validação que, no dia em que divergir,
+barra algo que o servidor aceita.
+
+### P6.124. O auto-layout segue a ordem de EXECUÇÃO, não a de clique
+
+Um nó novo ia para baixo do mais baixo — ordem de clique. Acrescentar o agente
+antes da regra desenhava `AGENTE` em cima, com a seta subindo, enquanto o
+cabeçalho dizia `REGRA → AGENTE`.
+
+Numa tela cuja tese é "as setas não são suas, elas seguem o custo", o desenho
+padrão contradizendo o cabeçalho é a falha de decoração ao contrário. Visto na
+tela; nenhum teste olharia para isso.
+
+O layout agora reempilha por classe de custo, e a chave do efeito é a lista de
+ids mais as alturas MEDIDAS — nada mais. Arrastar não muda nenhuma das duas,
+então arrastar continua livre; o próximo bloco acrescentado reempilha tudo, que
+é o comportamento coerente com "o arranjo é decoração, a ordem é derivada".
+
+No mesmo diff: o `system` do agente no cartão ganhou `line-clamp-2`. Sem corte,
+um prompt inteiro fazia o cartão ocupar meia tela e cobrir os vizinhos.
+
+### P6.125. Executar uma composição ainda não tem caminho, e a lacuna é visível
+
+`GET /api/composicoes` existe para que gravar não seja escrever num buraco. Uma
+composição não entra no `registry()` dos workflows — ele lê receitas do grill —
+e portanto **não há como executá-la**.
+
+A rota de listagem não fecha essa lacuna; ela a deixa à vista. O alternativa era
+não ter rota nenhuma, e aí a composição gravada simplesmente sumiria.
+
+Duas lacunas irmãs, registradas aqui para não se perderem:
+
+- **A etapa HUMANO não tem bloco em domínio nenhum.** `Dominio` declara regras e
+  agentes; `revisor` é classe `HUMANO` e não cabe em nenhum dos dois. O chat do
+  grill pode propor `revisor`, e o canvas então DIZ que não soube desenhá-lo em
+  vez de descartar em silêncio.
+- **`Crew` não tem bloco.** Existe como resolver de classe `CREW` desde o M8 e
+  não aparece na composição.

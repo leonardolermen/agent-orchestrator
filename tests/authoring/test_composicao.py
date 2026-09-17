@@ -231,3 +231,55 @@ def test_arquivo_ILEGIVEL_nao_derruba_a_listagem(tmp_path, capsys):
 
     assert [c.id for c in listadas] == ["boa"]
     assert "ilegível" in capsys.readouterr().err
+
+
+# -- compor não é executar --------------------------------------------------
+
+
+def test_compor_SEM_contexto_deixa_o_registro_como_CATALOGO():
+    """A diferença entre compor e executar, verificável.
+
+    `com_contexto(None)` ligaria o registro a nada, e a primeira chamada de
+    ferramenta estouraria em `None.bank`. Um catálogo recusa com texto.
+    """
+    d = _construir(
+        _comp(
+            [BlocoAgente(declaracao=_agente(kind="lancamento", name="meu-investigador",
+                                            ferramentas=("buscar_lancamentos",)))],
+            dominio="conciliacao",
+        )
+    )
+
+    (r,) = d.stages[0].cascade
+    assert not r.tools.ligado
+    assert "não ligado" in (r.tools.call("buscar_lancamentos", {}).error or "")
+
+
+def test_compor_COM_contexto_entrega_um_agente_que_EXECUTA():
+    """O outro lado. Era o defeito: `construir_agente` recortava as ferramentas
+    com um `ToolRegistry` novo e perdia o contexto, então NENHUM agente composto
+    conseguia usar ferramenta — em silêncio, dentro de um laço pago."""
+    d = _construir(
+        _comp(
+            [BlocoAgente(declaracao=_agente(kind="lancamento", name="meu-investigador",
+                                            ferramentas=("buscar_lancamentos",)))],
+            dominio="conciliacao",
+        ),
+        contexto=ToolContext([], []),
+    )
+
+    (r,) = d.stages[0].cascade
+    assert r.tools.ligado
+    assert r.tools.call("buscar_lancamentos", {"documento": "x"}).error is None
+
+
+def test_o_cliente_default_e_a_TRANCA_e_nao_um_modelo():
+    """`construir_composicao` sem cliente valida e recusa executar — mesma
+    escolha do `ClienteAusente` em `grill.receita.construir`."""
+    from orchestrator.authoring.composicao import construir_composicao
+
+    d = construir_composicao(_comp([BlocoAgente(declaracao=_agente())]))
+
+    (r,) = d.stages[0].cascade
+    with pytest.raises(RuntimeError, match="não fala com modelo"):
+        r.client.complete("", [], [])

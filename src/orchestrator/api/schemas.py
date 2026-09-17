@@ -4,6 +4,8 @@ Os schemas são construídos A PARTIR dos objetos do domínio, nunca escritos à
 mão em paralelo a eles — ver o teste anti-drift.
 """
 
+from typing import Annotated, Literal
+
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from orchestrator.kernel.definition import Stage, WorkflowDefinition
@@ -320,3 +322,76 @@ class DominioJSON(BaseModel):
     # inspecionar o tipo em cada linha de render.
     regras: list[RegraJSON]
     agentes: list[AgenteDeclaradoJSON]
+
+
+# ---------------------------------------------------------------------------
+# Composição: o formato GERAL, que a `Receita` não sabia carregar.
+#
+# `ReceitaRequest.resolvers` é uma lista de NOMES do catálogo. Funciona enquanto
+# tudo que se compõe já existe pronto — e um agente declarado NÃO existe pronto:
+# ele nasce na composição, com prompt, vocabulário e ferramentas próprios.
+#
+# Por isso o bloco é uma UNIÃO DISCRIMINADA e não um dicionário com campos
+# opcionais. Um `parametros: dict[str, int] | None` ao lado de um `prompt: str |
+# None` aceitaria os quatro cruzamentos, dois dos quais não significam nada — e
+# a recusa deles viraria código de validação escrito à mão. Com `tipo` como
+# discriminador, o Pydantic recusa antes do handler rodar, e a mensagem nomeia
+# qual dos dois formatos ele esperava.
+# ---------------------------------------------------------------------------
+
+
+class BlocoRegraJSON(BaseModel):
+    tipo: Literal["regra"]
+    nome: str
+    parametros: dict[str, int] = Field(default_factory=dict)
+
+
+class BlocoAgenteJSON(BaseModel):
+    tipo: Literal["agente"]
+    declaracao: AgenteDeclaradoJSON
+
+
+BlocoJSON = Annotated[BlocoRegraJSON | BlocoAgenteJSON, Field(discriminator="tipo")]
+
+
+class ComposicaoRequest(BaseModel):
+    """Uma cascata de QUALQUER domínio, composta na tela.
+
+    Sem campo de ordem, pelo mesmo motivo de `ReceitaRequest`: quem ordena é
+    `Stage.ordered()`, por classe de custo. Sem `gerado_em`: o relógio é do
+    servidor. Sem `version`: ela é derivada do conteúdo, e aceitá-la do cliente
+    deixaria duas composições diferentes alegarem a mesma.
+    """
+
+    id: str
+    nome: str
+    dominio: str
+    justificativa: str = ""
+    blocos: list[BlocoJSON] = Field(min_length=1)
+
+    @field_validator("id")
+    @classmethod
+    def _id_valido(cls, v: str) -> str:
+        from orchestrator.grill.receita import validar_id
+
+        # A MESMA validação do disco, pelo mesmo motivo de `ReceitaRequest`: uma
+        # cópia aqui divergiria, e o sintoma seria uma composição aceita pela
+        # tela e recusada na gravação.
+        validar_id(v)
+        return v
+
+
+class ComposicaoResumoJSON(BaseModel):
+    """Uma composição em disco.
+
+    `blocos` traz os NOMES e não a contagem: "3 blocos" não distingue uma
+    cascata que começa numa regra barata de uma que começa direto no modelo, e
+    essa distinção é a tese do produto.
+    """
+
+    id: str
+    nome: str
+    dominio: str
+    version: str
+    gerado_em: str
+    blocos: list[str]

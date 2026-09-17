@@ -20,7 +20,7 @@ aparecer na conta.
 """
 
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
@@ -179,6 +179,28 @@ class ToolRegistry:
         novo = ToolRegistry(contexto=contexto)
         for s in self._por_nome.values():
             novo.register(s)
+        return novo
+
+    def recortar(self, nomes: Iterable[str]) -> "ToolRegistry":
+        """Um sub-registro com as ferramentas escolhidas, **mesmo contexto**.
+
+        Existe porque a alternativa — `ToolRegistry([reg.spec(n) for n in ...])`
+        — perde o contexto em silêncio, e o sintoma é caro: o agente construído
+        recebe um registro DESLIGADO, toda chamada de ferramenta volta como
+        `ToolResult.error`, e como `call` nunca levanta, o laço continua, o
+        modelo insiste, e a conta cresce. "Não achei nada" indistinguível de
+        "não procurei", agora em cima de um orçamento.
+
+        Era exatamente o que `construir_agente` fazia. Foi encontrado lendo, não
+        por teste, porque todo teste de composição usava `FakeLLMClient`, que
+        nunca pede ferramenta.
+
+        O recorte é do registro e não de quem chama: um segundo dicionário fora
+        daqui é o join frágil de sempre — e foi ele que perdeu o contexto.
+        """
+        novo = ToolRegistry(contexto=self._contexto)
+        for n in nomes:
+            novo.register(self.spec(n))
         return novo
 
     def register(self, spec: ToolSpec) -> None:

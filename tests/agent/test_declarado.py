@@ -299,7 +299,37 @@ def test_dominio_SEM_kinds_e_recusado():
 def test_o_cliente_de_validacao_se_recusa_a_FALAR_com_modelo():
     """Ele existe para checar declaração, não para executar. Se alguém o
     executasse, o erro precisa dizer isso — e não virar uma chamada de rede."""
-    from orchestrator.agent.declarado import _ClienteDeValidacao
+    from orchestrator.agent.declarado import ClienteDeValidacao
 
     with pytest.raises(RuntimeError, match="não fala com modelo"):
-        _ClienteDeValidacao().complete("", [], [])
+        ClienteDeValidacao().complete("", [], [])
+
+
+def test_o_agente_construido_HERDA_o_registro_LIGADO_do_dominio():
+    """O defeito mais caro que este arquivo já escondeu.
+
+    `construir_agente` recortava as ferramentas declaradas com
+    `ToolRegistry([registro.spec(n) for n in ...])`, que perde o contexto. Todo
+    agente composto sobre um domínio ligado a dados saía com um registro
+    DESLIGADO: `call` devolvia "registro não ligado" em vez de levantar, o laço
+    seguia, o modelo insistia, e a conta crescia sem sintoma nenhum.
+
+    Nenhum teste viu porque todos usam `FakeLLMClient`, que nunca pede
+    ferramenta. Foi encontrado lendo o código para escrever a tela.
+    """
+    ligado = _contar_palavras().com_contexto("os dados")
+
+    agente = construir_agente(_decl(ferramentas=("contar_palavras",)), FakeLLMClient([]), ligado)
+
+    assert agente.tools.ligado
+    assert agente.tools.names() == ("contar_palavras",)
+
+
+def test_o_agente_construido_sobre_um_CATALOGO_continua_desligado():
+    """O outro sentido: construir para VALIDAR não pode ligar nada a dados que
+    não existem. É o que `Dominio.__post_init__` faz na importação."""
+    agente = construir_agente(
+        _decl(ferramentas=("contar_palavras",)), FakeLLMClient([]), _contar_palavras()
+    )
+
+    assert not agente.tools.ligado

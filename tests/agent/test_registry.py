@@ -211,3 +211,32 @@ def test_contexto_None_EXPLICITO_e_diferente_de_nao_ligado():
     distinção, ele seria indistinguível de um que esqueceu de ligar."""
     assert ToolRegistry([_spec()], contexto=None).ligado
     assert not ToolRegistry([_spec()]).ligado
+
+
+def test_recortar_PRESERVA_o_contexto():
+    """O defeito que `recortar` existe para não deixar acontecer de novo.
+
+    `construir_agente` montava o sub-registro do agente com
+    `ToolRegistry([reg.spec(n) for n in decl.ferramentas])` — e perdia o
+    contexto em silêncio. O agente saía com um registro DESLIGADO, toda chamada
+    voltava como `ToolResult.error`, e como `call` nunca levanta, o laço
+    continuava, o modelo insistia e a conta crescia.
+    """
+    ligado = ToolRegistry([_spec(fn=lambda ctx, a, b: ctx)]).com_contexto("os dados")
+
+    recorte = ligado.recortar(["somar"])
+
+    assert recorte.ligado
+    assert recorte.call("somar", {"a": 1, "b": 2}).value == "os dados"
+
+
+def test_recortar_de_um_CATALOGO_continua_catalogo():
+    """A preservação vale nos dois sentidos: recortar não LIGA nada."""
+    assert not ToolRegistry([_spec()]).recortar(["somar"]).ligado
+
+
+def test_recortar_ferramenta_inexistente_LEVANTA():
+    """Um recorte silencioso produziria um agente com menos ferramentas do que
+    ele declara — e o sintoma seria o modelo pedindo algo que não existe."""
+    with pytest.raises(KeyError, match="disponíveis"):
+        ToolRegistry([_spec()]).recortar(["nao_existe"])

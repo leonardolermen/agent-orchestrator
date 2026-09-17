@@ -226,9 +226,11 @@ def construir_agente(
             f"{decl.name!r} declara ferramenta inexistente: {desconhecidas}. "
             f"disponíveis: {sorted(registro.names())}"
         )
-    escolhidas = ToolRegistry(
-        [registro.spec(n) for n in decl.ferramentas] if decl.ferramentas else []
-    )
+    # `recortar` e não `ToolRegistry([registro.spec(n) for n in ...])`: a
+    # segunda forma PERDIA O CONTEXTO. Um agente composto sobre um registro
+    # ligado a dados recebia um registro desligado, e como `call` nunca levanta,
+    # toda ferramenta voltava como erro, o laço continuava e a conta crescia.
+    escolhidas = registro.recortar(decl.ferramentas)
 
     return Agent(
         spec=AgentSpec(
@@ -342,11 +344,16 @@ class Dominio:
                     f"agente {a.name!r} trabalha kind {a.kind!r}, que não é do "
                     f"domínio {self.id!r} ({list(self.kinds)})"
                 )
-            construir_agente(a, _ClienteDeValidacao(), self.ferramentas)
+            construir_agente(a, ClienteDeValidacao(), self.ferramentas)
 
 
-class _ClienteDeValidacao:
-    """Cliente inerte, só para `construir_agente` validar sem rede.
+class ClienteDeValidacao:
+    """Cliente inerte: constrói o agente, recusa falar com modelo.
+
+    Público, e é o DEFAULT de `construir_composicao`, pela mesma razão que
+    `ClienteAusente` é o default de `grill.receita.construir`: quem só quer
+    validar não deve precisar lembrar de passar a tranca. Quem quer executar
+    passa um cliente de verdade, de propósito.
 
     O modelo é um REAL da tabela de preços: `Agent.__post_init__` chama
     `Cost.zero().microcents(model)` e um nome inventado faria a validação

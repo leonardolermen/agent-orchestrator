@@ -34,6 +34,7 @@ from typing import Any
 
 from orchestrator.agent.declarado import (
     AgenteDeclarado,
+    ClienteDeValidacao,
     Dominio,
     construir_agente,
 )
@@ -99,10 +100,17 @@ class Composicao:
 def construir_composicao(
     c: Composicao,
     *,
-    cliente: LLMClient,
+    cliente: LLMClient | None = None,
     contexto: Any = None,
 ) -> WorkflowDefinition:
     """Valida construindo. Se retorna, a cascata roda.
+
+    **O cliente default é a TRANCA, não um modelo.** `ClienteDeValidacao`
+    constrói o agente e recusa falar com modelo. É a mesma escolha do
+    `ClienteAusente` em `grill.receita.construir`, e pelo mesmo motivo: a
+    chamada mais frequente é "só quero validar", e ela não pode exigir que
+    alguém lembre de desarmar a execução. Quem vai EXECUTAR passa um cliente de
+    verdade, de propósito, e isso aparece no diff.
 
     Mesma disciplina de `grill.receita.construir`, e as mensagens são escritas
     para serem LIDAS — o arquiteto (§9 do spec da plataforma) devolve o erro ao
@@ -114,7 +122,17 @@ def construir_composicao(
     """
     d = buscar_dominio(c.dominio)
     por_nome = {r.nome: r for r in d.regras}
-    ferramentas = d.ferramentas.com_contexto(contexto)
+    # Sem contexto, o registro do domínio passa INTACTO — e o do `conciliacao`
+    # é um catálogo, que recusa executar. É o que faz "compor" e "executar"
+    # serem coisas diferentes: `com_contexto(None)` ligaria o registro a nada e
+    # as ferramentas estourariam em `None.bank` na primeira chamada, o que é
+    # pior que a recusa clara de um registro não ligado.
+    #
+    # Um domínio cujas ferramentas de fato não precisam de dados declara
+    # `contexto=None` na PRÓPRIA construção (ver `procurement` em
+    # `domains/registro.py`), e essa declaração sobrevive a este caminho.
+    ferramentas = d.ferramentas if contexto is None else d.ferramentas.com_contexto(contexto)
+    cliente = cliente or ClienteDeValidacao()
 
     vistos: set[str] = set()
     resolvers: list[Resolver] = []

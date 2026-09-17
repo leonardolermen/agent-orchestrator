@@ -98,6 +98,25 @@ export interface Receita {
   resolvers: { nome: string; parametros?: Record<string, number> }[];
 }
 
+// Um bloco de composição, como o servidor o recebe. UNIÃO DISCRIMINADA por
+// `tipo`, espelhando `BlocoJSON` em `schemas.py` — um objeto com
+// `parametros?` ao lado de `declaracao?` aceitaria os quatro cruzamentos, dois
+// dos quais não significam nada.
+export type BlocoPedido =
+  | { tipo: "regra"; nome: string; parametros: Record<string, number> }
+  | { tipo: "agente"; declaracao: AgenteDeclarado };
+
+export interface ComposicaoResumo {
+  id: string;
+  nome: string;
+  dominio: string;
+  version: string;
+  gerado_em: string;
+  // NOMES e não contagem: "3 blocos" não distingue uma cascata que começa numa
+  // regra barata de uma que começa direto no modelo.
+  blocos: string[];
+}
+
 export interface Ambiente {
   modelo_padrao: string;
   // Booleano de propósito. A tela precisa saber se a entrevista vai funcionar,
@@ -160,6 +179,25 @@ export const api = {
       body: JSON.stringify(corpo),
     }),
 
+  composicoes: () => pedir<ComposicaoResumo[]>("/api/composicoes"),
+
+  // O irmão de `criarReceita` para o formato GERAL. A diferença que importa
+  // está no corpo: uma receita é uma lista de nomes do catálogo; uma composição
+  // carrega o agente INTEIRO, porque esse agente não existe em catálogo nenhum
+  // até a pessoa criá-lo aqui.
+  criarComposicao: (corpo: {
+    id: string;
+    nome: string;
+    dominio: string;
+    justificativa: string;
+    blocos: BlocoPedido[];
+  }) =>
+    pedir<WorkflowConstruido>("/api/composicoes", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(corpo),
+    }),
+
   rodar: (workflowId: string, ambiente: Pick<Ambiente, "seed" | "n" | "taxa_divergencia">) =>
     pedir<Run>(`/api/workflows/${encodeURIComponent(workflowId)}/runs`, {
       method: "POST",
@@ -171,6 +209,31 @@ export const api = {
       }),
     }),
 };
+
+// Um agente em branco. É o que transforma a paleta de "escolha um pronto" em
+// "crie um" — e é o pedido do dono: uma plataforma geral, não um cardápio.
+//
+// Os campos saem VAZIOS de propósito, e a tela mostra a recusa do servidor até
+// serem preenchidos. Semear `tipos: ["TIPO_A", "TIPO_B"]` para a composição
+// passar produziria um agente que compõe, roda, gasta e classifica em
+// vocabulário inventado — a mesma classe de falha silenciosa que
+// `ToolRegistry.ligado` existe para impedir.
+//
+// Os números NÃO saem vazios: `max_turns` e o orçamento têm default no
+// servidor, e um agente sem teto é um agente que gasta até o fim da fila.
+export function agenteEmBranco(nome: string, kind: string): AgenteDeclarado {
+  return {
+    name: nome,
+    system: "",
+    kind,
+    prompt: "",
+    tipos: [],
+    abstem_com: "NAO_SEI",
+    ferramentas: [],
+    max_turns: 3,
+    budget_microcents: 4_000_000,
+  };
+}
 
 export function ordemDeExecucao<T extends { cost_class: CostClass }>(itens: T[]): T[] {
   // `Array.prototype.sort` é estável desde o ES2019 e `sorted()` do Python

@@ -27,10 +27,13 @@ from typing import Literal
 from fastapi import FastAPI, HTTPException, Query, WebSocket
 from fastapi.staticfiles import StaticFiles
 
+from orchestrator.agent.declarado import AgenteDeclarado
 from orchestrator.api.entrevista import conduzir
 from orchestrator.api.schemas import (
     AgenteDeclaradoJSON,
     AmbienteJSON,
+    ComposicaoRequest,
+    ComposicaoResumoJSON,
     DecisaoRequest,
     DominioJSON,
     EntradaCatalogoJSON,
@@ -49,6 +52,15 @@ from orchestrator.api.schemas import (
     WorkflowJSON,
     WorkflowResumoJSON,
     workflow_json,
+)
+from orchestrator.authoring.composicao import (
+    Bloco,
+    BlocoAgente,
+    BlocoRegra,
+    Composicao,
+    construir_composicao,
+    gravar,
+    listar,
 )
 from orchestrator.conciliacao import reconcile
 from orchestrator.domains.registro import DOMINIOS
@@ -78,6 +90,9 @@ app = FastAPI(title="Agent Orchestrator — canvas")
 # Raiz das receitas em disco. Atributo de módulo para o teste trocar por
 # tmp_path sem ler o `data/` real do desenvolvedor.
 _RAIZ_RECEITAS: Path | None = None
+
+# Raiz das composições em disco, pelo mesmo motivo — `gravar` escreve.
+_RAIZ_COMPOSICOES: Path | None = None
 
 
 @app.get("/api/workflows", response_model=list[WorkflowResumoJSON])
@@ -252,6 +267,104 @@ def criar_receita(pedido: ReceitaRequest) -> WorkflowJSON:
     # disco. Mesma ordem de `gravar_receita` no grill, e pelo mesmo motivo.
     gravar_receita(receita, _RAIZ_RECEITAS)
     return workflow_json(definicao)
+
+
+@app.post("/api/composicoes", response_model=WorkflowJSON, status_code=201)
+def criar_composicao(pedido: ComposicaoRequest) -> WorkflowJSON:
+    """Compõe uma cascata de QUALQUER domínio. VALIDA CONSTRUINDO.
+
+    É o irmão de `/api/receitas` para o formato geral. A diferença que importa
+    está no corpo: uma receita é uma lista de nomes do catálogo; uma composição
+    carrega o agente INTEIRO — prompt, vocabulário, ferramentas, orçamento —
+    porque esse agente não existe em catálogo nenhum até a pessoa criá-lo.
+
+    **Não passa `contexto`.** Compor não executa, e sem dados o registro do
+    domínio segue sendo catálogo: se alguém executasse esta definição, as
+    ferramentas recusariam com texto em vez de estourar sobre dados ausentes.
+
+    **Não passa `cliente`.** O default de `construir_composicao` é
+    `ClienteDeValidacao`, que constrói o agente e recusa falar com modelo. É a
+    mesma tranca de `/api/receitas`, e é o que mantém verdadeira a regra deste
+    módulo: compor pela web não gasta dinheiro. (A entrevista gasta, com teto, e
+    é a exceção declarada no cabeçalho.)
+    """
+    blocos: list[Bloco] = []
+    for b in pedido.blocos:
+        if b.tipo == "regra":
+            blocos.append(BlocoRegra(nome=b.nome, parametros=dict(b.parametros)))
+        else:
+            d = b.declaracao
+            try:
+                # `AgenteDeclarado.__post_init__` recusa vocabulário vazio,
+                # prompt que não interpola nada e `abstem_com` colidindo com um
+                # tipo. São recusas de DOMÍNIO, com texto escrito para ser lido,
+                # e viram o 422 — não um erro de schema do Pydantic, que diria
+                # "field required" onde a verdade é "isso mediria errado".
+                blocos.append(
+                    BlocoAgente(
+                        declaracao=AgenteDeclarado(
+                            name=d.name,
+                            system=d.system,
+                            kind=d.kind,
+                            prompt=d.prompt,
+                            tipos=tuple(d.tipos),
+                            abstem_com=d.abstem_com,
+                            ferramentas=tuple(d.ferramentas),
+                            max_turns=d.max_turns,
+                            budget_microcents=d.budget_microcents,
+                        )
+                    )
+                )
+            except ValueError as erro:
+                raise HTTPException(status_code=422, detail=str(erro)) from erro
+
+    try:
+        composicao = Composicao(
+            id=pedido.id,
+            nome=pedido.nome,
+            dominio=pedido.dominio,
+            justificativa=pedido.justificativa,
+            # Relógio do SERVIDOR, como em `/api/receitas`: um timestamp do
+            # cliente permitiria gravar uma composição "criada" antes de outra
+            # que a antecedeu.
+            gerado_em=datetime.now(UTC),
+            blocos=tuple(blocos),
+        )
+        definicao = construir_composicao(composicao)
+    except KeyError as erro:
+        # Domínio desconhecido. `KeyError` formata com aspas extras em `str()`,
+        # então usa o argumento — a mensagem já lista os disponíveis.
+        raise HTTPException(status_code=422, detail=erro.args[0]) from erro
+    except ValueError as erro:
+        raise HTTPException(status_code=422, detail=str(erro)) from erro
+
+    try:
+        gravar(composicao, _RAIZ_COMPOSICOES)
+    except FileExistsError as erro:
+        raise HTTPException(status_code=409, detail=str(erro)) from erro
+    return workflow_json(definicao)
+
+
+@app.get("/api/composicoes", response_model=list[ComposicaoResumoJSON])
+def listar_composicoes() -> list[ComposicaoResumoJSON]:
+    """As composições em disco.
+
+    Existe para que gravar não seja escrever num buraco: sem esta rota, uma
+    composição criada pela tela sumiria de vista — ela não entra no `registry()`
+    dos workflows, que lê receitas do grill. **Executar uma composição ainda não
+    tem caminho**, e essa lacuna fica visível aqui em vez de escondida.
+    """
+    return [
+        ComposicaoResumoJSON(
+            id=c.id,
+            nome=c.nome,
+            dominio=c.dominio,
+            version=c.version,
+            gerado_em=c.gerado_em.isoformat(),
+            blocos=list(c.nomes),
+        )
+        for c in listar(_RAIZ_COMPOSICOES)
+    ]
 
 
 @app.get("/api/workflows/{workflow_id}", response_model=WorkflowJSON)
