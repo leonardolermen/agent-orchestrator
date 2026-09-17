@@ -49,7 +49,26 @@
   - `FonteArquivo(tipo: Literal["arquivo"], caminho: str, kind: str, campo_id: str)`
   - `RunRequest(fonte: FonteSintetica | FonteArquivo = FonteSintetica(), teto_microcents: int | None = None)`
 
-**Nota de escopo.** Esta task só declara a forma do pedido. Quem a usa é a Task 3; até lá `_executar` continua lendo `seed`/`n`/`taxa` como hoje, através da fonte sintética.
+**Nota de escopo, e ela tem uma consequência obrigatória.** Esta task declara a
+forma do pedido — o motor genérico é a Task 3. Mas `api/app.py:374` lê
+`pedido.seed`, `pedido.n` e `pedido.taxa_divergencia` DIRETO, e este é o commit
+que deixa de ter esses campos no topo. **Atualize aquela linha na mesma task:**
+
+```python
+    f = pedido.fonte
+    return _executar(workflow_id, f.seed, f.n, f.taxa_divergencia)
+```
+
+`_executar` continua com a assinatura de hoje e continua chamando `reconcile` —
+trocar o motor é a Task 3. O que muda aqui é só de ONDE os três números vêm.
+Sem isso a suíte fica vermelha no fim desta task, e a ordem segura do plano
+deixa de valer.
+
+Uma fonte de arquivo não tem `seed`. Até a Task 3, `POST /runs` com
+`{"fonte": {"tipo": "arquivo", ...}}` levanta `AttributeError` — é esperado, e
+é exatamente o que a Task 3 resolve. **Não invente um fallback** para tapar a
+janela: um `getattr(f, "seed", 1)` aqui viraria uma fonte de arquivo rodando
+silenciosamente sobre dados sintéticos, que é pior que o erro.
 
 - [ ] **Step 1: Escrever os testes que falham**
 
@@ -708,7 +727,10 @@ O corpo passa a ser UM caminho, com um ramo só no fim:
 
     total = len(pool.items)
     resolvidos = total - len(run.unresolved.items)
-    modelo = pedido.fonte.tipo and MODELO_INERTE  # o modelo da tabela de preços
+    # O MESMO modelo que o motor usou. `execute` tem `model="claude-opus-5"` por
+    # default, e `MODELO_INERTE` é essa string — converter custo com um nome
+    # diferente do que rodou daria um número que não corresponde a nada.
+    modelo = MODELO_INERTE
     por_resolver = [
         ResolverRunJSON(
             name=d.name,
