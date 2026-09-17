@@ -174,12 +174,24 @@ def execute(
                 propostas.extend(saida.proposals)
                 # Uma entrada por resolver que RODOU, mesmo que o custo seja
                 # Cost.zero() — a ausência da chave é que sinaliza "não rodou".
-                # Chave, não soma: cada resolver aparece com o PRÓPRIO custo, e um
-                # selo na tela não teria como decompor um total do sistema.
-                custos[resolver.name] = saida.cost
-                # Chave por identidade do resolver, não por `layer` do match — a
-                # mesma distinção do comentário em `matches_by_resolver` acima.
-                matches_por_resolver[resolver.name] = len(saida.resolutions)
+                # `.get(..., Cost.zero())` só cria a chave quando o resolver
+                # roda, então essa invariante sobrevive.
+                #
+                # SOMA, não atribuição: com o laço de rondas, o MESMO resolver
+                # pode rodar em mais de uma ronda (aresta de volta), e cada
+                # rodada é uma contribuição a mais, não a substituição da
+                # anterior. Uma atribuição aqui subcontaria o gasto real — e
+                # `_somar(custos)` alimenta `pctx.spent`, o número que a
+                # política compara contra o teto de orçamento. Subcontar gasto
+                # é abrir exatamente o buraco que `max_rondas` existe para
+                # fechar: um laço caro que a política não vê a tempo de parar.
+                custos[resolver.name] = custos.get(resolver.name, Cost.zero()) + saida.cost
+                # Mesma soma, mesmo motivo: `resolved_by_resolver` é uma
+                # contagem por resolver ao longo do run inteiro, não só da
+                # última ronda em que ele rodou.
+                matches_por_resolver[resolver.name] = (
+                    matches_por_resolver.get(resolver.name, 0) + len(saida.resolutions)
+                )
                 matches_por_classe.setdefault(resolver.cost_class, []).extend(saida.resolutions)
                 # Só `resolutions` encolhe o pool e só `produced` o aumenta.
                 # `saida.proposals` não aparece em nenhuma das duas expressões, e é
