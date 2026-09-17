@@ -243,3 +243,52 @@ def test_conteudo_diferente_no_mesmo_caminho_troca_a_fila():
     assert dataset_de_ref("file:x.csv@" + "a" * 64) != dataset_de_ref(
         "file:x.csv@" + "b" * 64
     )
+
+
+def test_a_forma_legada_descreve_o_que_dataset_id_produz():
+    """O par que impede o join frágil.
+
+    `_FORMA_LEGADA` é uma segunda expressão sobre o mesmo formato de
+    `dataset_id`. Se elas divergirem, o ramo de compatibilidade para de
+    reconhecer a chave antiga e toda fila em `data/fila/**` fica invisível —
+    em silêncio, porque nada mais compara as duas.
+    """
+    from orchestrator.review.fila import _FORMA_LEGADA
+
+    for seed in (0, 1, 7, 12345):
+        for n in (1, 30, 300, 5000):
+            for taxa in (0.0, 0.15, 1.0):
+                assert _FORMA_LEGADA.fullmatch(dataset_id(seed, n, taxa)), (seed, n, taxa)
+
+
+def test_o_ESQUEMA_faz_parte_da_chave_fora_do_caso_legado():
+    """`synth:X` e `db:X` não podem cair na mesma fila.
+
+    Descartar o esquema sempre que o resto fosse seguro colidiria dois
+    conjuntos diferentes numa trilha de decisões só. Inalcançável hoje — há um
+    `Source` com esquema `synth:` e outro com `file:` — e uma armadilha
+    armada para o terceiro.
+    """
+    from orchestrator.review.fila import dataset_de_ref
+
+    assert dataset_de_ref("synth:abc") != dataset_de_ref("db:abc")
+    assert dataset_de_ref("db:abc") == "db-abc"
+    # E o caso legado continua sendo o único que perde o esquema.
+    assert dataset_de_ref("synth:s1-n300-t0.15") == "s1-n300-t0.15"
+    assert dataset_de_ref("outro:s1-n300-t0.15") == "outro-s1-n300-t0.15"
+
+
+def test_um_esquema_INSEGURO_nao_vira_prefixo():
+    """A peneira do prefixo, que o caso do hash usa.
+
+    `partition(':')` num ref SEM `:` devolve o ref inteiro como esquema. Sem a
+    peneira, um ref `a/b` produziria a chave `a/b-<hash>` e
+    `caminho_da_fila` criaria um DIRETÓRIO `a/` — a fila escrita num lugar que
+    ninguém procura, sem erro nenhum.
+    """
+    from orchestrator.review.fila import dataset_de_ref
+
+    for ref in ("a/b", "..", "c:\\temp\\x", "sem-dois-pontos/../fuga"):
+        chave = dataset_de_ref(ref)
+        assert not (set(chave) & set(r'/\:@*?"<>|')), ref
+        assert chave not in (".", "..")

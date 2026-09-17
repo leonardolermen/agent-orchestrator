@@ -15,7 +15,7 @@ from orchestrator.kernel.cost import Cost, CostClass
 from orchestrator.kernel.resolution import Resolution
 from orchestrator.kernel.resolver import ResolverDescription, ResolverOutput
 from orchestrator.kernel.work import WorkSet
-from orchestrator.models import conciliacao, divergencias, lados
+from orchestrator.models import PAYLOADS, conciliacao, divergencias, lados
 from orchestrator.review.fila import Fila
 
 
@@ -31,6 +31,7 @@ class RevisorHumano:
             name=self.name,
             cost_class=self.cost_class,
             summary="aplica as decisões aprovadas na fila de revisão",
+            payloads=PAYLOADS,
         )
 
     def resolve(self, work: WorkSet) -> ResolverOutput:

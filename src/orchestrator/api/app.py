@@ -69,6 +69,7 @@ from orchestrator.grill.catalogo import MODELO_INERTE
 from orchestrator.grill.receita import Receita, ResolverReceita, construir
 from orchestrator.grill.registro import gravar_receita, listar_receitas
 from orchestrator.kernel.cost import Cost, CostClass
+from orchestrator.kernel.definition import WorkflowDefinition
 from orchestrator.kernel.event import EventBus
 from orchestrator.kernel.run import RunState
 from orchestrator.kernel.work import WorkSet
@@ -471,6 +472,54 @@ def _ler(fonte: SyntheticSource | ArquivoSource, pedido: RunRequest) -> tuple[st
         ) from erro
 
 
+def _conferir_payload(definicao: WorkflowDefinition, pool: WorkSet) -> None:
+    """A fonte entrega o que os resolvers deste workflow exigem?
+
+    **Esta borda existe porque é a única que junta uma FONTE a um WORKFLOW**, e
+    a combinação errada não falhava: estourava. `ArquivoSource` entrega
+    `dict`; `ExactMatcher` lê `be.document`. Rodar conciliação sobre um CSV com
+    `kind="banco"` devolvia 500 com `AttributeError: 'dict' object has no
+    attribute 'document'`, de três camadas abaixo — um erro de SERVIDOR sobre
+    uma escolha do CLIENTE, sem dizer qual das duas escolhas estava errada.
+
+    **Não é um `except AttributeError` em volta de `execute()`.** Esse `except`
+    engoliria um bug de verdade do motor e o devolveria como um 422 confiante,
+    que é pior do que o 500 que ele substituiria. E não é uma lista de nomes de
+    resolver nesta camada: ela apodreceria no dia em que alguém escrevesse o
+    próximo resolver tipado, em silêncio, exatamente como o `_construir_definicao`
+    por `inspect.signature` que `workflows.py` existe para ter matado.
+
+    A exigência é DECLARADA pelo resolver (`ResolverDescription.payloads`) e
+    lida aqui. Um resolver que não declara nada não é checado — e está certo:
+    `Agent` monta o prompt a partir dos CAMPOS do item e aceita dataclass ou
+    dict (ver `agent/declarado.py::_campos`), então um agente declarado roda
+    sobre um CSV sem nada a exigir.
+    """
+    tipos: dict[str, set[type]] = {}
+    for item in pool.items:
+        tipos.setdefault(item.kind, set()).add(type(item.payload))
+    for stage in definicao.stages:
+        for resolver in stage.ordered():
+            for kind, exigido in resolver.describe().payloads.items():
+                entregues = sorted(
+                    (t for t in tipos.get(kind, ()) if not issubclass(t, exigido)),
+                    key=lambda t: t.__name__,
+                )
+                if not entregues:
+                    continue
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"o resolver {resolver.name!r} exige que itens de kind "
+                        f"{kind!r} carreguem {exigido.__name__}, e a fonte "
+                        f"entregou {', '.join(t.__name__ for t in entregues)}. "
+                        f"uma fonte de arquivo entrega dicionários: escolha um "
+                        f"workflow cujos blocos leiam campos genéricos, ou um "
+                        f"`kind` que esta cascata não consuma."
+                    ),
+                )
+
+
 def _executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
     """Executa e PERSISTE o run. Sem cache.
 
@@ -523,6 +572,9 @@ def _executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
                 f"executado pela web. rode pela CLI."
             ),
         )
+    # DEPOIS do 409: uma cascata paga é recusada por ser paga, e essa razão
+    # vem antes de qualquer coisa sobre o formato do dado.
+    _conferir_payload(definicao, pool)
 
     # O MESMO modelo que a conversão de custo vai usar, passado explicitamente
     # em vez de deixado no default de `execute`. As duas strings já eram

@@ -29,7 +29,7 @@ from orchestrator.kernel.resolution import (
 )
 from orchestrator.kernel.resolver import ResolverDescription, ResolverOutput
 from orchestrator.kernel.work import WorkSet
-from orchestrator.models import Divergence, abstencao, divergencias
+from orchestrator.models import PAYLOADS, Divergence, abstencao, divergencias
 from orchestrator.taxonomy import DivergenceType
 
 if TYPE_CHECKING:
@@ -156,6 +156,7 @@ class Investigator:
             name=self.name,
             cost_class=self.cost_class,
             summary="investiga o que as regras não resolveram e propõe uma explicação",
+            payloads=PAYLOADS,
         )
 
     def resolve(self, work: WorkSet) -> ResolverOutput:

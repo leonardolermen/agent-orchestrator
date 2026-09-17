@@ -81,6 +81,18 @@ class Divergence:
 BANCO = "banco"
 CONTABIL = "contabil"
 
+# O que os resolvers DESTE domínio exigem do `WorkItem.payload`, por `kind`.
+#
+# Mora aqui, num lugar só, porque é uma propriedade do DOMÍNIO e não de cada
+# resolver: L1, L2, L3 e o revisor leem todos `banco()`/`contabil()`, que
+# devolvem `BankEntry`/`LedgerEntry` tipados. Quatro cópias divergiriam na
+# primeira vez que um kind mudasse de nome, e o sintoma seria uma borda que
+# recusa três resolvers e deixa o quarto estourar.
+#
+# Ver `kernel/resolver.py::ResolverDescription.payloads` para o que a borda
+# faz com isto.
+PAYLOADS: dict[str, type] = {BANCO: BankEntry, CONTABIL: LedgerEntry}
+
 
 def pool(bank: list[BankEntry], ledger: list[LedgerEntry]) -> WorkSet:
     """O `WorkSet` inicial de uma conciliação.

@@ -272,6 +272,24 @@ def test_a_forma_ANTIGA_do_pedido_e_recusada_em_voz_alta():
     assert r.status_code == 422
 
 
+def _nao_vaza(detalhe: str, raiz) -> None:
+    r"""Nenhum caminho do SERVIDOR pode aparecer num corpo de erro.
+
+    Checa TRÊS grafias, e as três são necessárias. `str(raiz)` sozinho é uma
+    asserção vazia no Windows: `OSError.__str__` interpola o nome do arquivo
+    com `repr()`, então a mensagem do errno carrega `C:\\Users\\...` — com as
+    barras DOBRADAS —, e a comparação contra a grafia simples passa enquanto o
+    caminho inteiro está ali. Medido: trocar o `motivo` seguro do `_ler` por
+    `str(erro)` deixava a suíte verde com a árvore de diretórios no corpo.
+
+    A terceira grafia (`as_posix`) é o mesmo furo no CI, onde não há `\` para
+    dobrar mas o separador da mensagem pode diferir do de `str()`.
+    """
+    for forma in (str(raiz), str(raiz).replace("\\", "\\\\"), raiz.as_posix()):
+        assert forma not in detalhe, f"vazou {forma!r}"
+        assert str(raiz.parent) not in detalhe
+
+
 def test_a_fonte_SINTETICA_continua_medindo_contra_gabarito():
     """O caminho de hoje, com a forma nova. A conciliação não perde nada."""
     r = cliente.post("/api/workflows/conciliacao/runs", json={})
@@ -356,8 +374,7 @@ def test_arquivo_inexistente_vira_422_e_NAO_VAZA_a_raiz(tmp_path, monkeypatch):
     assert r.status_code == 422, r.text
     detalhe = r.json()["detail"]
     assert "nao-existe.csv" in detalhe
-    assert str(raiz) not in detalhe
-    assert str(raiz.parent) not in detalhe
+    _nao_vaza(detalhe, raiz)
 
 
 def test_arquivo_malformado_vira_422_com_a_linha_e_NAO_500(tmp_path, monkeypatch):
@@ -379,7 +396,7 @@ def test_arquivo_malformado_vira_422_com_a_linha_e_NAO_500(tmp_path, monkeypatch
 
     assert r.status_code == 422, r.text
     assert "linha 1" in r.json()["detail"]
-    assert str(raiz) not in r.json()["detail"]
+    _nao_vaza(r.json()["detail"], raiz)
 
 
 def test_o_custo_da_execucao_volta_na_resposta():
@@ -392,11 +409,17 @@ def test_o_custo_da_execucao_volta_na_resposta():
 
 
 def test_a_fila_de_uma_fonte_de_arquivo_e_ESCOPADA_por_conteudo(tmp_path, monkeypatch):
-    """A chave da fila sai do `ref`, que carrega o sha do conteúdo. Este teste
-    prova que uma fonte de arquivo ABRE uma fila (não a fila vazia por
-    acidente) e que ela é outra quando o conteúdo muda."""
+    """A chave que o ENDPOINT de fato usa, observada — não recalculada.
+
+    A primeira versão deste teste comparava `dataset_de_ref(ref_antes)` com
+    `dataset_de_ref(ref_depois)`: duas funções puras contra elas mesmas. Ela
+    passava com a chave da fila FIXADA em `"synth:s1-n30-t0.15"` dentro de
+    `_executar` — ou seja, provava que o `ref` muda com o conteúdo e nada sobre
+    a fila. Aqui o `caminho_da_fila` do módulo é espionado, então o que a
+    asserção vê é o caminho que o servidor abriu.
+    """
     import orchestrator.api.app as api_app
-    from orchestrator.review.fila import dataset_de_ref
+    from orchestrator.review.fila import caminho_da_fila, dataset_de_ref
 
     raiz = tmp_path / "entradas"
     raiz.mkdir()
@@ -404,16 +427,287 @@ def test_a_fila_de_uma_fonte_de_arquivo_e_ESCOPADA_por_conteudo(tmp_path, monkey
     alvo.write_text("id,texto\na,um\n", encoding="utf-8")
     monkeypatch.setattr(api_app, "_RAIZ_ENTRADAS", raiz)
 
-    def _ref() -> str:
+    abertas: list[tuple[str, str]] = []
+
+    def _espiao(workflow_id, dataset, raiz=None):
+        abertas.append((workflow_id, dataset))
+        return caminho_da_fila(workflow_id, dataset, raiz=raiz)
+
+    monkeypatch.setattr(api_app, "caminho_da_fila", _espiao)
+
+    def _rodar() -> str:
         return cliente.post(
             "/api/workflows/conciliacao/runs",
             json={"fonte": {"tipo": "arquivo", "caminho": "itens.csv",
                             "kind": "k", "campo_id": "id"}},
         ).json()["input_ref"]
 
-    antes = _ref()
+    antes = _rodar()
     alvo.write_text("id,texto\na,OUTRO\n", encoding="utf-8")
-    depois = _ref()
+    depois = _rodar()
 
     assert antes != depois
-    assert dataset_de_ref(antes) != dataset_de_ref(depois)
+    # O endpoint abriu UMA fila por execução, no workflow certo, com a chave
+    # derivada do `ref` da fonte de ARQUIVO — nunca a de uma sintética.
+    assert [w for w, _ in abertas] == ["conciliacao", "conciliacao"]
+    assert [d for _, d in abertas] == [dataset_de_ref(antes), dataset_de_ref(depois)]
+    assert abertas[0][1] != abertas[1][1]
+    for _, chave in abertas:
+        assert chave.startswith("file-")
+
+
+def _registrar(monkeypatch, workflow_id: str, fabrica) -> None:
+    """Acrescenta um workflow ao registro, preservando os reais.
+
+    `registry()` monta um dict NOVO a cada chamada; envolver a função original
+    é o mesmo padrão de
+    `test_resolver_com_layer_diferente_do_name_e_reportado_pelo_proprio_nome`.
+    """
+    from orchestrator.workflows import registry as _original
+
+    def _com_extra(raiz=None):
+        fabricas = _original(raiz)
+        fabricas[workflow_id] = fabrica
+        return fabricas
+
+    monkeypatch.setattr("orchestrator.api.app.registry", _com_extra)
+
+
+def _triagem():
+    """Uma cascata GENÉRICA: um resolver que lê o payload como MAPA.
+
+    É a forma que uma fonte de arquivo entrega (`ArquivoSource` monta
+    `payload=linha`, um `dict`) e a que `agent/declarado.py::_campos` já
+    aceita — ou seja, o caminho principal de quem compõe no canvas sobre um
+    CSV.
+    """
+    from orchestrator.kernel.cost import CostClass
+    from orchestrator.kernel.definition import Stage, WorkflowDefinition
+    from orchestrator.kernel.resolution import Resolution
+    from orchestrator.kernel.resolver import ResolverDescription, ResolverOutput
+
+    class FechaBaixa:
+        name = "fecha_baixa"
+        cost_class = CostClass.REGRA
+
+        def describe(self) -> ResolverDescription:
+            # SEM `payloads`: este resolver não exige tipo nenhum, e é por isso
+            # que ele roda sobre um CSV.
+            return ResolverDescription(
+                self.name, self.cost_class, "fecha prioridade baixa"
+            )
+
+        def resolve(self, work):
+            return ResolverOutput(
+                resolutions=[
+                    Resolution(
+                        item_ids=frozenset({i.id}),
+                        produced_by=self.name,
+                        rule="prioridade baixa fecha sozinha",
+                    )
+                    for i in work.items
+                    if i.payload.get("prioridade") == "baixa"
+                ]
+            )
+
+    def fabrica(ctx):
+        return WorkflowDefinition(
+            id="triagem",
+            name="triagem de issues",
+            stages=(Stage(name="triar", cascade=(FechaBaixa(),)),),
+        )
+
+    return fabrica
+
+
+def test_um_CSV_de_verdade_e_CONSUMIDO_e_produz_resolucao(tmp_path, monkeypatch):
+    """A evidência que esta fatia existe para produzir.
+
+    Os outros testes de fonte de arquivo usam `kind` que NENHUM resolver
+    consome (`lancamento`, `k`) — então eles provam que o arquivo é lido,
+    hasheado e vira pool, e não provam que alguém o TOCA. Uma suíte verde
+    inteira sobre um CSV que ninguém abre é a forma mais cara de teste que
+    existe, e foi o que escondeu o `AttributeError` do `kind="banco"`.
+
+    Aqui a cascata consome o kind do arquivo e lê um campo dele.
+    """
+    import orchestrator.api.app as api_app
+
+    raiz = tmp_path / "entradas"
+    raiz.mkdir()
+    (raiz / "issues.csv").write_text(
+        "numero,titulo,prioridade\n"
+        "1,quebra no login,baixa\n"
+        "2,vazamento de memoria,alta\n"
+        "3,typo no rodape,baixa\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(api_app, "_RAIZ_ENTRADAS", raiz)
+    _registrar(monkeypatch, "triagem", _triagem())
+
+    r = cliente.post(
+        "/api/workflows/triagem/runs",
+        json={"fonte": {"tipo": "arquivo", "caminho": "issues.csv",
+                        "kind": "issue", "campo_id": "numero"}},
+    )
+
+    assert r.status_code == 200, r.text
+    corpo = r.json()
+    assert corpo["itens"] == 3
+    # As duas de prioridade baixa foram resolvidas LENDO o campo do CSV. Se o
+    # arquivo não fosse tocado, isto seria 0.
+    assert corpo["resolvidos"] == 2
+    assert corpo["gap"]["items"] == 1
+    (linha,) = corpo["por_resolver"]
+    assert (linha["name"], linha["matches"]) == ("fecha_baixa", 2)
+    assert linha["rate"] == pytest.approx(2 / 3)
+    assert corpo["contra_gabarito"] is None
+    assert corpo["input_ref"].startswith("file:issues.csv@")
+    soma = sum(x["rate"] for x in corpo["por_resolver"]) + corpo["gap"]["rate"]
+    assert soma == pytest.approx(1.0)
+
+
+def test_o_run_de_um_CSV_e_PERSISTIDO_com_o_ref_do_arquivo(tmp_path, monkeypatch):
+    """A execução sobre arquivo entra no histórico como qualquer outra."""
+    import orchestrator.api.app as api_app
+
+    raiz = tmp_path / "entradas"
+    raiz.mkdir()
+    (raiz / "issues.csv").write_text("numero,prioridade\n1,baixa\n", encoding="utf-8")
+    monkeypatch.setattr(api_app, "_RAIZ_ENTRADAS", raiz)
+    _registrar(monkeypatch, "triagem", _triagem())
+
+    corpo = cliente.post(
+        "/api/workflows/triagem/runs",
+        json={"fonte": {"tipo": "arquivo", "caminho": "issues.csv",
+                        "kind": "issue", "campo_id": "numero"}},
+    ).json()
+
+    (resumo,) = cliente.get("/api/runs", params={"workflow_id": "triagem"}).json()
+    assert resumo["input_ref"] == corpo["input_ref"]
+    assert resumo["resolved"] == 1
+
+
+def test_payload_de_dict_contra_resolver_TIPADO_e_422_e_nao_500(tmp_path, monkeypatch):
+    """A combinação que estourava.
+
+    `ArquivoSource` entrega dicionário; `ExactMatcher` lê `be.document`. Com
+    `kind="banco"` o CSV cai direto no `banco()` da conciliação e o resultado
+    era um 500 de `AttributeError`, vindo de três camadas abaixo de quem
+    escolheu as duas pontas.
+
+    A recusa nomeia o RESOLVER e o KIND, porque é a combinação que está errada
+    e não nenhuma das duas escolhas sozinha.
+    """
+    import orchestrator.api.app as api_app
+
+    raiz = tmp_path / "entradas"
+    raiz.mkdir()
+    (raiz / "itens.csv").write_text("id,texto\na,um\n", encoding="utf-8")
+    monkeypatch.setattr(api_app, "_RAIZ_ENTRADAS", raiz)
+
+    r = cliente.post(
+        "/api/workflows/conciliacao/runs",
+        json={"fonte": {"tipo": "arquivo", "caminho": "itens.csv",
+                        "kind": "banco", "campo_id": "id"}},
+    )
+
+    assert r.status_code == 422, r.text
+    detalhe = r.json()["detail"]
+    assert "L1" in detalhe
+    assert "banco" in detalhe
+    assert "BankEntry" in detalhe
+    assert "dict" in detalhe
+
+
+def test_a_fonte_SINTETICA_atravessa_a_mesma_conferencia_de_payload():
+    """A guarda não pode ter transformado o caminho de hoje em 422 — ela é uma
+    recusa de COMBINAÇÃO, e `SyntheticSource` entrega exatamente os tipos que a
+    conciliação declara exigir."""
+    r = cliente.post("/api/workflows/conciliacao/runs", json={})
+
+    assert r.status_code == 200, r.text
+
+
+def test_um_resolver_que_NAO_declara_payload_nao_e_conferido(tmp_path, monkeypatch):
+    """O outro lado da guarda, e o que a mantém honesta.
+
+    Exigir declaração de todo resolver tornaria impossível rodar qualquer
+    cascata genérica sobre um arquivo — que é a tese desta fatia. `payloads`
+    vazio significa "não inspeciono o payload", e um resolver assim roda sobre
+    qualquer fonte.
+    """
+    import orchestrator.api.app as api_app
+    from orchestrator.kernel.resolver import ResolverDescription
+
+    fabrica = _triagem()
+    (stage,) = fabrica(None).stages
+    (resolver,) = stage.cascade
+    assert resolver.describe().payloads == {}
+    # E o default da própria descrição, para o dia em que alguém "arrumar" o
+    # campo para exigir valor.
+    assert ResolverDescription("x", resolver.cost_class, "y").payloads == {}
+
+    raiz = tmp_path / "entradas"
+    raiz.mkdir()
+    (raiz / "issues.csv").write_text("numero,prioridade\n1,baixa\n", encoding="utf-8")
+    monkeypatch.setattr(api_app, "_RAIZ_ENTRADAS", raiz)
+    _registrar(monkeypatch, "triagem", fabrica)
+
+    r = cliente.post(
+        "/api/workflows/triagem/runs",
+        json={"fonte": {"tipo": "arquivo", "caminho": "issues.csv",
+                        "kind": "issue", "campo_id": "numero"}},
+    )
+
+    assert r.status_code == 200, r.text
+
+
+def test_campo_desconhecido_DENTRO_da_fonte_e_recusado():
+    """A trava um nível abaixo do `RunRequest`.
+
+    `extra="forbid"` no `RunRequest` de fora não desce para os modelos da
+    união: sem a trava nos dois, `{"tipo": "sintetica", "sede": 2}` dropava
+    `sede` em silêncio e rodava com `seed=1` — um run com parâmetro diferente
+    do pedido, exatamente o defeito que a trava de fora existe para impedir.
+    """
+    r = cliente.post(
+        "/api/workflows/conciliacao/runs",
+        json={"fonte": {"tipo": "sintetica", "sede": 2}},
+    )
+
+    assert r.status_code == 422, r.text
+    assert "sede" in r.text
+
+
+def test_campo_desconhecido_dentro_da_fonte_de_ARQUIVO_e_recusado():
+    """O irmão do de cima. Aqui os quatro campos são obrigatórios, então um
+    typo já levava 422 por ausência; o que a trava fecha é o campo A MAIS —
+    um `max_linhas` que o cliente acha que está configurando um teto."""
+    r = cliente.post(
+        "/api/workflows/conciliacao/runs",
+        json={"fonte": {"tipo": "arquivo", "caminho": "x.csv", "kind": "k",
+                        "campo_id": "id", "max_linhas": 10}},
+    )
+
+    assert r.status_code == 422, r.text
+    assert "max_linhas" in r.text
+
+
+def test_uma_falha_da_fonte_SINTETICA_sobe_como_erro_de_SERVIDOR(monkeypatch):
+    """O `_ler` traduz falha de leitura em 422, e só para a fonte de ARQUIVO.
+
+    Uma fonte sintética não toca o disco: se ela levanta, é defeito do
+    servidor. Traduzir isso em 422 diria ao cliente que o pedido dele estava
+    errado sobre um bug que não é dele — um erro confiante, que é pior que o
+    500 honesto.
+    """
+    from orchestrator.synth.benchmark import SyntheticSource
+
+    def _explode(self):
+        raise ValueError("defeito do gerador, não do pedido")
+
+    monkeypatch.setattr(SyntheticSource, "load", _explode)
+
+    with pytest.raises(ValueError, match="defeito do gerador"):
+        cliente.post("/api/workflows/conciliacao/runs", json={})

@@ -39,6 +39,17 @@ def dataset_id(seed: int, n: int, taxa: float) -> str:
 # arquivos que este projeto roda (Windows no desenvolvimento, Linux no CI).
 _NOME_SEGURO = re.compile(r"[A-Za-z0-9._-]+")
 
+# A forma EXATA que `dataset_id` produz, e a única que o esquema `synth:` tem
+# permissão de perder ao virar chave de fila. É a compatibilidade com o que já
+# está escrito em `data/fila/**`, escrita como exceção estreita em vez de como
+# regra geral — ver `dataset_de_ref`.
+#
+# Duas expressões que precisam concordar sobre o mesmo formato são o join
+# frágil de sempre; `test_a_forma_legada_descreve_o_que_dataset_id_produz`
+# fecha o par.
+_FORMA_LEGADA = re.compile(r"s\d+-n\d+-t[\d.]+")
+_ESQUEMA_LEGADO = "synth"
+
 
 def dataset_de_ref(ref: str) -> str:
     """A identidade do conjunto, a partir do `ref` da fonte.
@@ -50,19 +61,28 @@ def dataset_de_ref(ref: str) -> str:
     versão dele sem o esquema.
 
     Precisa servir de NOME DE ARQUIVO — `caminho_da_fila` o interpola em
-    `{dataset}.jsonl`. Um ref `synth:` já é seguro e passa inteiro, e é por
-    isso que as filas escritas até hoje continuam sendo encontradas: o resto
-    depois do esquema é exatamente o que `dataset_id` produzia (ver
-    `SyntheticSource.ref`, que é esta mesma string com `synth:` na frente). Um
-    ref `file:` carrega `/`, `@` e o `:` do esquema — diretório acidental no
+    `{dataset}.jsonl`.
+
+    **O ESQUEMA faz parte da chave, com uma exceção nomeada.** Jogá-lo fora
+    sempre que o resto fosse seguro faria `synth:X` e `db:X` colidirem numa
+    fila só — dois conjuntos diferentes compartilhando a trilha de decisões
+    humanas. Ele só é descartado para `synth:` com um resto na forma exata que
+    `dataset_id` produz, porque é essa a chave das filas JÁ ESCRITAS em disco,
+    e perdê-la tornaria toda decisão humana existente invisível. Nenhuma outra
+    string pode alcançar esse ramo: `_FORMA_LEGADA` não casa com `db-x`, nem
+    com um caminho, nem com um hash.
+
+    Um ref `file:` carrega `/`, `@` e o `:` do esquema — diretório acidental no
     Linux, nome ilegal no Windows — e por isso vira hash.
 
     `dataset_id` FICA: a CLI e o grill chamam, e lá seed/n/taxa existem de
     verdade.
     """
     esquema, _, resto = ref.partition(":")
-    if _NOME_SEGURO.fullmatch(resto):
+    if esquema == _ESQUEMA_LEGADO and _FORMA_LEGADA.fullmatch(resto):
         return resto
+    if _NOME_SEGURO.fullmatch(esquema) and _NOME_SEGURO.fullmatch(resto):
+        return f"{esquema}-{resto}"
     # O esquema também passa pela peneira antes de virar prefixo. Num ref sem
     # `:` ele é o ref INTEIRO, que pode carregar barra — e um prefixo com barra
     # transformaria `{dataset}.jsonl` num diretório, que é a mesma falha

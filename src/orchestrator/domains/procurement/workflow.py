@@ -42,6 +42,14 @@ class Fornecedor:
     preferido: bool = False
 
 
+# O que os resolvers deste domínio exigem do `WorkItem.payload`, por `kind`.
+# Num lugar só, pelo mesmo motivo de `models.PAYLOADS` — ver
+# `kernel/resolver.py::ResolverDescription.payloads`. `CompradorHumano` NÃO
+# declara: ele só move ids, e exigir tipo onde não se lê campo nenhum
+# transformaria a declaração em cerimônia.
+PAYLOADS: dict[str, type] = {REQUISICAO: Requisicao, FORNECEDOR: Fornecedor}
+
+
 def pool(requisicoes: list[Requisicao], fornecedores: list[Fornecedor]) -> WorkSet:
     """Requisições primeiro, fornecedores depois. Mesma disciplina de ordem que
     `models.pool` — a ordem de `items` é a ordem em que tudo é percorrido."""
@@ -63,7 +71,9 @@ class FornecedorPreferido:
     cost_class: CostClass = field(default=CostClass.REGRA, init=False)
 
     def describe(self) -> ResolverDescription:
-        return ResolverDescription(self.name, self.cost_class, "fornecedor preferido")
+        return ResolverDescription(
+            self.name, self.cost_class, "fornecedor preferido", payloads=PAYLOADS
+        )
 
     def resolve(self, work: WorkSet) -> ResolverOutput:
         fornecedores = [i for i in work.of_kind(FORNECEDOR) if i.payload.preferido]
@@ -100,7 +110,9 @@ class ComprasAnteriores:
     cost_class: CostClass = field(default=CostClass.REGRA, init=False)
 
     def describe(self) -> ResolverDescription:
-        return ResolverDescription(self.name, self.cost_class, "compras anteriores")
+        return ResolverDescription(
+            self.name, self.cost_class, "compras anteriores", payloads=PAYLOADS
+        )
 
     def resolve(self, work: WorkSet) -> ResolverOutput:
         fornecedores = list(work.of_kind(FORNECEDOR))
@@ -139,7 +151,9 @@ class BuscadorDeFornecedor:
     cost_class: CostClass = field(default=CostClass.AGENTE, init=False)
 
     def describe(self) -> ResolverDescription:
-        return ResolverDescription(self.name, self.cost_class, "busca fornecedor novo")
+        return ResolverDescription(
+            self.name, self.cost_class, "busca fornecedor novo", payloads=PAYLOADS
+        )
 
     def resolve(self, work: WorkSet) -> ResolverOutput:
         return ResolverOutput(

@@ -6,7 +6,7 @@ from orchestrator.kernel.cost import CostClass
 from orchestrator.kernel.resolution import Resolution
 from orchestrator.kernel.resolver import ResolverDescription, ResolverOutput
 from orchestrator.kernel.work import WorkSet
-from orchestrator.models import LedgerEntry, banco, conciliacao, contabil
+from orchestrator.models import PAYLOADS, LedgerEntry, banco, conciliacao, contabil
 
 
 class ExactMatcher:
@@ -18,6 +18,7 @@ class ExactMatcher:
             name=self.name,
             cost_class=self.cost_class,
             summary="documento, valor e data coincidem exatamente",
+            payloads=PAYLOADS,
         )
 
     def resolve(self, work: WorkSet) -> ResolverOutput:
