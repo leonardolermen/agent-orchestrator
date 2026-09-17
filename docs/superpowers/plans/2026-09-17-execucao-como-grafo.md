@@ -374,7 +374,7 @@ Esperado: PASS.
 ./.venv/Scripts/python.exe -m pytest -q
 ```
 
-Esperado: 852 passed. Nenhum dos 844 tocado.
+Esperado: os 844 originais passam, mais os testes novos deste arquivo. Nenhum dos 844 tocado.
 
 - [ ] **Step 8: Commit**
 
@@ -403,9 +403,12 @@ Ramificação sem `if` no kernel, e a guarda que impede `produz` de virar docume
 
 - [ ] **Step 1: Escrever os testes que falham**
 
-Acrescentar a `tests/runtime/test_producao.py`:
+Acrescentar a `tests/runtime/test_producao.py`. **O `import pytest` vai no TOPO
+do arquivo, junto dos outros imports** — no meio do módulo ele é `E402` e o
+ruff quebra o commit.
 
 ```python
+# (topo do arquivo, junto dos imports existentes)
 import pytest
 
 
@@ -662,7 +665,7 @@ Esperado: PASS.
 ./.venv/Scripts/python.exe -m pytest -q
 ```
 
-Esperado: 857 passed, nenhum dos 844 tocado.
+Esperado: os 844 originais passam mais os testes novos deste arquivo, nenhum dos 844 tocado.
 
 - [ ] **Step 7: Commit**
 
@@ -680,6 +683,7 @@ A guarda entra ANTES da peça que ela guarda. É por isso que esta tarefa vem an
 **Files:**
 - Modify: `src/orchestrator/kernel/definition.py`
 - Test: `tests/workflow/test_definition.py` (acrescentar)
+- Modify: `tests/runtime/test_producao.py` — **obrigatório.** Ligar a guarda quebra as definições criadas nas Tasks 2 e 3, que produzem kinds órfãos (`b`, `c`, `z`). Acrescente `entrega=frozenset({...})` a cada uma. **Isso não é conserto de teste: é a guarda pegando o primeiro caso real**, e ver o próprio arquivo precisar da declaração é a evidência de que ela faz efeito.
 
 **Interfaces:**
 - Consumes: `Stage.consome`/`produz` da Task 3
@@ -875,7 +879,7 @@ Esperado: PASS.
 ./.venv/Scripts/python.exe -m pytest -q
 ```
 
-Esperado: 861 passed. **Atenção:** `version` mudou de forma, então qualquer teste que fixe um hash literal vai falhar. Se isso acontecer, o teste estava certo e o hash é derivado — atualize o literal e registre no commit que a versão mudou de propósito. Se um teste dos 844 falhar por OUTRO motivo, o default está errado.
+Esperado: os 844 originais passam mais os testes novos deste arquivo. **Atenção:** `version` mudou de forma, então qualquer teste que fixe um hash literal vai falhar. Se isso acontecer, o teste estava certo e o hash é derivado — atualize o literal e registre no commit que a versão mudou de propósito. Se um teste dos 844 falhar por OUTRO motivo, o default está errado.
 
 - [ ] **Step 6: Commit**
 
@@ -1065,9 +1069,19 @@ Em `src/orchestrator/runtime/engine.py`, envolver o `for stage in definicao.stag
         if len(todos) == antes_resolvidos and work.ids() == antes_itens:
             break
     else:
-        # `for/else`: o laço esgotou `max_rondas` sem um `break`, ou seja, a
-        # última ronda ainda estava fazendo coisa. Não convergiu.
-        estado_por_teto = True
+        # `for/else`: o laço esgotou `max_rondas` sem um `break` — a última
+        # ronda ainda estava fazendo coisa, logo não convergiu.
+        #
+        # `max_rondas == 1` NÃO conta como teto batido, e isso não é
+        # conveniência: uma passada só não PROMETE convergência, ela promete
+        # uma passada e a entrega. Declarar mais de uma ronda é o que cria a
+        # expectativa de ponto fixo — e é só aí que não alcançá-lo é notícia.
+        #
+        # Sem esta condição, todo workflow de hoje (todos têm max_rondas=1 e
+        # todos fazem trabalho) reportaria LIMITE_DE_RONDAS em vez de
+        # CONCLUIDO, e os 844 testes cairiam juntos. A §5 do spec é explícita:
+        # "1 = a semântica de hoje, EXATA".
+        estado_por_teto = definicao.max_rondas > 1
 ```
 
 Inicializar `estado_por_teto = False` antes do laço, e trocar o cálculo de `estado`:
@@ -1106,7 +1120,7 @@ Esperado: PASS.
 ./.venv/Scripts/python.exe -m pytest -q
 ```
 
-Esperado: 864 passed, nenhum dos 844 tocado (`max_rondas=1` faz o laço externo rodar uma vez, e a segunda iteração nem começa).
+Esperado: os 844 originais passam mais os testes novos deste arquivo, nenhum dos 844 tocado (`max_rondas=1` faz o laço externo rodar uma vez, e a segunda iteração nem começa).
 
 - [ ] **Step 7: Commit**
 
@@ -1330,7 +1344,7 @@ Esperado: PASS, sem nenhuma edição nesses testes. Eles exercitam orçamento, r
 ./.venv/Scripts/python.exe -m pytest -q && ./.venv/Scripts/python.exe -m ruff check src tests
 ```
 
-Esperado: 867 passed, ruff limpo.
+Esperado: os 844 originais passam, mais os testes novos deste arquivo. Ruff limpo.
 
 - [ ] **Step 7: Commit**
 
@@ -1609,7 +1623,7 @@ Esperado: PASS. `agent` pode importar `kernel` e `runtime`; `tarefa.py` não imp
 ./.venv/Scripts/python.exe -m pytest -q && ./.venv/Scripts/python.exe -m ruff check src tests
 ```
 
-Esperado: 872 passed, ruff limpo.
+Esperado: os 844 originais passam, mais os testes novos deste arquivo. Ruff limpo.
 
 - [ ] **Step 7: Commit**
 
@@ -1881,7 +1895,7 @@ Se não achou nada, escrever isso também: um domínio que não encontra atrito 
 ./.venv/Scripts/python.exe -m pytest -q && ./.venv/Scripts/python.exe -m ruff check src tests
 ```
 
-Esperado: 875 passed, ruff limpo.
+Esperado: os 844 originais passam, mais os testes novos deste arquivo. Ruff limpo.
 
 - [ ] **Step 7: Commit**
 
