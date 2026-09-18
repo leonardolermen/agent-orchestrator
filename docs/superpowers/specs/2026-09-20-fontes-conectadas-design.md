@@ -49,6 +49,8 @@ class PostgresSource:
 
 **`ref`:** `pg:<dsn_env>/<sha256(query)[:12]>@<sha256(linhas canônicas)>`. O *nome* da variável identifica a conexão sem revelar nada; o hash da query diz qual pergunta; o hash das linhas (JSON canônico, chaves ordenadas, `default=str`) diz qual resposta — é o que faz duas execuções sobre os mesmos dados casarem as decisões humanas, e uma linha mudada mudar o `ref`. O DSN nunca entra.
 
+> **SUPERADO na revisão final (achados 9 e 10, e a rodada 2).** Duas metades desta linha envelheceram e a implementação hoje é outra. **A query que entra no hash é a GUARDADA**, não o texto cru: hashear o cru fazia um `;` solto ou um comentário `--` mudarem o `ref` sem mudar a instrução nem as linhas. E **`default=str` saiu**: era ele o defeito — colapsava valores diferentes no mesmo digest (`Decimal("1")` e a string `"1"`, uma `date` e seu ISO), e dois pools diferentes passavam a dividir um `ref`. No lugar dele há uma forma canônica recursiva que marca o tipo de TODO valor, inclusive dentro de `list`/`dict`, para que a propriedade valha por construção e não por probabilidade — a primeira tentativa, uma marca prefixada com NUL, era forjável por uma coluna do tipo `json` (que guarda texto verbatim e aceita o escape de NUL). Quem for escrever a próxima `Source` copia `_canonico`, não esta linha.
+
 ### 3.2 `HttpSource`
 
 ```python
@@ -65,9 +67,11 @@ class HttpSource:
 
 `load()` faz **um** `GET` com `Authorization: Bearer <os.environ[token_env]>` quando `token_env` está dado. O corpo tem que ser JSON; a lista é o corpo inteiro ou o que `caminho` aponta (`a.b.c`, só chaves de objeto, sem índices); cada objeto vira um item como acima. **Uma página só nesta fatia** — paginação e cursor ficam em §9, com o porquê.
 
-**`ref`:** ~~`http:<url>@<etag>` quando o servidor manda `ETag`; senão `http:<url>@<sha256(corpo)>`. É o que o spec anterior desenhou.~~ A URL entra inteira (é identidade), o cabeçalho de autorização nunca.
+**`ref`:** ~~`http:<url>@<etag>` quando o servidor manda `ETag`; senão `http:<url>@<sha256(corpo)>`. É o que o spec anterior desenhou.~~ ~~A URL entra inteira (é identidade)~~, o cabeçalho de autorização nunca.
 
-> **SUPERADO na revisão final (achado 4), depois de a fatia estar escrita.** O que está riscado acima é o que este spec pediu e o que a implementação original fez. A regra que vale é: **`ref` é `http:<url>@<sha256(corpo)>`, SEMPRE — o ETag não entra.**
+> **SUPERADO na revisão final (achado 4), depois de a fatia estar escrita.** O que está riscado acima é o que este spec pediu e o que a implementação original fez. A regra que vale é: **`ref` é `http:<url pública>@<sha256(corpo)>`, SEMPRE — o ETag não entra.**
+>
+> **Segunda correção, na mesma revisão final (NOVO-1 da re-revisão):** a url NÃO entra inteira. Um token escrito na query (`?api_key=…`) chegava ao `ref`, à resposta, ao `data/runs/*.jsonl` e ao log — a mesma classe do userinfo, que a rodada anterior tinha fechado. Recusar query string não serve (`?since=2026-01-01` é legítimo), então a query é **redigida**: o que entra é a url sem query mais o digest dela (`_url_publica`), que preserva a distinguibilidade sem carregar o segredo. Duas urls que diferem só na query continuam com `ref` diferentes.
 >
 > O motivo: o ETag é escolhido pelo servidor do parceiro e não tem relação garantida com os bytes. Um ETag fraco (`W/"v1"`) significa, por definição da própria especificação de HTTP, "equivalente, não idêntico" — então dois pools DIFERENTES podiam compartilhar um `ref`, e uma decisão humana tomada sobre o pool A seria casada com os itens do pool B. O inverso também: ETag derivado de inode ou variado por nó de CDN muda para bytes idênticos, e cada `ref` novo órfã a fila de revisão daquele conjunto. A garantia de content-addressing do protocolo `Source` é mais funda do que esta linha do spec, e o dono decidiu que é ela que vence. O ETag volta a ter uso no dia em que houver cache, como `If-None-Match`, que é para o que ele serve.
 >

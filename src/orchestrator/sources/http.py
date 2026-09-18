@@ -11,8 +11,18 @@ sempre credencial e é RECUSADO; a query (`?api_key=…`) às vezes é credencia
 log e nas mensagens é a url sem query mais o digest dela (`_url_publica`). A
 promessa desta fatia é sobre o que a plataforma faz, não sobre o que a pessoa
 consegue digitar: **um segredo escrito na url não chega ao `ref`, ao run
-persistido, à resposta nem ao log** — e o que sobra de fora está dito no
-docstring de `_url_publica` (um segredo em segmento de CAMINHO não é coberto).
+persistido, à resposta nem a nenhum log NOSSO** — e o que sobra de fora está
+dito no docstring de `_url_publica` (um segredo em segmento de CAMINHO não é
+coberto).
+
+**O log do `httpx` não é nosso, e ele imprime a url inteira.** Em nível INFO, o
+logger `httpx` escreve `HTTP Request: GET <url com query> "HTTP/1.1 200 OK"` a
+cada requisição. Sob o `uvicorn` documentado isto está desligado — a config de
+log dele mexe só em `uvicorn*`, e a raiz fica em WARNING —, mas um
+`basicConfig(level=INFO)` acrescentado para ver os logs da aplicação liga junto,
+e aí o `api_key` vai para o log do servidor, que é exatamente o que
+`_url_publica` existe para evitar. Quem ligar INFO na raiz precisa silenciar o
+logger `httpx` ou aceitar isso de olhos abertos.
 
 **O ETag NÃO entra no `ref`, e isto contraria a linha do spec que o mandava
 entrar.** O ETag é escolhido pelo servidor do parceiro e não tem relação

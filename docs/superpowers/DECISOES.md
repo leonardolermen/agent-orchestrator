@@ -3208,3 +3208,13 @@ loopback não é pego — dito em voz alta, allowlist é decisão do operador.
 
 **O que fica fora.** Paginação e cursor; outros bancos (a costura —
 `conectar` injetável, `ref` por hash — está pronta); "testar conexão"; CLI.
+
+**Um limite que vale dizer em voz alta.** O teto de linhas do Postgres limita os
+dicionários que a plataforma constrói, não o que trafega: o cursor padrão do
+`psycopg3` é client-side, então o `execute()` já trouxe o resultado inteiro para
+o libpq antes de qualquer contagem. Sobre uma tabela enorme, quem limita é o
+`statement_timeout`, não o teto. O conserto certo é cursor nomeado
+(server-side); ele não entrou nesta fatia porque `psycopg` não está no ambiente
+de teste e uma mudança não testada no caminho de conexão é troca pior que um
+limite conhecido e escrito. No HTTP não há esse buraco: o corpo é lido em
+pedaços com teto de bytes, e a leitura para no pedaço que estoura.
