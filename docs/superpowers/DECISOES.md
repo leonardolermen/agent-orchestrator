@@ -3171,6 +3171,28 @@ gravados. O nome não é segredo; o ambiente do servidor já é onde a
 `ANTHROPIC_API_KEY` mora. Um campo de senha na tela ensinaria a colar o
 valor; por isso nenhum existe (pinado no bundle).
 
+**Emenda da revisão final: não existe campo de senha, mas existe o campo
+`url`.** A frase acima estava certa sobre os campos que a tela oferece e errada
+sobre o que a pessoa consegue escrever: uma url carrega credencial de duas
+formas, e as duas chegavam ao `ref`. Correção, com tratamento diferente para
+cada uma porque elas são diferentes:
+
+- **userinfo** (`https://usuario:senha@api/x`, que httpx converte em
+  `Authorization: Basic …`) é RECUSADO. Não existe `user:senha@` inocente, e
+  recusar é o que ensina que `token_env` existe.
+- **query** (`?api_key=…`) é REDIGIDA, não recusada: `?since=2026-01-01` é comum
+  e legítimo, e recusar a query custaria caro. O que viaja — `ref`, log,
+  mensagem de erro — é a url sem query mais o digest dela, então duas urls
+  diferentes continuam com `ref` diferentes e o segredo não sai do processo. A
+  requisição ao parceiro leva a query inteira, que é o que a faz funcionar.
+
+A afirmação honesta é **"a plataforma não põe na `ref`/log um segredo escrito na
+url"**, e não "a url não pode carregar segredo". O que fica de fora, dito em voz
+alta: um segredo em segmento de CAMINHO (`/v1/<token>/itens`) não é coberto —
+não há como distingui-lo de um id, e apagar o caminho apagaria a identidade do
+recurso, que é a razão de a url entrar no `ref`. O campo `url` da tela ganhou
+dica dizendo para usar a variável do token.
+
 **Por que reduzir o erro do driver.** `OperationalError` do psycopg ecoa host
 e usuário. A classe diz ao cliente o que aconteceu; o texto inteiro diz ao
 operador — no log, que é dele.

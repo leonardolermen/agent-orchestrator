@@ -152,9 +152,13 @@ Anti-escopo vale tanto quanto escopo:
   ANTES de a fonte ser tocada, para que um campo ausente do pedido não custe
   uma conexão no banco do parceiro. Nenhum segredo passa pela tela, pelo pedido
   persistido, pelo `ref` ou pela resposta: o servidor lê o valor do ambiente na
-  hora e o erro do driver volta reduzido à classe. Uma url com `usuario:senha@`
-  é RECUSADA — ela funcionaria como autenticação, e a url inteira entra no
-  `ref`; quem tem Basic Auth usa `token_env`. O `ref` é o hash do CONTEÚDO nas
+  hora e o erro do driver volta reduzido à classe. **E um segredo escrito na url
+  à mão também não viaja** — a afirmação é sobre o que a plataforma faz, não
+  sobre o que dá para digitar: `usuario:senha@` é RECUSADO (não existe userinfo
+  inocente, e recusar ensina que `token_env` existe), e a query é REDIGIDA a um
+  digest no `ref`, no log e nas mensagens (`?since=…` é legítimo demais para ser
+  recusado, e `?api_key=…` não pode sair do processo). O que fica de fora: um
+  segredo em segmento de caminho, indistinguível de um id. O `ref` é o hash do CONTEÚDO nas
   duas fontes novas (linhas ordenadas no Postgres, corpo no HTTP — o ETag não
   entra), e os tetos valem para o `ref` também, não só para o `load()`: no
   máximo `max_linhas + 1` linhas saem do cursor, e o corpo HTTP para em 32 MiB.
