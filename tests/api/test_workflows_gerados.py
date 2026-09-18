@@ -18,6 +18,11 @@ from orchestrator.grill.receita import Receita, ResolverReceita, para_json
 def _isolado(tmp_path, monkeypatch):
     monkeypatch.setattr(app_mod, "_RAIZ_FILA", tmp_path)
     monkeypatch.setattr(app_mod, "_RAIZ_RECEITAS", tmp_path)
+    # Também a raiz de COMPOSIÇÕES: sem ela, `registry()` cai em
+    # `data/composicoes` do desenvolvedor, e a primeira composição salva pela
+    # tela deixava `test_receita_inconstruivel_nao_derruba_a_listagem` vermelho
+    # por um motivo que nada tem a ver com o que ele afirma.
+    monkeypatch.setattr(app_mod, "_RAIZ_COMPOSICOES", tmp_path / "composicoes")
     yield
 
 

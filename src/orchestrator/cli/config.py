@@ -37,6 +37,13 @@ class Config:
     model: str = "claude-opus-5"
     workflow_padrao: str | None = None
     raiz_receitas: Path | None = None
+    # Ao lado de `raiz_receitas`, e pelo mesmo motivo: composições entram no
+    # `registry()` como as receitas entram. Sem esta raiz, a CLI passava só a
+    # de receitas e lia `data/composicoes` relativo ao CWD — `orch workflows
+    # <composição>` dizia "workflow desconhecido" para um workflow que a API
+    # roda, que é exatamente a divergência contra a qual o docstring de
+    # `registry()` existe. `None` é a MESMA raiz real que a API usa.
+    raiz_composicoes: Path | None = None
     spans: bool = True
     bruto: dict[str, Any] = field(default_factory=dict)
 
@@ -109,6 +116,11 @@ def carregar(caminho: Path | None = None) -> Config:
         ),
         workflow_padrao=bruto.get("workflow"),
         raiz_receitas=_caminho(storage.get("receitas"), None) if storage.get("receitas") else None,
+        raiz_composicoes=(
+            _caminho(storage.get("composicoes"), None)
+            if storage.get("composicoes")
+            else None
+        ),
         spans=bool(obs.get("spans", True)),
         bruto=bruto,
     )

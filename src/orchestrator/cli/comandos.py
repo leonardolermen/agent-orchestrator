@@ -96,7 +96,10 @@ def workflows(args: Namespace) -> int:
     from orchestrator.workflows import descrever
 
     cfg = _config()
-    achados = dict(descrever(cfg.raiz_receitas))
+    # As DUAS raízes: o registro da API é embutido + receitas + composições, e
+    # uma CLI que lê só as receitas responde "workflow desconhecido" para um
+    # workflow que a API roda.
+    achados = dict(descrever(cfg.raiz_receitas, cfg.raiz_composicoes))
     if not args.workflow_id:
         print(f"{'id':<20} {'versão':<14} {'classes'}")
         for wid, definicao in achados.items():

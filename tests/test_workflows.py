@@ -32,6 +32,25 @@ from orchestrator.workflows import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _sem_composicoes_do_desenvolvedor(tmp_path, monkeypatch):
+    """Nenhum teste daqui pode ler `data/composicoes` do desenvolvedor.
+
+    `registry()` e `descrever()` caem em `composicao._RAIZ_PADRAO` quando a raiz
+    de composições não é dita — o diretório REAL, não o `tmp_path`. A primeira
+    composição salva pela tela (o gesto que esta fatia existe para tornar
+    possível) deixava esta suíte vermelha por um motivo que nada tem a ver com
+    o que estes testes afirmam.
+
+    Mexer no default, e não nas chamadas, é de propósito: os testes que provam
+    o comportamento do default (`test_sem_raiz_de_composicoes_...`) continuam
+    chamando com um argumento só, que é a propriedade deles.
+    """
+    from orchestrator.authoring import composicao as composicao_mod
+
+    monkeypatch.setattr(composicao_mod, "_RAIZ_PADRAO", tmp_path / "padrao-vazia")
+
+
 def _receita(rid: str = "acme") -> Receita:
     return Receita(
         id=rid,

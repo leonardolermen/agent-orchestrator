@@ -94,8 +94,9 @@ TRANSFORMA o item num item de outro kind para o próximo consumir. Catalogá-lo
 hoje exigiria mentir sobre o que ele faz — por isso `redacao` roda
 (`tests/domains/test_redacao.py`) mas fica fora de `CATALOGO`, de propósito
 (a nota completa mora em `domains/registro.py`). Ensinar `AgenteDeclarado` a
-declarar `produz` fecha essa lacuna — é o mesmo X7/X8 da lacuna de `kind`, no
-anti-escopo abaixo.
+declarar `produz` fecha essa lacuna — é a metade X8 da lacuna de `kind` — a
+metade X7, `consome` derivado e conferido na borda, fechou; `produz`
+declarado por agente ainda não existe — no anti-escopo abaixo.
 
 ## Por que Brasil
 
@@ -126,39 +127,31 @@ Anti-escopo vale tanto quanto escopo:
   isso for verdade, a tese de custo não se aplica a ele: o que fecha é a regra
   genérica declarativa (igualdade, tolerância, agrupamento, tabela, padrão,
   limiar), e ela ainda não existe.
-- **Não garante mais que o `kind` de um agente bate com o que o degrau anterior
-  produz, para composição feita pelo canvas.** O domínio fazia essa checagem, e
-  ela saiu certo: com a tela sem seletor, toda composição chegava com o domínio
-  default e a checagem passou a recusar qualquer `kind` que não fosse
-  `lancamento` — guarda certa aplicada ao pedido errado, recusando cascata
-  válida. O lugar certo é o grafo: `Stage.consome`/`Stage.produz` valida a
-  fiação por degrau, e recusaria um `kind` que não conecta. Só que, para uma
-  composição montada por `construir_composicao`, essa checagem está INERTE —
-  a função devolve um único `Stage` com `consome`/`produz` nos defaults, o que
-  desliga a checagem de beco sem saída do grafo inteiro, e ela nunca popula
-  `consome`/`produz` a partir dos blocos, então não haveria o que comparar
-  mesmo se rodasse. Um `kind` digitado errado é aceito na composição e, em
-  execução, simplesmente não pega item nenhum — falha muda, sem erro. Fecha
-  com as duas pontas do X7/X8: `AgenteDeclarado` declarar o que `produz`, e
-  `construir_composicao` derivar `consome`/`produz` dos blocos a partir disso.
-  Até as duas existirem, quem escreve um agente na tela é quem garante o
-  `kind`.
-- **Não sabe EXECUTAR um workflow que não seja de conciliação — e ainda assim
-  devolve 200.** A paleta é o catálogo inteiro, então o chat e o canvas compõem
-  cascatas de compras (`preferido`, `anteriores`) ou de qualquer bloco novo que
-  entre. Mas o único caminho de execução que existe gera dados bancários:
-  `POST /api/workflows/{id}/runs` monta um `SyntheticSource` e chama
-  `reconcile(dataset.bank, dataset.ledger, ...)`, sempre. Uma cascata cujos
-  blocos trabalham outro `kind` roda contra um pool que ela não enxerga, e a
-  resposta é `200` com `deterministic_rate: 0.0` e lacuna de `100%` — medido,
-  não suposto. É o pior formato possível para essa falha, porque é exatamente
-  o que este projeto nomeia como o erro que ele existe para não cometer:
-  **"não achei nada" indistinguível de "não procurei"**. Um número que parece
-  medido e não é. O que fecha é uma fonte que produza os `kinds` que o workflow
-  consome — a `Source` além da sintética, §8 do spec da plataforma geral
-  (`arquivo`, `http`, `webhook`, `fila`, `agenda`). Até ela existir, o único
-  resultado de `/runs` que quer dizer alguma coisa é o de um workflow de
-  conciliação.
+- **Garante que cada bloco de uma cascata é alimentado pela fonte — na BORDA,
+  por resolver.** Todo resolver declara o que consome
+  (`ResolverDescription.consome`, `AgentSpec.consome`); os três construtores
+  derivam `Stage.consome` disso (`consome_de`); e `POST /runs` recusa com 422,
+  nomeando o bloco, qualquer resolver cujo `consome` não cruza os kinds do pool
+  carregado. Por resolver, e não pela união do degrau: a união deixaria passar
+  um agente cego dentro de um degrau vivo — que era o `investigador` do
+  catálogo, declarado sobre `lancamento`, kind que nenhuma fonte produz, até o
+  conserto. O que ainda NÃO existe: `produz` derivado (X8) — desnecessário
+  enquanto agentes declarados só emitem propostas — e composição com vários
+  stages. Uma composição continua sendo aceita ao salvar com qualquer `kind`:
+  ela não conhece a fonte; a recusa vem na execução, antes de gastar. E a
+  guarda confia no `produz` declarado: um resolver que declara
+  `produz={"banco"}` e não emite nada passa pela borda sem erro — a lacuna do
+  produtor, contida hoje só pelo `xfail(strict)`
+  `test_a_lacuna_do_produtor_nao_e_alcancavel_pelo_CATALOGO`.
+- **Executa qualquer workflow do `registry()` — embutido, receita ou composição
+  do canvas — sobre a fonte que o pedido nomeia.** `POST /api/workflows/{id}/runs`
+  recebe `fonte` (`sintetica` ou `arquivo` CSV/JSON sob `data/entradas/`) e um
+  `teto_microcents`, obrigatório quando a cascata tem agente. Uma fonte sem
+  gabarito devolve `contra_gabarito: null`, nunca uma taxa inventada; uma fonte
+  cujos kinds nenhum bloco consome é recusada com 422 antes de rodar; um pool
+  vazio também. O que ainda NÃO existe: fonte HTTP (§8 do spec da plataforma),
+  upload de arquivo, e teto agregado/auth/rate limit em `/runs` — o teto é por
+  requisição, por decisão do dono.
 
 ### A invariante mais cara, e o limite dela
 

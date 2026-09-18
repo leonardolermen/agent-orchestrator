@@ -226,7 +226,31 @@ async def conduzir(
             marca, carga = item
             if marca == "fim" and isinstance(carga, Proposta):
                 if gravar:
-                    gravar(carga.receita)
+                    try:
+                        gravar(carga.receita)
+                    except ValueError as erro:
+                        # Gravar pode RECUSAR — hoje por id já tomado no
+                        # `registry()` (a mesma recusa que `/api/receitas`
+                        # devolve como 409) ou por arquivo já existente. Um
+                        # WebSocket não carrega status HTTP, então a recusa
+                        # entra pelo desfecho que já existe: `recusa` é
+                        # exatamente "não dá, e eis o que faltaria", e a tela
+                        # já a mostra assim. Sem esta captura o `ValueError`
+                        # subia por `conduzir` e o parceiro via a conexão cair
+                        # depois de ter pago a conversa inteira.
+                        await ws.send_json(
+                            {
+                                "tipo": "recusa",
+                                "motivo": str(erro),
+                                "o_que_faltaria": (
+                                    "um id livre: recomece a entrevista com "
+                                    "outro id para este workflow"
+                                ),
+                                "custo_usd": _usd(carga.cost, modelo),
+                            }
+                        )
+                        await ws.close()
+                        return
                 await ws.send_json(
                     {
                         "tipo": "proposta",

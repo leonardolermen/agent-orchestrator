@@ -11,6 +11,17 @@ cliente = TestClient(app)
 
 
 @pytest.fixture(autouse=True)
+def _sem_composicoes_do_desenvolvedor(tmp_path, monkeypatch):
+    """Os dois `descrever()` sem raiz de composições (o de `produz` e o de
+    política) liam `data/composicoes` do desenvolvedor. Mexer no default os
+    mantém do jeito que estão escritos — a chamada pelada é a propriedade — sem
+    deixar que uma composição salva pela tela mude o que eles varrem."""
+    from orchestrator.authoring import composicao as composicao_mod
+
+    monkeypatch.setattr(composicao_mod, "_RAIZ_PADRAO", tmp_path / "padrao-vazia")
+
+
+@pytest.fixture(autouse=True)
 def _cache_limpo():
     """`executar()` delega para `_executar`, que é `lru_cache`d.
 

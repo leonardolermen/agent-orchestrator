@@ -40,10 +40,12 @@ execução, na camada de catálogo:**
      1–7) não teve nenhum atrito — a `Tarefa`, o `Stage.consome/produz` e a
      `entrega` bastaram sem alteração nenhuma. O atrito é uma camada acima:
      o catálogo declarativo ainda descreve só a metade JULGA do mundo, não a
-     metade TRANSFORMA. Ensinar `AgenteDeclarado` a declarar `produz` é o
-     X7/X8 que o plano de execução-como-grafo já reservava para depois deste
-     domínio existir — este achado é a confirmação de que a reserva estava
-     certa, não uma surpresa.
+     metade TRANSFORMA. Dos dois itens que o plano de execução-como-grafo
+     reservava para depois deste domínio existir, o X7 — `consome` declarado,
+     derivado por `consome_de` e recusado na borda de `/runs` — está FECHADO;
+     o X8 — `AgenteDeclarado` declarar o `kind` que PRODUZ — continua aberto,
+     e é dele que este atrito fala. Este achado é a confirmação de que a
+     reserva estava certa, não uma surpresa.
 """
 
 from orchestrator.domains.procurement.workflow import (
