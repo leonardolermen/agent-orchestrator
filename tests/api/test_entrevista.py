@@ -445,3 +445,22 @@ def test_a_ORDEM_INVERSA_continua_no_409_de_sempre(monkeypatch, tmp_path):
 
     assert r.status_code == 409
     assert "já existe um workflow com id 'acme3'" in r.json()["detail"]
+
+
+def test_o_extra_api_traz_uma_biblioteca_de_WEBSOCKET():
+    """A entrevista é um WebSocket, e o `TestClient` a serve em processo — sem
+    precisar de biblioteca de WebSocket nenhuma. Foi assim que o chat ficou
+    VERDE na suíte e MORTO num servidor de verdade: o uvicorn do extra `[api]`
+    recusava todo upgrade com "No supported WebSocket library detected".
+
+    Este teste pina a promessa do pacote, não o código da rota: se `fastapi`
+    importa (o extra está instalado), uma implementação de WebSocket tem que
+    importar junto. Sem ela, `pip install .[api]` entrega um chat que não abre.
+    """
+    import importlib
+
+    import fastapi  # noqa: F401 — o extra [api] está instalado
+
+    assert any(
+        importlib.util.find_spec(nome) is not None for nome in ("websockets", "wsproto")
+    ), "o extra [api] não traz websockets nem wsproto: o uvicorn recusa o upgrade"
