@@ -174,6 +174,52 @@ def test_a_ORDEM_do_POOL_continua_sendo_a_ordem_em_que_as_linhas_chegaram(monkey
     assert [i.id for i in fonte.load().items] == ["9", "1", "5"]
 
 
+def test_valores_de_TIPOS_diferentes_com_o_mesmo_TEXTO_nao_colapsam(monkeypatch):
+    """`default=str` colapsava conteúdo genuinamente diferente no mesmo digest.
+
+    Uma coluna `numeric` devolve `Decimal("1")`; uma `text`, a string `"1"`. Uma
+    `date` devolve `date(2026, 9, 20)`; uma `text`, `"2026-09-20"`. Com `str` no
+    meio, os quatro viravam dois textos e os dois pares compartilhavam o `ref` —
+    o mesmo dano do ETag fraco na fonte HTTP, do outro lado do espelho: dois
+    conjuntos distintos dividindo o `dataset` de `data/fila/**`, e uma decisão
+    tomada sobre um casada com os itens do outro.
+    """
+    from datetime import date
+    from decimal import Decimal
+
+    numerico, _ = _fonte(monkeypatch, [{"id": 1, "v": Decimal("1")}])
+    texto, _ = _fonte(monkeypatch, [{"id": 1, "v": "1"}])
+    data, _ = _fonte(monkeypatch, [{"id": 1, "v": date(2026, 9, 20)}])
+    data_em_texto, _ = _fonte(monkeypatch, [{"id": 1, "v": "2026-09-20"}])
+    assert len({numerico.ref, texto.ref, data.ref, data_em_texto.ref}) == 4
+
+
+def test_mas_o_MESMO_valor_nao_nativo_continua_dando_o_MESMO_ref(monkeypatch):
+    """A outra metade: distinguir tipos não pode virar um `ref` que muda sozinho
+    entre duas leituras iguais — seria trocar um órfão por outro."""
+    from decimal import Decimal
+
+    a, _ = _fonte(monkeypatch, [{"id": 1, "v": Decimal("1.50")}])
+    b, _ = _fonte(monkeypatch, [{"id": 1, "v": Decimal("1.50")}])
+    c, _ = _fonte(monkeypatch, [{"id": 1, "v": Decimal("1.5")}])
+    assert a.ref == b.ref
+    # E `Decimal("1.50")` != `Decimal("1.5")`: a escala É conteúdo numa coluna
+    # `numeric`, e o texto de cada um a preserva.
+    assert a.ref != c.ref
+
+
+def test_uma_coluna_jsonb_nao_consegue_FORJAR_a_marca_de_tipo(monkeypatch):
+    """A marca de tipo é uma chave prefixada por `\\x00`. Sem o prefixo, um
+    objeto `{"Decimal": "1"}` dentro de uma coluna `jsonb` seria indistinguível
+    de um `Decimal("1")` de verdade — conteúdo diferente, `ref` igual, que é o
+    defeito que este conserto existe para fechar."""
+    from decimal import Decimal
+
+    de_verdade, _ = _fonte(monkeypatch, [{"id": 1, "v": Decimal("1")}])
+    forjado, _ = _fonte(monkeypatch, [{"id": 1, "v": {"Decimal": "1"}}])
+    assert de_verdade.ref != forjado.ref
+
+
 def test_o_ref_muda_quando_a_QUERY_muda(monkeypatch):
     a, _ = _fonte(monkeypatch, [{"id": 1}], query="SELECT id FROM a")
     b, _ = _fonte(monkeypatch, [{"id": 1}], query="SELECT id FROM b")

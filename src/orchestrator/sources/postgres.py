@@ -69,6 +69,33 @@ def _guarda_select(query: str) -> str:
     return sem_final
 
 
+def _com_tipo(valor: Any) -> dict[str, str]:
+    """A forma canônica de um valor que o JSON não conhece — COM o tipo junto.
+
+    `default=str` (o que estava aqui) colapsava conteúdos diferentes no mesmo
+    digest: `Decimal("1")` e a string `"1"` viravam ambos `"1"`, e
+    `date(2026, 9, 20)` e `"2026-09-20"` viravam ambos `"2026-09-20"`. Duas
+    tabelas genuinamente diferentes — `numeric` numa e `text` na outra — davam o
+    MESMO `ref`, que é a falha do achado 4 do outro lado do espelho: dois pools
+    distintos compartilhando o `dataset` de `data/fila/**`, e uma decisão humana
+    tomada sobre um deles casada com os itens do outro.
+
+    O tipo vai numa CHAVE prefixada por `\\x00`, e o `\\x00` é o que torna a
+    marca inforjável: nenhum nome de coluna do Postgres pode conter um byte
+    nulo (o protocolo usa strings C) e o `jsonb` recusa `\\u0000` dentro de
+    strings, então nenhum dado que venha do banco produz esta forma por
+    acidente. Sem o prefixo, uma coluna `jsonb` com um objeto `{"Decimal": "1"}`
+    dentro colidiria com a marca de um `Decimal("1")`.
+
+    O que ele NÃO resolve, dito em voz alta: um tipo cujo texto não é estável
+    (um objeto sem `__str__` próprio, cujo texto embute o endereço de memória)
+    produz um `ref` instável. Nenhum tipo que `psycopg` devolve é assim, e a
+    alternativa — recusar o que não sabemos serializar — trocaria um `ref`
+    errado por uma fonte que não roda.
+    """
+    return {f"\x00{type(valor).__name__}": str(valor)}
+
+
 def _conectar_padrao(dsn: str) -> Any:
     """A conexão de verdade, COM relógio nos dois lados.
 
@@ -175,8 +202,12 @@ class PostgresSource:
         # Serializa cada linha, ordena os TEXTOS, hasheia isso: o digest deixa
         # de depender da ordem de chegada. A ordem do POOL não é tocada —
         # `load()` continua entregando as linhas como vieram.
+        #
+        # `default=_com_tipo` e não `default=str`: ver o docstring de lá. Em uma
+        # frase, `Decimal("1")` e `"1"` são conteúdos diferentes e precisam de
+        # `ref` diferentes.
         serializadas = sorted(
-            json.dumps(linha, sort_keys=True, default=str, ensure_ascii=False)
+            json.dumps(linha, sort_keys=True, default=_com_tipo, ensure_ascii=False)
             for linha in linhas
         )
         d = hashlib.sha256("\n".join(serializadas).encode("utf-8")).hexdigest()
