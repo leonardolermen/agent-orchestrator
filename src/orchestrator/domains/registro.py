@@ -281,8 +281,21 @@ CATALOGO = Catalogo(
         AgenteDeclarado(
             name="investigador",
             system=_PROMPT_INVESTIGADOR,
-            kind="lancamento",
-            prompt="Divergência {id}: {descricao}",
+            # `banco`, não `lancamento`: `lancamento` era o kind do domínio
+            # antigo, renomeado para banco/contabil sem este bloco acompanhar.
+            # Nenhuma fonte o produz, e o agente rodava sem ver item nenhum.
+            # Um kind só, como todo `AgenteDeclarado`: ele parte de UM
+            # lançamento bancário por tarefa e usa as ferramentas para ver o
+            # lado contábil.
+            kind="banco",
+            # Os campos que `_campos` (asdict) expõe de um `BankEntry`. O
+            # prompt antigo citava `{descricao}`, de uma `Divergence` que a
+            # fonte não entrega, e levantaria KeyError no primeiro item.
+            prompt=(
+                "Lançamento bancário {id} de {date}: {description}. "
+                "Valor {amount}, contraparte {counterparty}, documento {document}. "
+                "Investigue a divergência com o lado contábil."
+            ),
             tipos=(
                 "DEFASAGEM_TEMPORAL",
                 "DEVOLUCAO_FUNDOS",

@@ -373,9 +373,7 @@ CONSOME_ESPERADO: dict[str, frozenset[str]] = {
     "revisor": frozenset({"banco", "contabil"}),
     "preferido": frozenset({"requisicao", "fornecedor"}),
     "anteriores": frozenset({"requisicao", "fornecedor"}),
-    # `lancamento` é o que ele DECLARA hoje — e nenhuma fonte produz. A Task 3
-    # deste plano corrige o bloco e troca esta linha para {"banco"}.
-    "investigador": frozenset({"lancamento"}),
+    "investigador": frozenset({"banco"}),
     "triador": frozenset({"issue"}),
     "buscador": frozenset({"requisicao"}),
 }
