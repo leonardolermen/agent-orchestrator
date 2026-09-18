@@ -8,8 +8,14 @@ como fora no spec.
 **O servidor passa a fazer requisições para URLs que vêm da tela.** Recusar
 loopback e link-local antes de qualquer requisição é o mínimo contra usar a
 plataforma para alcançar o que só o servidor alcança. A guarda olha o HOST
-literal: um nome DNS que resolva para loopback não é pego — isso exige
-resolver o nome, e está dito em voz alta em vez de fingido.
+literal e recusa: `localhost` (e `*.localhost`), loopback/link-local/
+unspecified em notação canônica (`127.0.0.1`, `169.254.x.x`, `0.0.0.0`,
+`::`, `::ffff:127.0.0.1`), e host numérico em forma NÃO canônica que todo
+stack HTTP resolve para uma máquina (`127.1`, `2130706433`, `0x7f000001`,
+`0177.0.0.1`). O que fica de fora, dito em voz alta em vez de fingido: um
+nome DNS que resolva para loopback (`meu-loopback.example.com`) não é
+pego — isso exige resolver o nome — nem faixas privadas (`10.x`, `192.168.x`)
+que não são loopback/link-local.
 
 O token é um NOME de variável; o cabeçalho de autorização não entra em `ref`,
 mensagem de erro nem log. O transporte é INJETÁVEL (`httpx.MockTransport`
@@ -20,6 +26,7 @@ import hashlib
 import ipaddress
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlsplit
@@ -31,19 +38,33 @@ MAX_LINHAS_PADRAO = 5000
 _log = logging.getLogger("orchestrator.sources")
 
 
+_HOST_NUMERICO = re.compile(
+    r"^(0x[0-9a-f]+|[0-9]+)(\.(0x[0-9a-f]+|[0-9]+))*$", re.IGNORECASE
+)
+
+
+def _ip_perigoso(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    if ip.is_loopback or ip.is_link_local or ip.is_unspecified:
+        return True
+    mapeado = getattr(ip, "ipv4_mapped", None)
+    return mapeado is not None and _ip_perigoso(mapeado)
+
+
 def _guarda_url(url: str) -> None:
     partes = urlsplit(url)
     if partes.scheme not in ("http", "https") or not partes.hostname:
         raise FonteFalhou(f"a url precisa ser http(s) com host: {url!r}")
-    host = partes.hostname
-    if host == "localhost":
+    host = partes.hostname.lower().rstrip(".")
+    if host == "localhost" or host.endswith(".localhost"):
         raise FonteFalhou("url de loopback recusada: o servidor não faz requisição a si mesmo")
     try:
         ip = ipaddress.ip_address(host)
     except ValueError:
+        if _HOST_NUMERICO.match(host):
+            raise FonteFalhou(f"host numérico em forma não canônica recusado: {host}") from None
         return  # nome DNS: aceito (ver o cabeçalho sobre o limite)
-    if ip.is_loopback or ip.is_link_local:
-        raise FonteFalhou(f"url de loopback/link-local recusada: {host}")
+    if _ip_perigoso(ip):
+        raise FonteFalhou(f"url de loopback/link-local/unspecified recusada: {host}")
 
 
 def _transporte_padrao() -> Any:

@@ -70,6 +70,10 @@ def test_variavel_ausente_e_erro_que_cita_o_NOME_e_nao_faz_requisicao(monkeypatc
     [
         "http://localhost/x", "http://127.0.0.1/x", "http://127.9.9.9/x",
         "http://[::1]/x", "http://169.254.1.1/x", "ftp://api.exemplo/x", "api.exemplo/x",
+        "http://127.1/x", "http://2130706433/x", "http://0x7f000001/x",
+        "http://0177.0.0.1/x", "http://0.0.0.0/x", "http://[::]/x",
+        "http://localhost./x", "http://LOCALHOST./x", "http://foo.localhost/x",
+        "http://[::ffff:127.0.0.1]/x",
     ],
 )
 def test_loopback_link_local_e_esquema_estranho_sao_recusados_SEM_requisicao(monkeypatch, url):
@@ -79,6 +83,15 @@ def test_loopback_link_local_e_esquema_estranho_sao_recusados_SEM_requisicao(mon
     with pytest.raises(FonteFalhou):
         fonte.load()
     assert pedidos == []
+
+
+@pytest.mark.parametrize("url", ["https://abc.de/x", "https://api.exemplo/x"])
+def test_nomes_dns_parecidos_com_numero_continuam_aceitos(monkeypatch, url):
+    """Guarda contra over-refusal: um nome DNS todo em letras hex (`abc.de`)
+    não é host numérico, mesmo parecendo um com o prefixo errado."""
+    fonte, pedidos = _fonte(monkeypatch, _lista([{"id": 1}]), url=url)
+    fonte.load()
+    assert len(pedidos) == 1
 
 
 def test_status_nao_2xx_e_erro_com_status_e_url_e_NUNCA_o_token(monkeypatch):
