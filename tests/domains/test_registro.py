@@ -334,6 +334,7 @@ def _exigencias_esperadas() -> dict[str, dict[str, type]]:
         "tolerancia": _SEM_EXIGENCIA,
         # Os tres destinos leem UM campo, pelo nome que a pessoa escolheu. Mesma
         # razao: quem le campo por nome roda sobre qualquer fonte.
+        "agrupamento": _SEM_EXIGENCIA,
         "filtro": _SEM_EXIGENCIA,
         "validacao": _SEM_EXIGENCIA,
         "condicao": _SEM_EXIGENCIA,
@@ -369,6 +370,12 @@ _EXEMPLOS: dict[str, dict] = {
     },
     # Os tres destinos compartilham o predicado, entao compartilham a forma da
     # configuracao. So `condicao` pede mais: o kind do ramo.
+    "agrupamento": {
+        "esquerda": "banco",
+        "direita": "contabil",
+        "chave": ("supplier",),
+        "soma": "amount=net_amount",
+    },
     "filtro": {"kind": "banco", "campo": "amount", "teste": "menor", "valor": "0"},
     "validacao": {"kind": "banco", "campo": "amount", "teste": "maior", "valor": "0"},
     "condicao": {
@@ -444,6 +451,7 @@ CONSOME_ESPERADO: dict[str, frozenset[str]] = {
     "igualdade": frozenset({"banco", "contabil"}),
     "tolerancia": frozenset({"banco", "contabil"}),
     # Uma ponta so: consomem o kind que `_EXEMPLOS` configurou.
+    "agrupamento": frozenset({"banco", "contabil"}),
     "filtro": frozenset({"banco"}),
     "validacao": frozenset({"banco"}),
     "condicao": frozenset({"banco"}),

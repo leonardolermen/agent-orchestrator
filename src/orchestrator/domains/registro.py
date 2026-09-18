@@ -324,6 +324,21 @@ def _condicao(p: dict[str, ValorDeParametro]) -> Any:
     )
 
 
+def _agrupamento(p: dict[str, ValorDeParametro]) -> Any:
+    from orchestrator.regras import Agrupamento
+
+    _exige("agrupamento", p, ("esquerda", "direita", "chave", "soma"))
+    return Agrupamento(
+        esquerda=str(p.get("esquerda", "")),
+        direita=str(p.get("direita", "")),
+        chave=_lista(p.get("chave")),
+        soma=str(p.get("soma", "")),
+        max_itens=int(p.get("max_itens", 4) or 4),
+        max_diferenca=int(p.get("max_diferenca", 0) or 0),
+        max_candidatos=int(p.get("max_candidatos", 24) or 24),
+    )
+
+
 def _tolerancia(p: dict[str, ValorDeParametro]) -> Any:
     from orchestrator.regras import Tolerancia
 
@@ -395,6 +410,27 @@ CATALOGO = Catalogo(
                 ParametroDeRegra("max_dias", 0, "folga máxima entre as datas, em dias corridos"),
             ),
             construir=lambda p: _tolerancia(p),
+        ),
+        RegraDisponivel(
+            nome="agrupamento",
+            cost_class=CostClass.REGRA,
+            resumo="um item de um lado cobrindo N do outro, pela soma",
+            parametros=(
+                ParametroDeRegra("esquerda", "", "o kind do lado que tem UM", obrigatorio=True),
+                ParametroDeRegra("direita", "", "o kind do lado que tem N", obrigatorio=True),
+                ParametroDeRegra(
+                    "chave", (), "campos que agrupam os candidatos", obrigatorio=True
+                ),
+                ParametroDeRegra(
+                    "soma", "", "o campo que precisa somar (ex.: valor=total)", obrigatorio=True
+                ),
+                ParametroDeRegra("max_itens", 4, "quantos itens no máximo por grupo"),
+                ParametroDeRegra("max_diferenca", 0, "folga aceita na soma"),
+                ParametroDeRegra(
+                    "max_candidatos", 24, "teto de combinações testadas; a busca é combinatória"
+                ),
+            ),
+            construir=lambda p: _agrupamento(p),
         ),
         # Os TRÊS DESTINOS de um item que passa num teste. O que muda entre eles
         # não é a pergunta — é o que acontece com o item, e são três verbos

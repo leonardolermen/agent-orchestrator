@@ -19,6 +19,7 @@ conhecê-la para funcionar — quem a usa é quem COMPÕE, e a conciliação a u
 apenas como qualquer outro domínio poderia.
 """
 
+from orchestrator.regras.agrupamento import Agrupamento
 from orchestrator.regras.campos import CampoAusente, valor_do_campo
 from orchestrator.regras.condicao import Condicao
 from orchestrator.regras.filtro import Filtro
@@ -29,6 +30,7 @@ from orchestrator.regras.tolerancia import Tolerancia
 from orchestrator.regras.validacao import Validacao
 
 __all__ = [
+    "Agrupamento",
     "CampoAusente",
     "Condicao",
     "Filtro",
