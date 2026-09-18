@@ -309,7 +309,7 @@ export default function App() {
     <div className="flex h-screen flex-col bg-papel font-sans text-tinta dark:bg-noite-fundo dark:text-noite-tinta">
       <header className="flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-borda bg-white px-5 py-3 dark:border-noite-borda dark:bg-noite-painel">
         <div>
-          <h1 className="text-[15px] font-semibold leading-tight">Compor cascata</h1>
+          <h1 className="text-[15px] font-semibold leading-tight">Compor workflow</h1>
           <p className="max-w-[36rem] text-[11.5px] leading-snug text-neutral-500 dark:text-noite-fraca">
             Arraste os nós onde quiser. As <strong className="font-semibold">setas</strong> não são
             suas: elas seguem a classe de custo, do mais barato ao mais caro.
@@ -331,7 +331,7 @@ export default function App() {
             concordarem sobre qual dataset estavam olhando — e o P4.14 do
             DECISOES registra que essa promessa já quebrou. */}
         <a href="/" className="text-[12px] text-humano hover:underline dark:text-noite-humano">
-          ← cascata em execução
+          ← workflow em execução
         </a>
         <a
           href="/?vista=fila"
@@ -387,7 +387,7 @@ export default function App() {
               <p className="mt-1 text-[12px] text-neutral-300 dark:text-noite-fraca/70">
                 {catalogo && catalogo.regras.length === 0
                   ? "O catálogo não tem regra nenhuma: tudo passa pelo modelo."
-                  : "Uma cascata sem bloco não resolve nada."}
+                  : "Um workflow sem bloco não resolve nada."}
               </p>
             </div>
           )}

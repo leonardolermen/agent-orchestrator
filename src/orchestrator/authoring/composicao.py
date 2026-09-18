@@ -95,7 +95,7 @@ class Composicao:
 
     def __post_init__(self) -> None:
         if not self.blocos:
-            raise ValueError("a cascata precisa de pelo menos um bloco")
+            raise ValueError("o workflow precisa de pelo menos um bloco")
         if self.gerado_em.tzinfo is None:
             raise ValueError("`gerado_em` precisa de fuso (use UTC)")
         # Versão derivada do CONTEÚDO, como `WorkflowDefinition.version` e
@@ -195,7 +195,7 @@ def construir_composicao(
         nome = bloco.nome if isinstance(bloco, BlocoRegra) else bloco.declaracao.name
         if nome in vistos:
             raise ValueError(
-                f"bloco repetido na cascata: {nome!r}. o segundo rodaria sobre "
+                f"bloco repetido no workflow: {nome!r}. o segundo rodaria sobre "
                 f"o pool que o primeiro já esvaziou e resolveria zero"
             )
         vistos.add(nome)

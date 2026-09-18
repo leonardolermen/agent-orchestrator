@@ -338,7 +338,7 @@ function BotaoDePaleta({
       // sobre o pool que o primeiro esvaziou.
       title={
         usado
-          ? "já está na cascata; o segundo rodaria sobre o pool que o primeiro esvaziou"
+          ? "já está no workflow; o segundo rodaria sobre o pool que o primeiro esvaziou"
           : `acrescentar ${nome}`
       }
       className={[
@@ -586,7 +586,7 @@ function Remover({ onClick }: { onClick: () => void }) {
       onClick={onClick}
       className="text-[11.5px] text-red-700 underline hover:text-red-800 dark:text-red-400"
     >
-      remover da cascata
+      remover do workflow
     </button>
   );
 }

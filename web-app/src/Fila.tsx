@@ -147,7 +147,7 @@ export function Fila() {
           href={`/?${paraOCanvas}`}
           className="text-[12px] text-humano hover:underline dark:text-noite-humano"
         >
-          ← cascata
+          ← workflow
         </a>
       </header>
 

@@ -134,7 +134,7 @@ def construir(
             )
         if item.nome in vistos:
             raise ValueError(
-                f"resolver repetido na cascata: {item.nome!r}. o segundo rodaria "
+                f"resolver repetido no workflow: {item.nome!r}. o segundo rodaria "
                 f"sobre o pool que o primeiro já esvaziou e casaria zero"
             )
         vistos.add(item.nome)

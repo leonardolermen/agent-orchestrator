@@ -115,7 +115,7 @@ export function Chat({ aoPropor, temChave }: Props) {
       <div className="border-b border-borda px-4 py-2.5 dark:border-noite-borda">
         <h2 className="text-[12.5px] font-semibold">Descreva e eu componho</h2>
         <p className="mt-0.5 text-[11px] leading-snug text-neutral-500 dark:text-noite-fraca">
-          O entrevistador pergunta o que faltar e propõe a cascata.{" "}
+          O entrevistador pergunta o que faltar e propõe o workflow.{" "}
           <strong className="font-medium text-lacuna dark:text-noite-crew">
             Gasta dinheiro
           </strong>{" "}
