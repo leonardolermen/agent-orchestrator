@@ -50,6 +50,13 @@ nunca pega item nenhum. Religar isso precisa das DUAS pontas — o X7/X8 (ensina
 `AgenteDeclarado` a declarar o que PRODUZ) e a fiação aqui, derivando
 `consome`/`produz` dos blocos. Enquanto as duas não existirem, quem escreve um
 agente na tela é quem garante o `kind`.
+
+**Estado desta fatia, dito em voz alta.** A metade de `consome` acima já não é
+verdade: `construir_composicao` passou a popular `Stage.consome` a partir dos
+blocos (`consome_de`, no `return` abaixo), e o motor reserva o que o degrau não
+consome. A OUTRA metade — a recusa, na borda do `/runs`, de uma fonte que não
+alimenta um bloco — ainda não existe neste commit. Este cabeçalho é reescrito
+por inteiro quando ela existir; até lá, o que vale é este parágrafo.
 """
 
 import hashlib
