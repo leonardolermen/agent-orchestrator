@@ -2,13 +2,27 @@ import inspect
 
 import pytest
 
-from orchestrator.conciliacao.ferramentas import FERRAMENTAS, TOOL_SCHEMAS, ToolContext
-from orchestrator.conciliacao.ferramentas.buscar_documento_fiscal import buscar_documento_fiscal
-from orchestrator.conciliacao.ferramentas.buscar_lancamentos import buscar_lancamentos
-from orchestrator.conciliacao.ferramentas.calcular_retencao import calcular_retencao
-from orchestrator.conciliacao.ferramentas.calendario_bancario import calendario_bancario
-from orchestrator.conciliacao.ferramentas.historico_fornecedor import historico_fornecedor
-from orchestrator.synth.generator import build_dataset, generate_clean_pairs
+from orchestrator.domains.reconciliation.agent.ferramentas import (
+    FERRAMENTAS,
+    TOOL_SCHEMAS,
+    ToolContext,
+)
+from orchestrator.domains.reconciliation.agent.ferramentas.buscar_documento_fiscal import (
+    buscar_documento_fiscal,
+)
+from orchestrator.domains.reconciliation.agent.ferramentas.buscar_lancamentos import (
+    buscar_lancamentos,
+)
+from orchestrator.domains.reconciliation.agent.ferramentas.calcular_retencao import (
+    calcular_retencao,
+)
+from orchestrator.domains.reconciliation.agent.ferramentas.calendario_bancario import (
+    calendario_bancario,
+)
+from orchestrator.domains.reconciliation.agent.ferramentas.historico_fornecedor import (
+    historico_fornecedor,
+)
+from orchestrator.domains.reconciliation.synth.generator import build_dataset, generate_clean_pairs
 
 
 def _contexto() -> ToolContext:

@@ -37,17 +37,17 @@ from orchestrator.agent.declarado import (
     construir_agente,
 )
 from orchestrator.agent.tools.registry import ToolRegistry
-from orchestrator.conciliacao.ferramentas import catalogo_de_ferramentas
 from orchestrator.domains.procurement.workflow import (
     ComprasAnteriores,
     FornecedorPreferido,
 )
+from orchestrator.domains.reconciliation.agent.ferramentas import catalogo_de_ferramentas
+from orchestrator.domains.reconciliation.resolvers.exact import ExactMatcher
+from orchestrator.domains.reconciliation.resolvers.grouping import GroupingMatcher
+from orchestrator.domains.reconciliation.resolvers.tolerance import ToleranceMatcher
 from orchestrator.domains.swe.workflow import ISSUE, PROMPT
 from orchestrator.domains.swe.workflow import ferramentas as ferramentas_swe
 from orchestrator.kernel.cost import CostClass
-from orchestrator.matching.exact import ExactMatcher
-from orchestrator.matching.grouping import GroupingMatcher
-from orchestrator.matching.tolerance import ToleranceMatcher
 
 
 @dataclass(frozen=True)

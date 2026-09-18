@@ -18,7 +18,17 @@ forma, com ~80 linhas cada.
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from orchestrator.conciliacao.politica import POLITICA_ATUAL, contexto
+from orchestrator.domains.reconciliation.models import (
+    BankEntry,
+    Divergence,
+    LedgerEntry,
+    divergencias,
+    pool,
+)
+from orchestrator.domains.reconciliation.politica import POLITICA_ATUAL, contexto
+from orchestrator.domains.reconciliation.resolvers.exact import ExactMatcher
+from orchestrator.domains.reconciliation.resolvers.grouping import GroupingMatcher
+from orchestrator.domains.reconciliation.resolvers.tolerance import ToleranceMatcher
 from orchestrator.kernel.cost import Cost, CostClass
 from orchestrator.kernel.definition import Stage, WorkflowDefinition, consome_de
 from orchestrator.kernel.event import EventBus
@@ -26,10 +36,6 @@ from orchestrator.kernel.policy import ExecutionPolicy, PolicyContext
 from orchestrator.kernel.resolution import Proposal, Resolution
 from orchestrator.kernel.resolver import Resolver
 from orchestrator.kernel.run import Run
-from orchestrator.matching.exact import ExactMatcher
-from orchestrator.matching.grouping import GroupingMatcher
-from orchestrator.matching.tolerance import ToleranceMatcher
-from orchestrator.models import BankEntry, Divergence, LedgerEntry, divergencias, pool
 from orchestrator.runtime.engine import execute
 
 if TYPE_CHECKING:

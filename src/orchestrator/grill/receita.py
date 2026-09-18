@@ -12,7 +12,7 @@ from typing import Any
 
 from orchestrator.agent.declarado import AgenteDeclarado, RegraDisponivel, construir_agente
 from orchestrator.agent.llm import LLMClient
-from orchestrator.conciliacao.ferramentas import ToolContext
+from orchestrator.domains.reconciliation.agent.ferramentas import ToolContext
 from orchestrator.domains.registro import CATALOGO
 from orchestrator.grill.catalogo import ClienteAusente
 from orchestrator.kernel.cost import CostClass

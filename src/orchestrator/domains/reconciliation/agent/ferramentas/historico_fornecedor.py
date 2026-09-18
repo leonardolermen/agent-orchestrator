@@ -3,7 +3,7 @@
 from typing import Any
 
 from orchestrator.agent.tools.registry import ToolPermission, ToolSpec, tool_schema
-from orchestrator.conciliacao.ferramentas.contexto import ToolContext
+from orchestrator.domains.reconciliation.agent.ferramentas.contexto import ToolContext
 
 
 def historico_fornecedor(ctx: ToolContext, fornecedor: str) -> dict[str, Any]:

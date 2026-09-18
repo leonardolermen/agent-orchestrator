@@ -1,17 +1,17 @@
 from random import Random
 
-from orchestrator.conciliacao import default_resolvers, reconcile
+from orchestrator.domains.reconciliation import default_resolvers, reconcile
+from orchestrator.domains.reconciliation.models import abstencao, banco, contabil, divergencias
+from orchestrator.domains.reconciliation.money import format_brl
+from orchestrator.domains.reconciliation.synth.benchmark import build_benchmark
+from orchestrator.domains.reconciliation.synth.generator import build_dataset, generate_clean_pairs
+from orchestrator.domains.reconciliation.synth.injectors import DefasagemTemporal, PagamentoAgregado
 from orchestrator.kernel.cost import Cost, CostClass
 from orchestrator.kernel.definition import Stage, WorkflowDefinition
 from orchestrator.kernel.resolution import Confidence, InvestigationOutput, Proposal, Resolution
 from orchestrator.kernel.resolver import Resolver, ResolverDescription, ResolverOutput
 from orchestrator.kernel.work import WorkSet
 from orchestrator.metrics import evaluate
-from orchestrator.models import abstencao, banco, contabil, divergencias
-from orchestrator.money import format_brl
-from orchestrator.synth.benchmark import build_benchmark
-from orchestrator.synth.generator import build_dataset, generate_clean_pairs
-from orchestrator.synth.injectors import DefasagemTemporal, PagamentoAgregado
 
 
 def _definicao(cascade: list[Resolver]) -> WorkflowDefinition:
@@ -71,7 +71,7 @@ def test_conta_divergencias_do_gabarito():
 
 def test_falso_positivo_quando_casa_o_que_deveria_divergir():
     # Tolerância absurda faz L2 casar um caso que o gabarito diz ser divergente.
-    from orchestrator.matching.tolerance import ToleranceMatcher
+    from orchestrator.domains.reconciliation.resolvers.tolerance import ToleranceMatcher
 
     pares = generate_clean_pairs(seed=9, n=5)
     inj = DefasagemTemporal().apply(Random(0), pares[0])
@@ -431,7 +431,7 @@ class _ResolverHumanoFalso:
 
 
 def _com_humano():
-    from orchestrator.conciliacao import default_resolvers
+    from orchestrator.domains.reconciliation import default_resolvers
     from orchestrator.kernel.definition import Stage, WorkflowDefinition
 
     return WorkflowDefinition(

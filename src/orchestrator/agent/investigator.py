@@ -18,7 +18,13 @@ from typing import TYPE_CHECKING
 
 from orchestrator.agent.agent import Agent, AgentSpec, AgentTask
 from orchestrator.agent.llm import LLMClient
-from orchestrator.conciliacao.ferramentas import ToolContext, ledger_dict, registry_de
+from orchestrator.domains.reconciliation.agent.ferramentas import (
+    ToolContext,
+    ledger_dict,
+    registry_de,
+)
+from orchestrator.domains.reconciliation.models import PAYLOADS, Divergence, abstencao, divergencias
+from orchestrator.domains.reconciliation.taxonomy import DivergenceType
 from orchestrator.kernel.cost import Cost, CostClass
 from orchestrator.kernel.resolution import (
     Confidence,
@@ -29,8 +35,6 @@ from orchestrator.kernel.resolution import (
 )
 from orchestrator.kernel.resolver import ResolverDescription, ResolverOutput
 from orchestrator.kernel.work import WorkSet
-from orchestrator.models import PAYLOADS, Divergence, abstencao, divergencias
-from orchestrator.taxonomy import DivergenceType
 
 if TYPE_CHECKING:
     from orchestrator.review.fila import Fila

@@ -10,9 +10,9 @@ comentário de `_FRACAO_AGREGADOS` em `orchestrator/cli.py`.
 import json
 from pathlib import Path
 
-from orchestrator.conciliacao import reconcile
+from orchestrator.domains.reconciliation import reconcile
+from orchestrator.domains.reconciliation.synth.benchmark import build_benchmark
 from orchestrator.metrics import evaluate
-from orchestrator.synth.benchmark import build_benchmark
 
 CAMINHO = Path(__file__).parent / "cascata_12_sementes.json"
 SEMENTES = tuple(range(1, 13))

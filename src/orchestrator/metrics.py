@@ -9,11 +9,11 @@ gabarito — ver `proposals_correct` e `agent_cost_microcents`.
 from collections import Counter
 from dataclasses import dataclass
 
-from orchestrator.conciliacao import ReconcileResult
+from orchestrator.domains.reconciliation import ReconcileResult
+from orchestrator.domains.reconciliation.money import format_brl
+from orchestrator.domains.reconciliation.synth.dataset import Dataset
+from orchestrator.domains.reconciliation.taxonomy import DivergenceType
 from orchestrator.kernel.cost import Cost, CostClass
-from orchestrator.money import format_brl
-from orchestrator.synth.dataset import Dataset
-from orchestrator.taxonomy import DivergenceType
 
 
 @dataclass(frozen=True)

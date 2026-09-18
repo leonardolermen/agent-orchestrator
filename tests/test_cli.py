@@ -1,9 +1,9 @@
 import pytest
 
 from orchestrator.cli import main
-from orchestrator.conciliacao import reconcile
+from orchestrator.domains.reconciliation import reconcile
+from orchestrator.domains.reconciliation.synth.benchmark import build_benchmark
 from orchestrator.metrics import evaluate
-from orchestrator.synth.benchmark import build_benchmark
 
 
 def test_benchmark_rejeita_taxa_divergencia_fora_do_intervalo():

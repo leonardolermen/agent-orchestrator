@@ -23,7 +23,7 @@ from orchestrator.authoring.composicao import (
     listar,
     para_json,
 )
-from orchestrator.conciliacao.ferramentas import ToolContext
+from orchestrator.domains.reconciliation.agent.ferramentas import ToolContext
 
 AGORA = datetime(2026, 9, 16, 12, 0, tzinfo=UTC)
 

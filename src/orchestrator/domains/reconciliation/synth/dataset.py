@@ -6,8 +6,8 @@ terceiros, é contra ele que toda métrica é calculada. Ver spec 5.1.
 
 from dataclasses import dataclass
 
-from orchestrator.models import BankEntry, LedgerEntry
-from orchestrator.taxonomy import DivergenceType
+from orchestrator.domains.reconciliation.models import BankEntry, LedgerEntry
+from orchestrator.domains.reconciliation.taxonomy import DivergenceType
 
 
 @dataclass(frozen=True)

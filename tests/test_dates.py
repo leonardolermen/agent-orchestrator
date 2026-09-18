@@ -2,7 +2,7 @@ from datetime import date
 
 import pytest
 
-from orchestrator.dates import add_business_days, business_days_between
+from orchestrator.domains.reconciliation.dates import add_business_days, business_days_between
 
 
 def test_dias_uteis_mesma_data():

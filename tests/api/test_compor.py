@@ -76,7 +76,7 @@ def test_o_catalogo_traz_os_parametros_com_DEFAULT_do_proprio_resolver():
     """
     import dataclasses
 
-    from orchestrator.matching.tolerance import ToleranceMatcher
+    from orchestrator.domains.reconciliation.resolvers.tolerance import ToleranceMatcher
 
     dados = cliente.get("/api/catalogo").json()
     l2 = next(r for r in dados["regras"] if r["nome"] == "L2")

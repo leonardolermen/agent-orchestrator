@@ -27,17 +27,17 @@ from orchestrator.agent.investigator import (
     interpretar_proposta,
 )
 from orchestrator.agent.tools.registry import ToolSpec
-from orchestrator.conciliacao.ferramentas import (
+from orchestrator.domains.reconciliation.agent.ferramentas import (
     FERRAMENTAS,
     TOOL_SCHEMAS,
     ToolContext,
     registry_de,
 )
+from orchestrator.domains.reconciliation.models import abstencao, divergencias
 from orchestrator.kernel.cost import Cost, CostClass
 from orchestrator.kernel.resolution import Proposal, TraceEvent, TraceKind
 from orchestrator.kernel.resolver import ResolverDescription, ResolverOutput
 from orchestrator.kernel.work import WorkSet
-from orchestrator.models import abstencao, divergencias
 
 _SERVIDOR = "conciliacao"
 

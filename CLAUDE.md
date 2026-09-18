@@ -54,7 +54,8 @@ Regra nº 1, com teste próprio: **`kernel` não importa nada.** E ninguém impo
 
 ## Uma ferramenta por arquivo
 
-`conciliacao/ferramentas/` é o formato. Cada arquivo tem a função e o `ToolSpec`
+`domains/reconciliation/agent/ferramentas/` é o formato. Cada arquivo tem a
+função e o `ToolSpec`
 que o modelo vê **lado a lado**:
 
 ```python

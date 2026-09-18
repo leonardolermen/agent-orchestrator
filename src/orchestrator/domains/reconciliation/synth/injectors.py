@@ -8,10 +8,10 @@ from dataclasses import replace
 from random import Random
 from typing import Protocol
 
-from orchestrator.dates import add_business_days
-from orchestrator.synth.dataset import GroundTruth, InjectionResult, Pair
-from orchestrator.tax import _ALIQUOTAS, calcular_retencao
-from orchestrator.taxonomy import DivergenceType
+from orchestrator.domains.reconciliation.dates import add_business_days
+from orchestrator.domains.reconciliation.synth.dataset import GroundTruth, InjectionResult, Pair
+from orchestrator.domains.reconciliation.tax import _ALIQUOTAS, calcular_retencao
+from orchestrator.domains.reconciliation.taxonomy import DivergenceType
 
 __all__ = [
     "DefasagemTemporal",

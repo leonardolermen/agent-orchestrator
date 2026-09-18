@@ -38,7 +38,7 @@ from typing import Protocol
 from orchestrator.agent.llm import LLMClient
 from orchestrator.authoring.composicao import Composicao, construir_composicao
 from orchestrator.authoring.composicao import listar as listar_composicoes
-from orchestrator.conciliacao import default_definition
+from orchestrator.domains.reconciliation import default_definition
 from orchestrator.grill.receita import Receita, construir
 from orchestrator.grill.registro import listar_receitas
 from orchestrator.kernel.definition import WorkflowDefinition

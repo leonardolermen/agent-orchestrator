@@ -5,8 +5,8 @@ ser exato, e um LLM que soma de cabeça erra em silêncio.
 """
 
 from orchestrator.agent.tools.registry import ToolPermission, ToolSpec, tool_schema
-from orchestrator.conciliacao.ferramentas.contexto import ToolContext
-from orchestrator.tax import calcular_retencao as _calcular_retencao
+from orchestrator.domains.reconciliation.agent.ferramentas.contexto import ToolContext
+from orchestrator.domains.reconciliation.tax import calcular_retencao as _calcular_retencao
 
 
 def calcular_retencao(_ctx: ToolContext, bruto: int, aliquota_bp: int) -> int:

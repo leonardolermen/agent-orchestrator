@@ -1,5 +1,6 @@
 import pytest
 
+from orchestrator.domains.reconciliation.taxonomy import DivergenceType
 from orchestrator.kernel.cost import Cost
 from orchestrator.kernel.resolution import (
     Confidence,
@@ -7,7 +8,6 @@ from orchestrator.kernel.resolution import (
     Proposal,
     TraceEvent,
 )
-from orchestrator.taxonomy import DivergenceType
 
 
 def _custo() -> Cost:

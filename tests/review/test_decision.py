@@ -2,8 +2,8 @@ from datetime import UTC, datetime
 
 import pytest
 
+from orchestrator.domains.reconciliation.taxonomy import DivergenceType
 from orchestrator.review.decision import Decision, Veredito, ids_de_conciliar_com
-from orchestrator.taxonomy import DivergenceType
 
 
 def test_parser_extrai_um_id():

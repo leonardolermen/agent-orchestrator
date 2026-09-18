@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 
+from orchestrator.domains.reconciliation.taxonomy import DivergenceType
 from orchestrator.kernel.cost import Cost
 from orchestrator.kernel.resolution import Confidence, Proposal, TraceEvent, TraceKind
 from orchestrator.review.decision import Decision, Veredito
@@ -9,7 +10,6 @@ from orchestrator.review.serial import (
     proposta_de_dict,
     proposta_para_dict,
 )
-from orchestrator.taxonomy import DivergenceType
 
 
 def _proposta() -> Proposal:

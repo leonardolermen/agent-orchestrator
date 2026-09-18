@@ -6,9 +6,9 @@ chamada de LLM: este é o piso contra o qual o agente será medido depois.
 
 import argparse
 
-from orchestrator.conciliacao import reconcile
+from orchestrator.domains.reconciliation import reconcile
+from orchestrator.domains.reconciliation.synth.benchmark import build_benchmark
 from orchestrator.metrics import evaluate
-from orchestrator.synth.benchmark import build_benchmark
 
 
 def main(argv: list[str] | None = None) -> int:

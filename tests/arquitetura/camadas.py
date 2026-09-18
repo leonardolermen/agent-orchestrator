@@ -53,8 +53,8 @@ PERMITIDO: dict[str, frozenset[str]] = {
 # Onde cada módulo de HOJE deveria morar na arquitetura alvo.
 #
 # Esta tabela existe porque a migração ainda não aconteceu: o diretório de hoje
-# (`matching/`, `review/`, `grill/`) não é o diretório alvo (`domains/`,
-# `human/`, `authoring/`). Ela ENCOLHE a cada PR — quando um módulo chega ao
+# (`review/`, `grill/`, `metrics.py`) não é o diretório alvo (`human/`,
+# `authoring/`, `evaluation/`). Ela ENCOLHE a cada PR — quando um módulo chega ao
 # diretório certo, a entrada sai daqui e o nome do diretório passa a responder
 # sozinho (ver `camada_de`).
 #
@@ -92,50 +92,18 @@ DESTINO: dict[str, str] = {
     "eval.replay": "agent",
     "eval.assinatura": "agent",
     # --- domínios ---
-    # `domains/procurement` e `domains/swe` NÃO aparecem aqui: o diretório
-    # `domains/` já é o nome da camada. A conciliação ainda está espalhada pela
-    # raiz do pacote e por isso precisa das entradas abaixo — ela se muda para
-    # `domains/reconciliation/` num PR próprio, que é rename puro.
+    # NENHUM domínio aparece mais aqui, e é o ponto: `domains/` responde
+    # sozinho por `procurement`, `swe`, `redacao` — e agora por `reconciliation`.
     #
-    # --- conciliação (§1.3: implementação de referência) ---
-    "models": "domains",
-    "money": "domains",
-    "dates": "domains",
-    "tax": "domains",
-    "taxonomy": "domains",
-    # A cascata padrão e a porta do domínio. `conciliacao/workflow.py` é o que
-    # quebrou a circularidade `engine <-> definition`: a definição padrão é
-    # configuração de produto, e só a camada `domains` pode conhecer motor E
-    # resolvers.
+    # A conciliação estava espalhada pela raiz do pacote (`models.py`,
+    # `taxonomy.py`, `money.py`, `dates.py`, `tax.py`, `matching/`, `synth/`,
+    # `conciliacao/`) e tinha 22 entradas nesta tabela. Ela desceu para
+    # `domains/reconciliation/`, na árvore que a §4.1 já desenhava, e a §19.5 já
+    # mandava: "migrada como qualquer outro domínio".
     #
-    # Virou PACOTE no M2: `agent/tools.py` guardava as ferramentas DE
-    # CONCILIAÇÃO dentro do pacote do agente genérico, e ocupava o nome que o
-    # `ToolRegistry` precisava. As duas coisas se resolvem com o mesmo mover.
-    "conciliacao": "domains",
-    "conciliacao.workflow": "domains",
-    # `ferramentas` virou PACOTE: uma ferramenta por arquivo, com a função e o
-    # `ToolSpec` que o modelo vê lado a lado. Antes eram duas metades distantes
-    # (método de `ToolContext` aqui, schema numa lista cem linhas abaixo)
-    # costuradas por `getattr` no despacho.
-    "conciliacao.ferramentas": "domains",
-    "conciliacao.ferramentas.contexto": "domains",
-    "conciliacao.ferramentas.buscar_lancamentos": "domains",
-    "conciliacao.ferramentas.buscar_documento_fiscal": "domains",
-    "conciliacao.ferramentas.historico_fornecedor": "domains",
-    "conciliacao.ferramentas.calcular_retencao": "domains",
-    "conciliacao.ferramentas.calendario_bancario": "domains",
-    "conciliacao.politica": "domains",
-    "matching.exact": "domains",
-    "matching.tolerance": "domains",
-    "matching.grouping": "domains",
-    # `build_benchmark` saiu de `cli.py` no PR #9. Nunca foi codigo de CLI: e o
-    # gerador do dataset com gabarito, e morava la so porque a CLI foi o
-    # primeiro chamador. Era a inversao nº 3 do §2.1 — a camada HTTP importando
-    # do ponto de entrada de linha de comando.
-    "synth.benchmark": "domains",
-    "synth.dataset": "domains",
-    "synth.generator": "domains",
-    "synth.injectors": "domains",
+    # O rename NÃO fechou aresta nenhuma — as 13 continuam, com outro nome. É o
+    # que se espera de um mover puro, e separar as duas coisas é o que impede um
+    # PR que só mexe em diretório de parecer que consertou acoplamento.
     # --- autoria de workflow (hoje `grill/`) ---
     # `workflows.py` é o REGISTRO: de um id para uma definição executável.
     # Fica em `authoring` porque precisa conhecer as duas fontes — o embutido

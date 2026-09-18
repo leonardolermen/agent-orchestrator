@@ -5,9 +5,9 @@ pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
 from orchestrator.api.app import app  # noqa: E402
+from orchestrator.domains.reconciliation.taxonomy import DivergenceType  # noqa: E402
 from orchestrator.kernel.resolution import Confidence, Proposal  # noqa: E402
 from orchestrator.review.fila import Fila, caminho_da_fila, dataset_id  # noqa: E402
-from orchestrator.taxonomy import DivergenceType  # noqa: E402
 
 cliente = TestClient(app)
 
@@ -321,7 +321,7 @@ def test_resposta_da_decisao_aceita_reflete_veredito_e_lancamentos_por_lado():
     # Sem isto, trocar `descricao=e.account` por `descricao=e.supplier` em
     # `_do_contabil` (ou o equivalente do lado banco) passa a suíte inteira —
     # e é exatamente o que a Task 9 (tela da fila) vai renderizar.
-    from orchestrator.synth.benchmark import build_benchmark
+    from orchestrator.domains.reconciliation.synth.benchmark import build_benchmark
 
     ds = build_benchmark(seed=1, n=30, taxa_divergencia=0.15)
     banco = next(e for e in ds.bank if e.id == "b00003")

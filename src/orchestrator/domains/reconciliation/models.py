@@ -19,10 +19,10 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
+from orchestrator.domains.reconciliation.taxonomy import DivergenceType
 from orchestrator.kernel.cost import Cost
 from orchestrator.kernel.resolution import Proposal, Resolution, TraceEvent
 from orchestrator.kernel.work import WorkItem, WorkSet
-from orchestrator.taxonomy import DivergenceType
 
 
 @dataclass(frozen=True)

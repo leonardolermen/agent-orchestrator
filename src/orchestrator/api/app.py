@@ -98,7 +98,10 @@ from orchestrator.authoring.composicao import (
     gravar,
     listar,
 )
-from orchestrator.conciliacao import ReconcileResult
+from orchestrator.domains.reconciliation import ReconcileResult
+from orchestrator.domains.reconciliation.synth.benchmark import SyntheticSource, build_benchmark
+from orchestrator.domains.reconciliation.synth.dataset import Dataset
+from orchestrator.domains.reconciliation.taxonomy import DivergenceType
 from orchestrator.domains.registro import CATALOGO
 from orchestrator.grill.catalogo import MODELO_INERTE
 from orchestrator.grill.receita import Receita, ResolverReceita, construir
@@ -120,9 +123,6 @@ from orchestrator.sources.http import HttpSource
 from orchestrator.sources.postgres import PostgresSource
 from orchestrator.storage.jsonl.run_store import JsonlRunStore
 from orchestrator.storage.jsonl.trace_store import JsonlTraceStore
-from orchestrator.synth.benchmark import SyntheticSource, build_benchmark
-from orchestrator.synth.dataset import Dataset
-from orchestrator.taxonomy import DivergenceType
 from orchestrator.workflows import (
     WorkflowContext,
     construir_definicao,

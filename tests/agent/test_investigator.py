@@ -4,12 +4,12 @@ import pytest
 
 from orchestrator.agent.investigator import SYSTEM, Investigator
 from orchestrator.agent.llm import FakeLLMClient, LLMResponse, ToolCall
-from orchestrator.conciliacao.ferramentas import TOOL_SCHEMAS, ToolContext
+from orchestrator.domains.reconciliation.agent.ferramentas import TOOL_SCHEMAS, ToolContext
+from orchestrator.domains.reconciliation.models import Divergence, divergencias, pool
+from orchestrator.domains.reconciliation.synth.generator import build_dataset, generate_clean_pairs
+from orchestrator.domains.reconciliation.taxonomy import DivergenceType
 from orchestrator.kernel.cost import _PRECOS, Cost, CostClass
 from orchestrator.kernel.resolution import Confidence, Proposal, TraceKind
-from orchestrator.models import Divergence, divergencias, pool
-from orchestrator.synth.generator import build_dataset, generate_clean_pairs
-from orchestrator.taxonomy import DivergenceType
 
 
 def _ctx() -> ToolContext:
@@ -570,9 +570,9 @@ def test_descrever_divergencia_e_funcao_de_modulo_reusavel():
     import json
 
     from orchestrator.agent.investigator import descrever_divergencia
-    from orchestrator.conciliacao.ferramentas import ToolContext
-    from orchestrator.models import Divergence
-    from orchestrator.synth.generator import generate_clean_pairs
+    from orchestrator.domains.reconciliation.agent.ferramentas import ToolContext
+    from orchestrator.domains.reconciliation.models import Divergence
+    from orchestrator.domains.reconciliation.synth.generator import generate_clean_pairs
 
     pares = generate_clean_pairs(seed=2, n=1)
     ctx = ToolContext(bank=[pares[0].bank], ledger=[pares[0].ledger])

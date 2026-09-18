@@ -62,10 +62,10 @@ VIOLACOES_CONHECIDAS: frozenset[tuple[str, str]] = frozenset(
         # `human` conhecendo conciliação — fecha no PR #12, com `AgentSpec` e o
         # `ToolRegistry`.
         # ---------------------------------------------------------------
-        ("agent.investigator", "models"),
-        ("agent.investigator", "taxonomy"),
-        ("agent.investigator", "conciliacao.ferramentas"),
-        ("eval.assinatura", "conciliacao.ferramentas"),
+        ("agent.investigator", "domains.reconciliation.models"),
+        ("agent.investigator", "domains.reconciliation.taxonomy"),
+        ("agent.investigator", "domains.reconciliation.agent.ferramentas"),
+        ("eval.assinatura", "domains.reconciliation.agent.ferramentas"),
         # ENTROU no PR #3, e não é regressão — é um acoplamento que já existia
         # e estava ESCONDIDO. `eval/assinatura.py` chamava
         # `work.as_divergences()`, e como `as_divergences` morava dentro do
@@ -75,17 +75,17 @@ VIOLACOES_CONHECIDAS: frozenset[tuple[str, str]] = frozenset(
         #
         # É o caso mais forte a favor da catraca: ela não só barra acoplamento
         # novo, ela acha o que o desenho antigo camuflava.
-        ("eval.assinatura", "models"),
-        ("review.revisor", "models"),
-        ("review.decision", "taxonomy"),
-        ("review.serial", "taxonomy"),
-        ("metrics", "taxonomy"),
-        ("metrics", "money"),
+        ("eval.assinatura", "domains.reconciliation.models"),
+        ("review.revisor", "domains.reconciliation.models"),
+        ("review.decision", "domains.reconciliation.taxonomy"),
+        ("review.serial", "domains.reconciliation.taxonomy"),
+        ("metrics", "domains.reconciliation.taxonomy"),
+        ("metrics", "domains.reconciliation.money"),
         # Esta é a mais consequente das dez: a avaliação importa o GERADOR
         # sintético, e por isso só sabe medir contra gabarito fabricado. É a
         # lacuna nº 4 do §1.2 na forma de uma seta. Fecha no PR que introduz
         # `ExpectedOutcome` com duas procedências (M6).
-        ("metrics", "synth.dataset"),
+        ("metrics", "domains.reconciliation.synth.dataset"),
         # ---------------------------------------------------------------
         # CAUSA 2 — FECHADA no PR #5. Eram 6 arestas: o motor conhecia os três
         # resolvers do domínio, e a definição conhecia o motor — a
@@ -113,7 +113,7 @@ VIOLACOES_CONHECIDAS: frozenset[tuple[str, str]] = frozenset(
         # nome, o acoplamento é o mesmo: a avaliação depende do formato de
         # saída de quem executou, em vez de ler um `Run` persistido.
         # ---------------------------------------------------------------
-        ("metrics", "conciliacao"),
+        ("metrics", "domains.reconciliation"),
 
         # ---------------------------------------------------------------
         # CAUSA 5 — o agente usa a fila humana como cache de idempotência.
@@ -177,7 +177,7 @@ def test_extrator_enxerga_import_local_e_type_checking():
     não pode é o extrator voltar a ler só o cabeçalho.
     """
     arestas = {(d.de, d.para) for d in dependencias()}
-    assert ("conciliacao.workflow", "review.revisor") in arestas, (
+    assert ("domains.reconciliation.workflow", "review.revisor") in arestas, (
         "o extrator perdeu um import DENTRO de função — foi exatamente onde a "
         "circularidade `engine <-> definition` se escondia até o PR #5"
     )

@@ -11,11 +11,11 @@ dependem.
 
 from dataclasses import dataclass, field
 
+from orchestrator.domains.reconciliation.models import PAYLOADS, conciliacao, divergencias, lados
 from orchestrator.kernel.cost import Cost, CostClass
 from orchestrator.kernel.resolution import Resolution
 from orchestrator.kernel.resolver import ResolverDescription, ResolverOutput
 from orchestrator.kernel.work import WorkSet
-from orchestrator.models import PAYLOADS, conciliacao, divergencias, lados
 from orchestrator.review.fila import Fila
 
 

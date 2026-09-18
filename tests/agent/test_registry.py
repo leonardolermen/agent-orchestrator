@@ -155,7 +155,7 @@ def test_as_ferramentas_REAIS_passam_pela_guarda():
     """Regressão do caminho que quebrou: as cinco da conciliação, como o
     modelo as vê. Um teste sobre um schema inventado não teria pego o
     `minimum` que estava em produção."""
-    from orchestrator.conciliacao.ferramentas import ToolContext, registry_de
+    from orchestrator.domains.reconciliation.agent.ferramentas import ToolContext, registry_de
 
     registry = registry_de(ToolContext(bank=(), ledger=()))
 

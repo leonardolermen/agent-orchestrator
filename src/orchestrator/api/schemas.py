@@ -8,9 +8,9 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from orchestrator.domains.reconciliation.taxonomy import DivergenceType
 from orchestrator.kernel.definition import Stage, WorkflowDefinition
 from orchestrator.review.decision import Veredito
-from orchestrator.taxonomy import DivergenceType
 
 
 class ResolverJSON(BaseModel):

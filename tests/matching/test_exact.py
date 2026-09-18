@@ -1,9 +1,9 @@
 from random import Random
 
-from orchestrator.matching.exact import ExactMatcher
-from orchestrator.models import pool
-from orchestrator.synth.generator import generate_clean_pairs
-from orchestrator.synth.injectors import DefasagemTemporal
+from orchestrator.domains.reconciliation.models import pool
+from orchestrator.domains.reconciliation.resolvers.exact import ExactMatcher
+from orchestrator.domains.reconciliation.synth.generator import generate_clean_pairs
+from orchestrator.domains.reconciliation.synth.injectors import DefasagemTemporal
 
 
 def test_casa_todos_os_pares_limpos():

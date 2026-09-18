@@ -14,7 +14,7 @@ deixou de exigir tocá-lo.
 from dataclasses import dataclass
 from typing import Any
 
-from orchestrator.models import BankEntry, LedgerEntry
+from orchestrator.domains.reconciliation.models import BankEntry, LedgerEntry
 
 
 @dataclass

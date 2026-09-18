@@ -8,9 +8,9 @@ produz exatamente o mesmo dataset.
 from datetime import date, timedelta
 from random import Random
 
-from orchestrator.dates import add_business_days
-from orchestrator.models import BankEntry, LedgerEntry
-from orchestrator.synth.dataset import Dataset, InjectionResult, Pair
+from orchestrator.domains.reconciliation.dates import add_business_days
+from orchestrator.domains.reconciliation.models import BankEntry, LedgerEntry
+from orchestrator.domains.reconciliation.synth.dataset import Dataset, InjectionResult, Pair
 
 _FORNECEDORES = [
     "ACME SERVICOS LTDA",

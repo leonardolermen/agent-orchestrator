@@ -10,9 +10,9 @@ import subprocess
 import sys
 import textwrap
 
-from orchestrator.conciliacao.ferramentas import ToolContext
+from orchestrator.domains.reconciliation.agent.ferramentas import ToolContext
+from orchestrator.domains.reconciliation.synth.generator import generate_clean_pairs
 from orchestrator.kernel.cost import CostClass
-from orchestrator.synth.generator import generate_clean_pairs
 
 
 def _contexto() -> ToolContext:

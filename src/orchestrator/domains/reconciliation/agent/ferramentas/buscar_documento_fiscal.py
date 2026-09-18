@@ -3,7 +3,7 @@
 from typing import Any
 
 from orchestrator.agent.tools.registry import ToolPermission, ToolSpec, tool_schema
-from orchestrator.conciliacao.ferramentas.contexto import ToolContext, ledger_dict
+from orchestrator.domains.reconciliation.agent.ferramentas.contexto import ToolContext, ledger_dict
 
 
 def buscar_documento_fiscal(ctx: ToolContext, documento: str) -> dict[str, Any] | None:

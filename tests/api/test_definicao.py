@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from orchestrator.api.app import app
 from orchestrator.api.schemas import stage_json
-from orchestrator.conciliacao import default_definition
+from orchestrator.domains.reconciliation import default_definition
 from orchestrator.kernel.cost import CostClass
 from orchestrator.kernel.definition import Stage
 from orchestrator.kernel.resolver import ResolverDescription, ResolverOutput

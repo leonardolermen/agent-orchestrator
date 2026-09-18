@@ -23,14 +23,22 @@ estável de propósito: o system prompt e os schemas são marcados para cache
 from typing import Any
 
 from orchestrator.agent.tools.registry import ToolRegistry, ToolSpec
-from orchestrator.conciliacao.ferramentas.buscar_documento_fiscal import (
+from orchestrator.domains.reconciliation.agent.ferramentas.buscar_documento_fiscal import (
     SPEC as BUSCAR_DOCUMENTO_FISCAL,
 )
-from orchestrator.conciliacao.ferramentas.buscar_lancamentos import SPEC as BUSCAR_LANCAMENTOS
-from orchestrator.conciliacao.ferramentas.calcular_retencao import SPEC as CALCULAR_RETENCAO
-from orchestrator.conciliacao.ferramentas.calendario_bancario import SPEC as CALENDARIO_BANCARIO
-from orchestrator.conciliacao.ferramentas.contexto import ToolContext, ledger_dict
-from orchestrator.conciliacao.ferramentas.historico_fornecedor import SPEC as HISTORICO_FORNECEDOR
+from orchestrator.domains.reconciliation.agent.ferramentas.buscar_lancamentos import (
+    SPEC as BUSCAR_LANCAMENTOS,
+)
+from orchestrator.domains.reconciliation.agent.ferramentas.calcular_retencao import (
+    SPEC as CALCULAR_RETENCAO,
+)
+from orchestrator.domains.reconciliation.agent.ferramentas.calendario_bancario import (
+    SPEC as CALENDARIO_BANCARIO,
+)
+from orchestrator.domains.reconciliation.agent.ferramentas.contexto import ToolContext, ledger_dict
+from orchestrator.domains.reconciliation.agent.ferramentas.historico_fornecedor import (
+    SPEC as HISTORICO_FORNECEDOR,
+)
 
 # TODAS são somente-leitura. O agente não escreve em lugar nenhum — ele produz
 # uma proposta, e quem escreve é o humano ao aprovar. É isso que elimina deste

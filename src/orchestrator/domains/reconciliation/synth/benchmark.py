@@ -15,16 +15,16 @@ OFX/CNAB saiu do escopo: quem tiver o dado escreve um `Source` de 40 linhas, e
 from dataclasses import dataclass
 from random import Random
 
-from orchestrator.kernel.work import WorkSet
-from orchestrator.models import pool
-from orchestrator.synth.dataset import Dataset, InjectionResult
-from orchestrator.synth.generator import build_dataset, generate_clean_pairs
-from orchestrator.synth.injectors import (
+from orchestrator.domains.reconciliation.models import pool
+from orchestrator.domains.reconciliation.synth.dataset import Dataset, InjectionResult
+from orchestrator.domains.reconciliation.synth.generator import build_dataset, generate_clean_pairs
+from orchestrator.domains.reconciliation.synth.injectors import (
     DefasagemTemporal,
     DevolucaoFundos,
     PagamentoAgregado,
     RetencaoImposto,
 )
+from orchestrator.kernel.work import WorkSet
 
 _INJETORES_SIMPLES = [DefasagemTemporal(), RetencaoImposto(), DevolucaoFundos()]
 

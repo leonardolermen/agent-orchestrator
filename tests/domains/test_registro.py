@@ -119,7 +119,7 @@ def test_as_ferramentas_das_TRES_origens_estao_no_MESMO_registro():
     com o registro do `swe` sozinho somado a qualquer coisa, e o defeito que
     este teste existe para pegar é justamente uma origem PERDIDA na fusão.
     """
-    from orchestrator.conciliacao.ferramentas import catalogo_de_ferramentas
+    from orchestrator.domains.reconciliation.agent.ferramentas import catalogo_de_ferramentas
     from orchestrator.domains.swe.workflow import ferramentas as ferramentas_swe
 
     nomes = set(CATALOGO.ferramentas.names())
@@ -244,8 +244,8 @@ def test_parametro_INEXISTENTE_no_resolver_explode_NOMEANDO_o_resolver():
     que travava a mesma mensagem em `grill.catalogo._param` — o `_param` que
     esta fatia removeu junto com o cardápio do grill.
     """
+    from orchestrator.domains.reconciliation.resolvers.tolerance import ToleranceMatcher
     from orchestrator.domains.registro import _param
-    from orchestrator.matching.tolerance import ToleranceMatcher
 
     with pytest.raises(ValueError, match="ToleranceMatcher não tem campo"):
         _param(ToleranceMatcher, "campo_que_nao_existe", "x")
@@ -290,7 +290,7 @@ _SEM_EXIGENCIA: dict[str, type] = {}
 
 def _exigencias_esperadas() -> dict[str, dict[str, type]]:
     from orchestrator.domains.procurement.workflow import PAYLOADS as COMPRAS
-    from orchestrator.models import PAYLOADS as CONCILIACAO
+    from orchestrator.domains.reconciliation.models import PAYLOADS as CONCILIACAO
 
     return {
         # -- conciliação: leem `banco()`/`contabil()`, que devolvem tipado ----
@@ -412,7 +412,7 @@ def test_quem_exige_tipo_exige_o_TIPO_certo_e_nao_so_um_kind_qualquer():
     """A tabela compara dicionários inteiros, então um mapeamento trocado
     (`banco -> LedgerEntry`) também morre. Esta asserção explicita isso, porque
     é a metade da declaração que um leitor distraído ignoraria."""
-    from orchestrator.models import BANCO, CONTABIL, BankEntry, LedgerEntry
+    from orchestrator.domains.reconciliation.models import BANCO, CONTABIL, BankEntry, LedgerEntry
 
     (_, l1) = next(b for b in _blocos() if b[0] == "L1")
     payloads = _construir(l1).describe().payloads

@@ -7,6 +7,7 @@ ter `if`s.
 """
 
 from orchestrator.agent.agent import AgentSpec
+from orchestrator.domains.reconciliation.models import BANCO, CONTABIL
 from orchestrator.kernel.cost import CostClass
 from orchestrator.kernel.policy import (
     Autonomy,
@@ -15,7 +16,6 @@ from orchestrator.kernel.policy import (
     PolicyContext,
 )
 from orchestrator.kernel.work import WorkItem
-from orchestrator.models import BANCO, CONTABIL
 
 # Câmbio BRL→USD, em micro-centavos de dólar por centavo de real.
 #

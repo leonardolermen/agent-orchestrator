@@ -9,8 +9,8 @@ do próprio catálogo.
 
 from orchestrator.agent.declarado import construir_agente
 from orchestrator.agent.llm import FakeLLMClient
+from orchestrator.domains.reconciliation.synth.benchmark import SyntheticSource
 from orchestrator.domains.registro import CATALOGO
-from orchestrator.synth.benchmark import SyntheticSource
 
 
 def _investigador():
