@@ -106,7 +106,9 @@ export interface Run {
 // em `schemas.py` — união discriminada por `tipo`, como `BlocoPedido`.
 export type FontePedido =
   | { tipo: "sintetica"; seed: number; n: number; taxa_divergencia: number }
-  | { tipo: "arquivo"; caminho: string; kind: string; campo_id: string };
+  | { tipo: "arquivo"; caminho: string; kind: string; campo_id: string }
+  | { tipo: "postgres"; dsn_env: string; query: string; kind: string; campo_id: string }
+  | { tipo: "http"; url: string; token_env: string | null; kind: string; campo_id: string; caminho: string };
 
 export interface Receita {
   id: string;

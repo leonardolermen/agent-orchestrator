@@ -527,3 +527,20 @@ def test_a_copia_do_canvas_nao_diz_mais_que_a_API_nao_executa():
     js = _bundle()
     assert "a API não a executa" not in js
     assert "pede teto e chave" in js
+
+
+# -- a tela de execução oferece postgres e api http (Task 4 desta fatia) ----
+
+
+def test_a_tela_de_execucao_oferece_postgres_e_api_http():
+    js = _bundle()
+    assert "postgres (sem gabarito)" in js
+    assert "api http (sem gabarito)" in js
+    assert "nome da variável de ambiente no servidor" in js
+
+
+def test_a_tela_de_execucao_NAO_tem_campo_de_senha():
+    """O segredo é um NOME. Um `type="password"` ensinaria a pessoa a colar o
+    valor — e é a única forma de um segredo entrar pela tela."""
+    js = _bundle()
+    assert 'type:"password"' not in js and 'type="password"' not in js

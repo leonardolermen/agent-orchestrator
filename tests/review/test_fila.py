@@ -257,6 +257,17 @@ def test_a_chave_de_um_ref_de_arquivo_e_um_NOME_DE_ARQUIVO_valido(tmp_path):
     assert chave != dataset_de_ref("file:outro.csv@" + "a" * 64)
 
 
+@pytest.mark.parametrize(
+    "ref", ["pg:ERP_DSN/abc123def456@" + "f" * 64, 'http:https://api.exemplo/issues?x=1@"v7"']
+)
+def test_a_chave_de_uma_fonte_conectada_e_nome_de_arquivo_e_leva_o_esquema(ref):
+    from orchestrator.review.fila import dataset_de_ref
+
+    chave = dataset_de_ref(ref)
+    assert chave.startswith(("pg-", "http-"))
+    assert not any(c in chave for c in "/\\:@?\"")
+
+
 def test_conteudo_diferente_no_mesmo_caminho_troca_a_fila():
     """O `ref` de arquivo carrega o sha256 do CONTEÚDO, então editar o arquivo
     troca a chave. É o mesmo argumento do docstring de `dataset_id`: uma

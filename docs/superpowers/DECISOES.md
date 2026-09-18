@@ -3155,3 +3155,66 @@ guarda confia no `produz` declarado sem conferir: um resolver que declara
 `produz={"banco"}` e não emite nada passa pela borda sem erro — reabre "200
 sobre um pool que ninguém leu", contida hoje só pelo tripwire
 `test_a_lacuna_do_produtor_nao_e_alcancavel_pelo_CATALOGO`.
+
+### P9.2. Uma fonte conectada guarda o NOME do segredo, lê o valor na hora, e nunca o devolve
+
+**Decisão.** `PostgresSource(dsn_env, …)` e `HttpSource(url, token_env, …)`
+guardam o nome de uma variável de ambiente do servidor; o valor é lido no
+`load()`, usado e descartado. Variável ausente é 422 com o nome. Erros do
+driver voltam como `<classe>` (a mensagem inteira vai ao log do servidor).
+A query é leitura (`SELECT`/`WITH`, uma instrução), conferida antes de
+conectar; loopback e link-local são recusados antes de qualquer requisição.
+
+**Por que nome e não valor.** A tela é o único lugar por onde um segredo
+entraria — e entraria em composição, pedido persistido e `ref`, que são
+gravados. O nome não é segredo; o ambiente do servidor já é onde a
+`ANTHROPIC_API_KEY` mora. Um campo de senha na tela ensinaria a colar o
+valor; por isso nenhum existe (pinado no bundle).
+
+**Emenda da revisão final: não existe campo de senha, mas existe o campo
+`url`.** A frase acima estava certa sobre os campos que a tela oferece e errada
+sobre o que a pessoa consegue escrever: uma url carrega credencial de duas
+formas, e as duas chegavam ao `ref`. Correção, com tratamento diferente para
+cada uma porque elas são diferentes:
+
+- **userinfo** (`https://usuario:senha@api/x`, que httpx converte em
+  `Authorization: Basic …`) é RECUSADO. Não existe `user:senha@` inocente, e
+  recusar é o que ensina que `token_env` existe.
+- **query** (`?api_key=…`) é REDIGIDA, não recusada: `?since=2026-01-01` é comum
+  e legítimo, e recusar a query custaria caro. O que viaja — `ref`, log,
+  mensagem de erro — é a url sem query mais o digest dela, então duas urls
+  diferentes continuam com `ref` diferentes e o segredo não sai do processo. A
+  requisição ao parceiro leva a query inteira, que é o que a faz funcionar.
+
+A afirmação honesta é **"a plataforma não põe na `ref`/log um segredo escrito na
+url"**, e não "a url não pode carregar segredo". O que fica de fora, dito em voz
+alta: um segredo em segmento de CAMINHO (`/v1/<token>/itens`) não é coberto —
+não há como distingui-lo de um id, e apagar o caminho apagaria a identidade do
+recurso, que é a razão de a url entrar no `ref`. O campo `url` da tela ganhou
+dica dizendo para usar a variável do token.
+
+**Por que reduzir o erro do driver.** `OperationalError` do psycopg ecoa host
+e usuário. A classe diz ao cliente o que aconteceu; o texto inteiro diz ao
+operador — no log, que é dele.
+
+**Por que a guarda de SELECT é conservadora.** A plataforma lê. Um SELECT
+legítimo recusado é bug a corrigir; um DELETE que passasse seria um
+incidente no banco do parceiro. Parâmetros entram quando houver caso.
+
+**Por que loopback é recusado, e o que não é.** O servidor passa a fazer
+requisições para URLs da tela. Recusar o que só o servidor alcança é o
+mínimo; a guarda olha o host literal, e um nome DNS que resolva para
+loopback não é pego — dito em voz alta, allowlist é decisão do operador.
+
+**O que fica fora.** Paginação e cursor; outros bancos (a costura —
+`conectar` injetável, `ref` por hash — está pronta); "testar conexão"; CLI.
+
+**Um limite que vale dizer em voz alta.** O teto de linhas do Postgres limita os
+dicionários que a plataforma constrói, não o que trafega: o cursor padrão do
+`psycopg3` é client-side, então o `execute()` já trouxe o resultado inteiro para
+o libpq antes de qualquer contagem. Sobre uma tabela enorme, quem limita é o
+`statement_timeout`, não o teto. O conserto certo é cursor nomeado
+(server-side); ele não entrou nesta fatia porque `psycopg` não está no ambiente
+de teste e uma mudança não testada no caminho de conexão é troca pior que um
+limite conhecido e escrito. No HTTP não há esse buraco: o corpo é lido em
+pedaços com teto de bytes, e a leitura para no pedaço que estoura.
