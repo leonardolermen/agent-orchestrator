@@ -53,6 +53,7 @@ from typing import Any
 from orchestrator.agent.declarado import (
     AgenteDeclarado,
     ClienteDeValidacao,
+    ValorDeParametro,
     construir_agente,
 )
 from orchestrator.agent.llm import LLMClient
@@ -71,7 +72,7 @@ class BlocoRegra:
     """Uma regra do catálogo, com os parâmetros ajustados."""
 
     nome: str
-    parametros: dict[str, int] = field(default_factory=dict)
+    parametros: dict[str, ValorDeParametro] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

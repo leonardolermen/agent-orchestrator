@@ -376,15 +376,25 @@ def workflow_json(definicao: WorkflowDefinition) -> WorkflowJSON:
 # ---------------------------------------------------------------------------
 
 
+# O que um parametro de regra pode valer, do lado do JSON. Espelha
+# `ValorDeParametro` com `list` no lugar de `tuple`: JSON nao tem tupla, e
+# fingir que tem faria o Pydantic recusar a propria resposta que ele serializou.
+ValorJSON = int | str | list[str]
+
+
 class ParametroJSON(BaseModel):
     nome: str
-    default: int
+    default: ValorJSON
     descricao: str
+    # A tela precisa saber a diferença entre "o default serve" e "sem isto o
+    # bloco não existe". Sem o campo, um bloco genérico apareceria igual a um
+    # já configurado e só recusaria ao compor.
+    obrigatorio: bool = False
 
 
 class ResolverReceitaJSON(BaseModel):
     nome: str
-    parametros: dict[str, int] = Field(default_factory=dict)
+    parametros: dict[str, ValorJSON] = Field(default_factory=dict)
 
 
 class ReceitaRequest(BaseModel):
@@ -495,7 +505,7 @@ class RegraJSON(BaseModel):
 class BlocoRegraJSON(BaseModel):
     tipo: Literal["regra"]
     nome: str
-    parametros: dict[str, int] = Field(default_factory=dict)
+    parametros: dict[str, ValorJSON] = Field(default_factory=dict)
 
 
 class BlocoAgenteJSON(BaseModel):

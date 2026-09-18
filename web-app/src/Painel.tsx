@@ -4,7 +4,9 @@ import {
   type Ambiente,
   type AgenteDeclarado,
   type Catalogo,
+  type Parametro,
   type Regra,
+  type ValorParametro,
   type WorkflowConstruido,
 } from "./api";
 import { classeDo, nomeDo, type DadosAgente, type DadosDoNo } from "./NoResolver";
@@ -27,7 +29,7 @@ interface Props {
   onAcrescentarAgente: (a: AgenteDeclarado) => void;
   onNovoAgente: () => void;
   onRemover: (id: string) => void;
-  onMudarParametro: (id: string, param: string, valor: number) => void;
+  onMudarParametro: (id: string, param: string, valor: ValorParametro) => void;
   onMudarAgente: (id: string, patch: Partial<AgenteDeclarado>) => void;
   onCompor: (id: string, nome: string) => void;
   onMudarAmbiente: (a: Ambiente) => void;
@@ -36,6 +38,85 @@ interface Props {
 const CAMPO =
   "w-full rounded border border-borda bg-papel px-2 py-1.5 text-[12px] " +
   "dark:border-noite-borda dark:bg-noite-fundo dark:text-noite-tinta";
+
+/** O editor de UM parametro, escolhido pelo TIPO do valor.
+ *
+ *  Um so `<input type="number">` servia enquanto todo bloco vinha de um dominio
+ *  ja configurado — o L2 sabe que casa por documento, e o que restava ajustar
+ *  era a folga. Um bloco generico ("igualdade") recebe NOME DE CAMPO, e nome de
+ *  campo e texto, quando nao uma lista deles.
+ *
+ *  O tipo vem do `default` e nao de um campo `tipo` ao lado: dois campos
+ *  descrevendo a mesma coisa divergiriam no primeiro parametro novo, que e a
+ *  razao que `ParametroDeRegra` ja da no servidor.
+ *
+ *  Lista entra separada por virgula. E o editor mais simples que existe e o
+ *  servidor valida a forma de cada campo ("valor=total") com mensagem propria —
+ *  um editor de linhas com botao de adicionar viria depois, sem mudar o
+ *  contrato. */
+function CampoDeParametro({
+  spec,
+  valor,
+  onMudar,
+}: {
+  spec: Parametro;
+  valor: ValorParametro;
+  onMudar: (v: ValorParametro) => void;
+}) {
+  const lista = Array.isArray(spec.default);
+  const texto = typeof spec.default === "string";
+  // Obrigatorio ainda vazio: o bloco NAO existe sem isto, e o servidor recusa
+  // ao compor. Dizer aqui poupa a viagem — e a borda vermelha e o unico jeito
+  // de a pessoa ver qual dos campos falta sem ler a mensagem de erro inteira.
+  const faltando =
+    spec.obrigatorio &&
+    (Array.isArray(valor) ? valor.length === 0 : !String(valor ?? "").trim());
+  const borda = faltando ? " border-red-400 dark:border-red-500" : "";
+
+  return (
+    <label className="mb-2.5 block">
+      <span className="flex items-center gap-2">
+        <span className="text-[11.5px] text-neutral-600 dark:text-noite-fraca">
+          {spec.nome}
+          {spec.obrigatorio && <span className="ml-0.5 text-red-500">*</span>}
+        </span>
+        {lista || texto ? (
+          <input
+            type="text"
+            value={Array.isArray(valor) ? valor.join(", ") : String(valor ?? "")}
+            placeholder={lista ? "documento, valor=total" : ""}
+            onChange={(ev) =>
+              onMudar(
+                lista
+                  ? ev.target.value
+                      .split(",")
+                      .map((s) => s.trim())
+                      .filter(Boolean)
+                  : ev.target.value,
+              )
+            }
+            className={`ml-auto w-44 font-mono ${CAMPO}${borda}`}
+          />
+        ) : (
+          <input
+            type="number"
+            value={typeof valor === "number" ? valor : ""}
+            onChange={(ev) =>
+              // `parseInt` e nao `Number`: campo vazio vira NaN e o servidor
+              // recusa. Um 0 silencioso viraria `max_cents=0`, que e workflow
+              // legitimo e nao o que a pessoa quis.
+              onMudar(parseInt(ev.target.value, 10))
+            }
+            className={`ml-auto w-24 text-right font-mono ${CAMPO}${borda}`}
+          />
+        )}
+      </span>
+      <span className="mt-0.5 block text-[10.5px] leading-snug text-neutral-400 dark:text-noite-fraca">
+        {spec.descricao}
+      </span>
+    </label>
+  );
+}
 
 export function Painel(p: Props) {
   const [id, setId] = useState("");
@@ -119,35 +200,17 @@ export function Painel(p: Props) {
             </p>
           ) : (
             p.selecionado.data.regra.parametros.map((spec) => (
-              <label key={spec.nome} className="mb-2.5 block">
-                <span className="flex items-center gap-2">
-                  <span className="text-[11.5px] text-neutral-600 dark:text-noite-fraca">
-                    {spec.nome}
-                  </span>
-                  <input
-                    type="number"
-                    value={
-                      (p.selecionado!.data as { parametros: Record<string, number> }).parametros[
-                        spec.nome
-                      ]
-                    }
-                    onChange={(ev) =>
-                      // `parseInt` e não `Number`: campo vazio vira NaN e o
-                      // servidor recusa. Um 0 silencioso viraria `max_cents=0`,
-                      // que é cascata legítima e não o que a pessoa quis.
-                      p.onMudarParametro(
-                        p.selecionado!.id,
-                        spec.nome,
-                        parseInt(ev.target.value, 10),
-                      )
-                    }
-                    className={`ml-auto w-24 text-right font-mono ${CAMPO}`}
-                  />
-                </span>
-                <span className="mt-0.5 block text-[10.5px] leading-snug text-neutral-400 dark:text-noite-fraca">
-                  {spec.descricao}
-                </span>
-              </label>
+              <CampoDeParametro
+                key={spec.nome}
+                spec={spec}
+                valor={
+                  (p.selecionado!.data as { parametros: Record<string, ValorParametro> })
+                    .parametros[spec.nome]
+                }
+                onMudar={(valor) =>
+                  p.onMudarParametro(p.selecionado!.id, spec.nome, valor)
+                }
+              />
             ))
           )}
           <Remover onClick={() => p.onRemover(p.selecionado!.id)} />

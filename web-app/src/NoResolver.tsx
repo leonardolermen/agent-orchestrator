@@ -1,5 +1,11 @@
 import { Handle, Position, type NodeProps } from "@xyflow/react";
-import { CORES, type AgenteDeclarado, type CostClass, type Regra } from "./api";
+import {
+  CORES,
+  type AgenteDeclarado,
+  type CostClass,
+  type Regra,
+  type ValorParametro,
+} from "./api";
 
 /**
  * Um nó do canvas. Duas naturezas, e a assimetria é a tese do produto.
@@ -19,7 +25,7 @@ import { CORES, type AgenteDeclarado, type CostClass, type Regra } from "./api";
 export interface DadosRegra extends Record<string, unknown> {
   tipo: "regra";
   regra: Regra;
-  parametros: Record<string, number>;
+  parametros: Record<string, ValorParametro>;
 }
 
 export interface DadosAgente extends Record<string, unknown> {

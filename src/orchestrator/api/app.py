@@ -240,7 +240,14 @@ def _regra_json(r: RegraDisponivel) -> RegraJSON:
         cost_class=r.cost_class.name,
         resumo=r.resumo,
         parametros=[
-            ParametroJSON(nome=p.nome, default=p.default, descricao=p.descricao)
+            ParametroJSON(
+                nome=p.nome,
+                # `list` e não `tuple`: o JSON não tem tupla, e o Pydantic
+                # recusaria a própria resposta que serializou.
+                default=list(p.default) if isinstance(p.default, tuple) else p.default,
+                descricao=p.descricao,
+                obrigatorio=p.obrigatorio,
+            )
             for p in r.parametros
         ],
     )

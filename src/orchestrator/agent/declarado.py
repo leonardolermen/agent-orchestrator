@@ -259,6 +259,24 @@ def construir_agente(
     )
 
 
+# O que um parâmetro de regra pode valer.
+#
+# Era `int`, e o `int` era o teto de quanto uma regra podia ser configurada: com
+# ele, a tela ajusta folga e limite, e nada mais. Uma regra GENÉRICA precisa
+# receber NOME DE CAMPO — em quais campos ela casa —, e nome de campo é `str`,
+# quando não uma lista deles.
+#
+# A assimetria estava documentada como defeito conhecido em
+# `authoring/composicao.py`: "um `parametros: dict[str, int]` carregando um
+# prompt — e o `int` no tipo é o aviso de que não cabe". O aviso valia também
+# para o lado determinístico.
+#
+# FECHADO e não `Any`: os três casos são o que a tela sabe editar (número, texto
+# e lista de textos) e o que o JSON transporta sem ambiguidade. `Any` aceitaria
+# um dicionário aninhado que nenhum editor renderiza e nenhum construtor espera.
+ValorDeParametro = int | str | tuple[str, ...]
+
+
 @dataclass(frozen=True)
 class ParametroDeRegra:
     """O que uma regra aceita ser ajustada. DESCREVE, não valida.
@@ -268,11 +286,28 @@ class ParametroDeRegra:
     `max_cents` negativo, e é lá que a recusa tem o contexto para explicar por
     quê —, e duplicá-las aqui criaria duas fontes de verdade que divergiriam na
     primeira mudança.
+
+    O TIPO do parâmetro é o tipo do `default`, e não um campo à parte: um campo
+    `tipo: str` ao lado de um `default` seria a segunda fonte de verdade que o
+    parágrafo acima recusa, e os dois divergiriam no primeiro parâmetro novo.
     """
 
     nome: str
-    default: int
+    default: ValorDeParametro
     descricao: str
+    # Parâmetro que a pessoa PRECISA preencher para o bloco existir.
+    #
+    # Nasceu com as regras genéricas, e elas são a razão de ele não ter existido
+    # antes: enquanto todo bloco era de um domínio, todo bloco já vinha
+    # configurado — o `L2` sabe que casa por documento, e o que a tela ajusta é
+    # só a folga. `igualdade` não sabe nada; sem alguém dizer em quais campos
+    # ela casa, ela não é uma regra, é a forma de uma.
+    #
+    # Sem isto, o bloco entraria no catálogo com um default que não funciona, e
+    # a recusa apareceria como "não casou nada" ao rodar — ou, pior, um default
+    # PLAUSÍVEL (`esquerda="banco"`) casaria zero em silêncio sobre qualquer
+    # fonte que não seja conciliação.
+    obrigatorio: bool = False
 
 
 @dataclass(frozen=True)
@@ -297,8 +332,31 @@ class RegraDisponivel:
     # que passar, e é esse padrão que já deu um defeito silencioso — o
     # `_construir_definicao` da API, que decidia repassar a fila olhando o NOME
     # do parâmetro da fábrica.
-    construir: Callable[[dict[str, int]], Any]
+    construir: Callable[[dict[str, ValorDeParametro]], Any]
     parametros: tuple[ParametroDeRegra, ...] = ()
+
+    @property
+    def obrigatorios(self) -> tuple[str, ...]:
+        """Os parâmetros sem os quais este bloco não constrói.
+
+        Vazio para todo bloco que um domínio já configurou — que era o caso de
+        todos até as regras genéricas existirem.
+        """
+        return tuple(p.nome for p in self.parametros if p.obrigatorio)
+
+    def faltando(self, parametros: dict[str, ValorDeParametro]) -> tuple[str, ...]:
+        """O que a pessoa ainda não preencheu. Para a recusa NOMEAR o que falta.
+
+        Vazio conta como ausente: a tela manda `""` e `[]` para campo que nunca
+        foi tocado, e tratá-los como preenchidos faria o bloco construir com
+        nada e casar zero — exatamente o silêncio que `obrigatorio` existe para
+        impedir.
+        """
+        return tuple(
+            nome
+            for nome in self.obrigatorios
+            if not parametros.get(nome)
+        )
 
     def __post_init__(self) -> None:
         if self.cost_class is CostClass.AGENTE:

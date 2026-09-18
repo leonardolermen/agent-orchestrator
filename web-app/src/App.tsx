@@ -25,6 +25,7 @@ import {
   type Receita,
   type Regra,
   type WorkflowConstruido,
+  type ValorParametro,
 } from "./api";
 import { Chat } from "./Chat";
 import { NoResolver, classeDo, nomeDo, type DadosDoNo } from "./NoResolver";
@@ -171,7 +172,7 @@ export default function App() {
   };
 
   const acrescentarRegra = (r: Regra) => {
-    const parametros: Record<string, number> = {};
+    const parametros: Record<string, ValorParametro> = {};
     for (const p of r.parametros) parametros[p.nome] = p.default;
     acrescentar({ tipo: "regra", regra: r, parametros });
   };
@@ -199,7 +200,7 @@ export default function App() {
     invalidar();
   };
 
-  const mudarParametro = (id: string, param: string, valor: number) =>
+  const mudarParametro = (id: string, param: string, valor: ValorParametro) =>
     setNos((atuais) =>
       atuais.map((n) =>
         n.id === id && n.data.tipo === "regra"
@@ -273,7 +274,7 @@ export default function App() {
       const agente = catalogo.agentes.find((x) => x.name === r.nome);
       let dados: DadosDoNo | null = null;
       if (regra) {
-        const parametros: Record<string, number> = {};
+        const parametros: Record<string, ValorParametro> = {};
         for (const p of regra.parametros) parametros[p.nome] = p.default;
         dados = { tipo: "regra", regra, parametros: { ...parametros, ...(r.parametros ?? {}) } };
       } else if (agente) {

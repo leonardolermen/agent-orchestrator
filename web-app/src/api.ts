@@ -9,10 +9,19 @@ export type CostClass = "REGRA" | "AGENTE" | "CREW" | "HUMANO";
 // TypeScript não tem o enum, e há teste no servidor garantindo a ordem.
 export const ORDEM_CLASSE: CostClass[] = ["REGRA", "AGENTE", "CREW", "HUMANO"];
 
+// O que um parametro de regra pode valer. Era `number`, e o `number` era o teto
+// de quanto uma regra podia ser configurada: com ele a tela ajusta folga e
+// limite, e nada mais. Um bloco GENERICO recebe NOME DE CAMPO — em quais campos
+// ele casa —, e nome de campo e texto, quando nao uma lista deles.
+export type ValorParametro = number | string | string[];
+
 export interface Parametro {
   nome: string;
-  default: number;
+  default: ValorParametro;
   descricao: string;
+  // Sem isto, um bloco generico apareceria igual a um ja configurado por um
+  // dominio, e so recusaria na hora de compor.
+  obrigatorio: boolean;
 }
 
 export interface Ferramenta {
@@ -114,7 +123,7 @@ export interface Receita {
   id: string;
   nome: string;
   justificativa: string;
-  resolvers: { nome: string; parametros?: Record<string, number> }[];
+  resolvers: { nome: string; parametros?: Record<string, ValorParametro> }[];
 }
 
 // Um bloco de composição, como o servidor o recebe. UNIÃO DISCRIMINADA por
@@ -122,7 +131,7 @@ export interface Receita {
 // `parametros?` ao lado de `declaracao?` aceitaria os quatro cruzamentos, dois
 // dos quais não significam nada.
 export type BlocoPedido =
-  | { tipo: "regra"; nome: string; parametros: Record<string, number> }
+  | { tipo: "regra"; nome: string; parametros: Record<string, ValorParametro> }
   | { tipo: "agente"; declaracao: AgenteDeclarado };
 
 export interface ComposicaoResumo {
@@ -187,7 +196,7 @@ export const api = {
     id: string;
     nome: string;
     justificativa: string;
-    resolvers: { nome: string; parametros: Record<string, number> }[];
+    resolvers: { nome: string; parametros: Record<string, ValorParametro> }[];
   }) =>
     pedir<WorkflowConstruido>("/api/receitas", {
       method: "POST",

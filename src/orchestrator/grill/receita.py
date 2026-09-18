@@ -10,7 +10,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from orchestrator.agent.declarado import AgenteDeclarado, RegraDisponivel, construir_agente
+from orchestrator.agent.declarado import (
+    AgenteDeclarado,
+    RegraDisponivel,
+    ValorDeParametro,
+    construir_agente,
+)
 from orchestrator.agent.llm import LLMClient
 from orchestrator.domains.reconciliation.agent.ferramentas import ToolContext
 from orchestrator.domains.reconciliation.revisor import RevisorHumano
@@ -44,7 +49,7 @@ def validar_id(workflow_id: str) -> None:
 @dataclass(frozen=True)
 class ResolverReceita:
     nome: str
-    parametros: dict[str, int] = field(default_factory=dict)
+    parametros: dict[str, ValorDeParametro] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

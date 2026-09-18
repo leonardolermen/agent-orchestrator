@@ -37,7 +37,7 @@ class Igualdade:
     # Campos (pelo nome do lado ESQUERDO) comparados por `abs()` nos dois lados.
     modulo: tuple[str, ...] = ()
     name: str = "igualdade"
-    resumo: str = "os campos escolhidos coincidem exatamente"
+    resumo: str = "os campos escolhidos coincidem exatamente nos dois lados"
     cost_class: CostClass = field(default=CostClass.REGRA, init=False)
 
     def __post_init__(self) -> None:
