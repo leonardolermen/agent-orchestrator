@@ -1256,6 +1256,24 @@ declarados só emitem propostas; vários stages por composição; a lacuna do
 produtor, contida pelo `xfail(strict)` e pelo estopim da fatia anterior.
 ```
 
+- [ ] **Step 4b: Três textos a mais que a exploração achou — X7 fechou, X8 não**
+
+Os três dizem "X7/X8" como se fosse um item só. Depois desta fatia, X7 (a metade de `consome`) está fechado e X8 (a metade de `produz`) continua aberto; cada texto passa a dizer as duas coisas.
+
+`README.md`, o parágrafo da `Tarefa` (por volta da linha 97) que termina em *"é o mesmo X7/X8 da lacuna de `kind`, no…"*: troque a menção por *"é a metade X8 da lacuna de `kind` — a metade X7, `consome` derivado e conferido na borda, fechou; `produz` declarado por agente ainda não existe"*, mantendo o resto do parágrafo.
+
+`src/orchestrator/domains/registro.py:204-210`, o comentário que diz *"Ensinar `AgenteDeclarado` a declarar `produz` é o X7/X8 que o plano de execução-como-grafo reserva para depois"*: vira
+
+```python
+# Catalogá-lo hoje exigiria mentir sobre o que ele faz. Ensinar
+# `AgenteDeclarado` a declarar `produz` é a metade X8 da lacuna de `kind` —
+# ainda reservada. A metade X7 (`consome` declarado, derivado por
+# `consome_de` e conferido na borda do `/runs`) fechou; ver P9.1 em
+# `docs/superpowers/DECISOES.md`.
+```
+
+`src/orchestrator/authoring/composicao.py`, o parágrafo **"Estado desta fatia, dito em voz alta."** (por volta da linha 54): foi um interino, escrito quando `consome` já era populado e a borda ainda não existia, e diz de si mesmo *"este cabeçalho é reescrito por inteiro quando ela existir"*. Ela existe. **Remova o parágrafo** — o texto do Step 3 é a reescrita que ele prometia.
+
 - [ ] **Step 5: Confira que nada mais chama a lacuna de aberta**
 
 ```bash
