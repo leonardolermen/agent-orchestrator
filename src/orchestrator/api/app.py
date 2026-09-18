@@ -68,6 +68,7 @@ from orchestrator.api.entrevista import conduzir
 from orchestrator.api.schemas import (
     AgenteDeclaradoJSON,
     AmbienteJSON,
+    BlocoJSON,
     CatalogoJSON,
     ComposicaoRequest,
     ComposicaoResumoJSON,
@@ -94,6 +95,7 @@ from orchestrator.authoring.composicao import (
     BlocoAgente,
     BlocoRegra,
     Composicao,
+    Etapa,
     construir_composicao,
     gravar,
     listar,
@@ -225,6 +227,46 @@ def listar_workflows() -> list[WorkflowResumoJSON]:
 def _ferramenta_json(ferramentas: ToolRegistry, nome: str) -> FerramentaJSON:
     """A descrição vem do `ToolSpec`. Nunca escrita à mão nesta camada."""
     return FerramentaJSON(nome=nome, descricao=ferramentas.spec(nome).description)
+
+
+def _blocos_de(pedidos: list[BlocoJSON]) -> list[Bloco]:
+    """Os blocos de UMA etapa, do JSON para o domínio.
+
+    Era o corpo do laço da rota, quando havia um degrau só. Virou função porque
+    agora há uma lista de etapas e cada uma tem os seus — e duplicar este
+    tratamento por etapa faria a recusa do agente declarado divergir entre a
+    primeira e as demais.
+    """
+    blocos: list[Bloco] = []
+    for b in pedidos:
+        if b.tipo == "regra":
+            blocos.append(BlocoRegra(nome=b.nome, parametros=dict(b.parametros)))
+            continue
+        d = b.declaracao
+        try:
+            # `AgenteDeclarado.__post_init__` recusa vocabulário vazio, prompt
+            # que não interpola nada e `abstem_com` colidindo com um tipo. São
+            # recusas de DOMÍNIO, com texto escrito para ser lido, e viram o
+            # 422 — não um erro de schema do Pydantic, que diria "field
+            # required" onde a verdade é "isso mediria errado".
+            blocos.append(
+                BlocoAgente(
+                    declaracao=AgenteDeclarado(
+                        name=d.name,
+                        system=d.system,
+                        kind=d.kind,
+                        prompt=d.prompt,
+                        tipos=tuple(d.tipos),
+                        abstem_com=d.abstem_com,
+                        ferramentas=tuple(d.ferramentas),
+                        max_turns=d.max_turns,
+                        budget_microcents=d.budget_microcents,
+                    )
+                )
+            )
+        except ValueError as erro:
+            raise HTTPException(status_code=422, detail=str(erro)) from erro
+    return blocos
 
 
 def _regra_json(r: RegraDisponivel) -> RegraJSON:
@@ -411,35 +453,7 @@ def criar_composicao(pedido: ComposicaoRequest) -> WorkflowJSON:
     módulo: compor pela web não gasta dinheiro. (A entrevista gasta, com teto, e
     é a exceção declarada no cabeçalho.)
     """
-    blocos: list[Bloco] = []
-    for b in pedido.blocos:
-        if b.tipo == "regra":
-            blocos.append(BlocoRegra(nome=b.nome, parametros=dict(b.parametros)))
-        else:
-            d = b.declaracao
-            try:
-                # `AgenteDeclarado.__post_init__` recusa vocabulário vazio,
-                # prompt que não interpola nada e `abstem_com` colidindo com um
-                # tipo. São recusas de DOMÍNIO, com texto escrito para ser lido,
-                # e viram o 422 — não um erro de schema do Pydantic, que diria
-                # "field required" onde a verdade é "isso mediria errado".
-                blocos.append(
-                    BlocoAgente(
-                        declaracao=AgenteDeclarado(
-                            name=d.name,
-                            system=d.system,
-                            kind=d.kind,
-                            prompt=d.prompt,
-                            tipos=tuple(d.tipos),
-                            abstem_com=d.abstem_com,
-                            ferramentas=tuple(d.ferramentas),
-                            max_turns=d.max_turns,
-                            budget_microcents=d.budget_microcents,
-                        )
-                    )
-                )
-            except ValueError as erro:
-                raise HTTPException(status_code=422, detail=str(erro)) from erro
+    blocos = _blocos_de(pedido.blocos)
 
     try:
         composicao = Composicao(
@@ -450,7 +464,13 @@ def criar_composicao(pedido: ComposicaoRequest) -> WorkflowJSON:
             # cliente permitiria gravar uma composição "criada" antes de outra
             # que a antecedeu.
             gerado_em=datetime.now(UTC),
-            blocos=tuple(blocos),
+            # `blocos` OU `etapas`, nunca os dois — `Composicao` recusa, e a
+            # recusa chega à tela como o 422 que ela já sabe mostrar.
+            blocos=tuple(blocos) if not pedido.etapas else (),
+            etapas=tuple(
+                Etapa(nome=e.nome, blocos=tuple(_blocos_de(e.blocos)))
+                for e in pedido.etapas
+            ),
             entrega=tuple(pedido.entrega),
         )
         definicao = construir_composicao(composicao)

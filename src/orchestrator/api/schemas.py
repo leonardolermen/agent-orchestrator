@@ -521,6 +521,18 @@ class BlocoAgenteJSON(BaseModel):
 BlocoJSON = Annotated[BlocoRegraJSON | BlocoAgenteJSON, Field(discriminator="tipo")]
 
 
+class EtapaJSON(BaseModel):
+    """Um degrau: os blocos que rodam sobre o mesmo pool.
+
+    Dentro dele a ordem é por CUSTO (o motor ordena); entre degraus é por DADO
+    (o kind que um produz é o que ativa o outro). Por isso não há campo de
+    ordem DENTRO da etapa e há ordem ENTRE etapas — a lista é a sequência.
+    """
+
+    nome: str
+    blocos: list[BlocoJSON] = Field(min_length=1)
+
+
 class ComposicaoRequest(BaseModel):
     """Uma cascata composta na tela, a partir do catálogo.
 
@@ -533,7 +545,12 @@ class ComposicaoRequest(BaseModel):
     id: str
     nome: str
     justificativa: str = ""
-    blocos: list[BlocoJSON] = Field(min_length=1)
+    # `blocos` OU `etapas`, exatamente um — o mesmo açúcar de `Composicao`.
+    # `blocos` continua valendo e é o que a tela manda para um degrau só;
+    # `min_length` saiu dele porque agora a lista pode legitimamente vir vazia,
+    # e quem cobra "pelo menos um bloco" é a composição, com a mensagem certa.
+    blocos: list[BlocoJSON] = Field(default_factory=list)
+    etapas: list[EtapaJSON] = Field(default_factory=list)
     # Os kinds que SÃO a saída deste workflow — o `Output` da tela. Sem eles, um
     # bloco que ramifica produz um kind que ninguém consome, e o kernel recusa
     # por beco sem saída. É declaração e não degrau: nada roda aqui.

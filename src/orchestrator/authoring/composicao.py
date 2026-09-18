@@ -39,8 +39,15 @@ a fonte, e "valida construindo" é a garantia desta função. Um `kind` digitado
 errado é pego na execução, antes de gastar — não mais "aceito, e em execução
 nunca pega item nenhum".
 
-O que ainda não existe: `produz` derivado (X8), desnecessário enquanto um
-`AgenteDeclarado` só emite propostas; e mais de um stage por composição.
+**Mais de um degrau, e por que isso importa.** `Composicao` carrega `etapas`, e
+`blocos=(...)` é o açúcar de uma etapa só — o mesmo par que o kernel tem em
+`Task()`/`Stage()`, e pela mesma razão: o caso simples não deve custar a forma
+geral. Dentro de uma etapa a ordem é por CUSTO; entre etapas é por DADO. São os
+dois eixos do §2 do README.
+
+Enquanto havia um degrau só, um bloco que ramifica não tinha para onde ramificar:
+o ramo virava beco sem saída e só a `entrega` o salvava. Com dois, o ramo tem
+degrau de verdade depois dele.
 """
 
 import hashlib
@@ -91,11 +98,49 @@ Bloco = BlocoRegra | BlocoAgente
 
 
 @dataclass(frozen=True)
+class Etapa:
+    """Um degrau do workflow: os blocos que rodam sobre o mesmo pool.
+
+    **Dentro de uma etapa a ordem é por CUSTO; entre etapas é por DADO.** São os
+    dois eixos do §2 do README, e é por isso que etapa não é decoração: o
+    barato tenta antes do caro no MESMO trabalho, e a etapa seguinte só vê o
+    que a anterior produziu.
+
+    Uma etapa sozinha era tudo o que a tela sabia montar, e enquanto foi assim
+    um bloco que ramifica não tinha para onde ramificar — o ramo virava beco sem
+    saída e só a `entrega` o salvava. Com duas, o ramo tem degrau de verdade
+    depois dele.
+    """
+
+    nome: str
+    blocos: tuple[Bloco, ...]
+
+    def __post_init__(self) -> None:
+        if not self.blocos:
+            raise ValueError(
+                f"etapa {self.nome!r} sem bloco: um degrau vazio não roda e não "
+                f"produz, e ficaria no desenho parecendo que faz alguma coisa"
+            )
+        if not self.nome.strip():
+            raise ValueError("etapa sem nome: é por ele que o trace a identifica")
+
+
+@dataclass(frozen=True)
 class Composicao:
     id: str
     nome: str
-    blocos: tuple[Bloco, ...]
     gerado_em: datetime
+    # `blocos` OU `etapas`, exatamente um — e a assimetria é a mesma do `Task()`
+    # do kernel, que existe "para que quem chega do CrewAI encontre a palavra
+    # que espera, sem que o kernel ganhe um segundo conceito para manter em
+    # sincronia". Aqui: `blocos=(...)` é o açúcar de uma etapa só, e é o que
+    # todo chamador de hoje escreve.
+    #
+    # Depois de construída, `blocos` é a lista ACHATADA de todos os blocos e
+    # `etapas` é a estrutura. As duas continuam verdadeiras porque uma é
+    # derivada da outra, nunca escritas em paralelo.
+    blocos: tuple[Bloco, ...] = ()
+    etapas: tuple[Etapa, ...] = ()
     # Os `kind` que SÃO a saída deste workflow.
     #
     # É o `Output` do canvas, e é uma DECLARAÇÃO e não um degrau: nada roda
@@ -115,10 +160,29 @@ class Composicao:
     version: str = field(init=False)
 
     def __post_init__(self) -> None:
-        if not self.blocos:
+        # Exatamente um dos dois, como `Task()` exige `resolver` OU `cascade`.
+        # Aceitar os dois deixaria a pergunta "qual vence?" sem resposta boa, e
+        # aceitar nenhum é o workflow vazio que a linha seguinte recusa.
+        if self.blocos and self.etapas:
+            raise ValueError(
+                "`blocos` e `etapas` juntos: `blocos` é o açúcar de uma etapa "
+                "só. Para mais de um degrau, use `etapas`"
+            )
+        if not self.blocos and not self.etapas:
             raise ValueError("o workflow precisa de pelo menos um bloco")
         if self.gerado_em.tzinfo is None:
             raise ValueError("`gerado_em` precisa de fuso (use UTC)")
+        # Normaliza para a forma GERAL e deriva a achatada. Os dois campos
+        # sobrevivem porque um sai do outro: `etapas` é a estrutura, `blocos` é
+        # "todos os blocos", e nenhum leitor de hoje precisou mudar.
+        if self.blocos:
+            object.__setattr__(
+                self, "etapas", (Etapa(nome=self.nome, blocos=self.blocos),)
+            )
+        else:
+            object.__setattr__(
+                self, "blocos", tuple(b for e in self.etapas for b in e.blocos)
+            )
         # Versão derivada do CONTEÚDO, como `WorkflowDefinition.version` e
         # `EvalDataset.version`. Dois resultados de benchmark só são comparáveis
         # se mediram a mesma cascata, e sem derivação nada impede duas
@@ -130,7 +194,16 @@ class Composicao:
         digest = hashlib.sha256(
             json.dumps(
                 {
-                    "blocos": _blocos_para_json(self.blocos),
+                    # As ETAPAS, não os blocos achatados: os mesmos blocos em um
+                    # degrau ou em dois são workflows diferentes — no primeiro
+                    # todos disputam o mesmo pool, no segundo o de baixo só vê o
+                    # que o de cima produziu. Achatar aqui daria a mesma versão
+                    # para os dois, e dois resultados de benchmark passariam a
+                    # alegar que mediram a mesma coisa.
+                    "etapas": [
+                        {"nome": e.nome, "blocos": _blocos_para_json(e.blocos)}
+                        for e in self.etapas
+                    ],
                     "entrega": sorted(self.entrega),
                 },
                 sort_keys=True,
@@ -219,10 +292,43 @@ def construir_composicao(
     if fila is None:
         fila = Fila.vazia()
 
+    # Os nomes são únicos no WORKFLOW inteiro, não por etapa. Um `L1` em dois
+    # degraus não é ambíguo para o motor, mas é para as CONTAS: `Run.
+    # resolved_by_resolver` é indexado por nome, e dois resolvers homônimos
+    # fundiriam as contagens num número que não é de nenhum dos dois.
     vistos: set[str] = set()
+    etapas: list[Stage] = []
+
+    for etapa in c.etapas:
+        etapas.append(
+            _degrau(etapa, por_nome, vistos, cliente, ferramentas, fila)
+        )
+
+    return WorkflowDefinition(
+        id=c.id,
+        name=c.nome,
+        stages=tuple(etapas),
+        entrega=frozenset(c.entrega),
+    )
+
+
+def _degrau(
+    etapa: "Etapa",
+    por_nome: dict[str, Any],
+    vistos: set[str],
+    cliente: LLMClient,
+    ferramentas: Any,
+    fila: Fila,
+) -> Stage:
+    """Um degrau: os blocos de uma etapa, virados resolvers.
+
+    Separado do laço de fora porque agora há MAIS DE UM degrau, e o corpo que
+    monta um deles é o mesmo para todos. Enquanto era um só, estar tudo junto
+    não custava nada.
+    """
     resolvers: list[Resolver] = []
 
-    for bloco in c.blocos:
+    for bloco in etapa.blocos:
         nome = bloco.nome if isinstance(bloco, BlocoRegra) else bloco.declaracao.name
         if nome in vistos:
             raise ValueError(
@@ -267,20 +373,8 @@ def construir_composicao(
             # kind que a fonte não entrega — por resolver, antes de gastar.
             resolvers.append(construir_agente(bloco.declaracao, cliente, ferramentas))
 
-    return WorkflowDefinition(
-        id=c.id,
-        name=c.nome,
-        # Um estágio só. Vários estágios são uma decisão de produto que ainda
-        # não tem caso — e `Stage.ordered()` já dá a cascata inteira ordenada
-        # por custo dentro de um.
-        #
-        # O estágio herda o nome da COMPOSIÇÃO. Antes ele herdava o nome do
-        # domínio, e o domínio era o mesmo para toda cascata composta sobre
-        # ele — o que fazia todo estágio de conciliação se chamar "Conciliação
-        # bancária", independentemente do que a pessoa tinha montado.
-        stages=(
-            Stage(
-                name=c.nome,
+    return Stage(
+                name=etapa.nome,
                 cascade=tuple(resolvers),
                 # A fiação DESTE degrau, derivada dos blocos — a metade X7 da
                 # lacuna de `kind` (ver cabeçalho do módulo).
@@ -293,10 +387,7 @@ def construir_composicao(
                 # esta tela tinha acabado de aceitar.
                 consome=consome_de(resolvers),
                 produz=produz_de(resolvers),
-            ),
-        ),
-        entrega=frozenset(c.entrega),
-    )
+            )
 
 
 # -- serialização -----------------------------------------------------------
