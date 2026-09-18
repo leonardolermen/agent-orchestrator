@@ -256,6 +256,74 @@ def _igualdade(p: dict[str, ValorDeParametro]) -> Any:
     )
 
 
+# Os testes que um predicado aceita, na descrição que a tela mostra. Derivado do
+# enum e não escrito à mão: um teste novo aparece na tela sozinho, e um removido
+# some — a lista digitada aqui seria a segunda fonte de verdade que envelheceria
+# na primeira mudança.
+def _testes_disponiveis() -> str:
+    from orchestrator.regras import Comparacao
+
+    return " | ".join(c.value for c in Comparacao)
+
+
+def _predicado_params(obrigatorio_kind: str) -> tuple[ParametroDeRegra, ...]:
+    """Os três parâmetros que os blocos de uma ponta só compartilham.
+
+    Escritos uma vez porque são o MESMO eixo: "limiar" e "padrão" não são dois
+    blocos, são este parâmetro com um `teste` diferente. Repeti-los por bloco
+    faria a descrição divergir entre filtro, validação e condição.
+    """
+    return (
+        ParametroDeRegra("kind", "", obrigatorio_kind, obrigatorio=True),
+        ParametroDeRegra("campo", "", "o campo sobre o qual perguntar", obrigatorio=True),
+        ParametroDeRegra("teste", "", f"a pergunta: {_testes_disponiveis()}", obrigatorio=True),
+        ParametroDeRegra(
+            "valor",
+            "",
+            "com o que comparar. vazio só para os testes `vazio` e `preenchido`",
+        ),
+    )
+
+
+def _filtro(p: dict[str, ValorDeParametro]) -> Any:
+    from orchestrator.regras import Filtro
+
+    _exige("filtro", p, ("kind", "campo", "teste"))
+    return Filtro(
+        kind=str(p.get("kind", "")),
+        campo=str(p.get("campo", "")),
+        teste=str(p.get("teste", "")),
+        valor=str(p.get("valor", "")),
+        motivo=str(p.get("motivo") or "descartado por filtro"),
+    )
+
+
+def _validacao(p: dict[str, ValorDeParametro]) -> Any:
+    from orchestrator.regras import Validacao
+
+    _exige("validacao", p, ("kind", "campo", "teste"))
+    return Validacao(
+        kind=str(p.get("kind", "")),
+        campo=str(p.get("campo", "")),
+        teste=str(p.get("teste", "")),
+        valor=str(p.get("valor", "")),
+        tipo=str(p.get("tipo") or "FORA_DA_POLITICA"),
+    )
+
+
+def _condicao(p: dict[str, ValorDeParametro]) -> Any:
+    from orchestrator.regras import Condicao
+
+    _exige("condicao", p, ("kind", "campo", "teste", "produz"))
+    return Condicao(
+        kind=str(p.get("kind", "")),
+        campo=str(p.get("campo", "")),
+        teste=str(p.get("teste", "")),
+        valor=str(p.get("valor", "")),
+        produz=str(p.get("produz", "")),
+    )
+
+
 def _tolerancia(p: dict[str, ValorDeParametro]) -> Any:
     from orchestrator.regras import Tolerancia
 
@@ -327,6 +395,53 @@ CATALOGO = Catalogo(
                 ParametroDeRegra("max_dias", 0, "folga máxima entre as datas, em dias corridos"),
             ),
             construir=lambda p: _tolerancia(p),
+        ),
+        # Os TRÊS DESTINOS de um item que passa num teste. O que muda entre eles
+        # não é a pergunta — é o que acontece com o item, e são três verbos
+        # diferentes no pool:
+        #
+        #   filtro     RESOLVE  o item sai do pool, com o motivo no trace
+        #   validacao  PROPÕE   o item fica, e um humano decide
+        #   condicao   ROTEIA   o item sai como um kind e volta como outro
+        #
+        # Um bloco só com um parâmetro "o que fazer" esconderia qual dos três
+        # aconteceu — e os três mexem no pool de maneiras que não se confundem.
+        RegraDisponivel(
+            nome="filtro",
+            cost_class=CostClass.REGRA,
+            resumo="descarta do pool o item que passa no teste",
+            parametros=(
+                *_predicado_params("o kind que este bloco filtra"),
+                ParametroDeRegra("motivo", "", "o que o trace vai dizer sobre o descarte"),
+            ),
+            construir=lambda p: _filtro(p),
+        ),
+        RegraDisponivel(
+            nome="validacao",
+            cost_class=CostClass.REGRA,
+            resumo="quem falha o teste vira proposta para revisão humana",
+            parametros=(
+                *_predicado_params("o kind que este bloco confere"),
+                ParametroDeRegra(
+                    "tipo", "", "o rótulo que o humano lê na fila (ex.: FORA_DA_POLITICA)"
+                ),
+            ),
+            construir=lambda p: _validacao(p),
+        ),
+        RegraDisponivel(
+            nome="condicao",
+            cost_class=CostClass.REGRA,
+            resumo="quem passa no teste segue por outro ramo",
+            parametros=(
+                *_predicado_params("o kind que entra neste bloco"),
+                ParametroDeRegra(
+                    "produz",
+                    "",
+                    "o kind do ramo. o degrau que o consome só roda quando houver item dele",
+                    obrigatorio=True,
+                ),
+            ),
+            construir=lambda p: _condicao(p),
         ),
         # -- conciliação: a implementação de referência (§1.3) --------------
         RegraDisponivel(

@@ -20,8 +20,24 @@ apenas como qualquer outro domínio poderia.
 """
 
 from orchestrator.regras.campos import CampoAusente, valor_do_campo
+from orchestrator.regras.condicao import Condicao
+from orchestrator.regras.filtro import Filtro
 from orchestrator.regras.igualdade import Igualdade
 from orchestrator.regras.pares import Par
+from orchestrator.regras.predicado import Comparacao, ComparacaoImpossivel, Predicado
 from orchestrator.regras.tolerancia import Tolerancia
+from orchestrator.regras.validacao import Validacao
 
-__all__ = ["CampoAusente", "Igualdade", "Par", "Tolerancia", "valor_do_campo"]
+__all__ = [
+    "CampoAusente",
+    "Condicao",
+    "Filtro",
+    "Igualdade",
+    "Par",
+    "Predicado",
+    "Comparacao",
+    "ComparacaoImpossivel",
+    "Tolerancia",
+    "Validacao",
+    "valor_do_campo",
+]

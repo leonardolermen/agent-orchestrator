@@ -85,6 +85,21 @@ class ResolverDescription:
     # (`kernel/definition.py`), que popula `Stage.consome`, e a borda do
     # `/runs`, que confere cada resolver contra os kinds da fonte.
     consome: frozenset[str] = frozenset()
+    # Quais `kind` este resolver CRIA. O par simétrico de `consome`, e ele
+    # faltava.
+    #
+    # `Stage.produz` sempre existiu, mas só dava para preenchê-lo à mão: quem
+    # escrevia a definição em Python sabia o que a cascata produzia. Quem COMPÕE
+    # na tela não sabe — `authoring/composicao.py` derivava `consome` dos blocos
+    # e deixava `produz` no default, com o comentário "nenhum bloco do catálogo
+    # produz item". O bloco `condicao` acabou com essa verdade.
+    #
+    # O sintoma sem este campo é exato e feio: a composição PASSA, o workflow é
+    # salvo, e o motor recusa na execução com "produziu kind não declarado" —
+    # um erro sobre uma escolha que a tela aceitou minutos antes. Declarar aqui
+    # é o que permite `produz_de()` derivar o degrau inteiro, e é o que dá ao
+    # canvas a seta do ramo ANTES de rodar.
+    produz: frozenset[str] = frozenset()
 
 
 class Resolver(Protocol):

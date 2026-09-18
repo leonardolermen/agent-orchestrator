@@ -60,7 +60,12 @@ from orchestrator.agent.llm import LLMClient
 from orchestrator.domains.reconciliation.revisor import RevisorHumano
 from orchestrator.domains.registro import CATALOGO
 from orchestrator.kernel.cost import CostClass
-from orchestrator.kernel.definition import Stage, WorkflowDefinition, consome_de
+from orchestrator.kernel.definition import (
+    Stage,
+    WorkflowDefinition,
+    consome_de,
+    produz_de,
+)
 from orchestrator.kernel.resolver import Resolver
 from orchestrator.review.fila import Fila
 
@@ -253,9 +258,16 @@ def construir_composicao(
                 name=c.nome,
                 cascade=tuple(resolvers),
                 # A fiação DESTE degrau, derivada dos blocos — a metade X7 da
-                # lacuna de `kind` (ver cabeçalho do módulo). `produz`
-                # continua no default: nenhum bloco do catálogo produz item.
+                # lacuna de `kind` (ver cabeçalho do módulo).
+                #
+                # `produz` era default aqui, com o comentário "nenhum bloco do
+                # catálogo produz item". Deixou de ser verdade com o bloco
+                # `condicao`, que ramifica produzindo o kind que ativa o ramo —
+                # e sem derivar, a composição PASSAVA e a execução recusava com
+                # "produziu kind não declarado", um erro sobre uma escolha que
+                # esta tela tinha acabado de aceitar.
                 consome=consome_de(resolvers),
+                produz=produz_de(resolvers),
             ),
         ),
     )

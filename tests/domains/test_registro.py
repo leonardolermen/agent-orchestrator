@@ -332,6 +332,11 @@ def _exigencias_esperadas() -> dict[str, dict[str, type]]:
         # destas que o L1 saiu da recusa de 422.
         "igualdade": _SEM_EXIGENCIA,
         "tolerancia": _SEM_EXIGENCIA,
+        # Os tres destinos leem UM campo, pelo nome que a pessoa escolheu. Mesma
+        # razao: quem le campo por nome roda sobre qualquer fonte.
+        "filtro": _SEM_EXIGENCIA,
+        "validacao": _SEM_EXIGENCIA,
+        "condicao": _SEM_EXIGENCIA,
         # -- agentes declarados: montam o prompt a partir dos CAMPOS do item, e
         # `agent/declarado.py::_campos` aceita dataclass OU dict. Exigir tipo
         # aqui quebraria o caminho principal desta fatia — um CSV do usuário
@@ -361,6 +366,17 @@ _EXEMPLOS: dict[str, dict] = {
         "chave": ("document",),
         "numerico": "amount=net_amount",
         "max_diferenca": 5,
+    },
+    # Os tres destinos compartilham o predicado, entao compartilham a forma da
+    # configuracao. So `condicao` pede mais: o kind do ramo.
+    "filtro": {"kind": "banco", "campo": "amount", "teste": "menor", "valor": "0"},
+    "validacao": {"kind": "banco", "campo": "amount", "teste": "maior", "valor": "0"},
+    "condicao": {
+        "kind": "banco",
+        "campo": "amount",
+        "teste": "maior",
+        "valor": "0",
+        "produz": "suspeito",
     },
 }
 
@@ -427,6 +443,10 @@ CONSOME_ESPERADO: dict[str, frozenset[str]] = {
     # não do resolver, e isso é a definição de bloco genérico.
     "igualdade": frozenset({"banco", "contabil"}),
     "tolerancia": frozenset({"banco", "contabil"}),
+    # Uma ponta so: consomem o kind que `_EXEMPLOS` configurou.
+    "filtro": frozenset({"banco"}),
+    "validacao": frozenset({"banco"}),
+    "condicao": frozenset({"banco"}),
     "L1": frozenset({"banco", "contabil"}),
     "L2": frozenset({"banco", "contabil"}),
     "L3": frozenset({"banco", "contabil"}),
