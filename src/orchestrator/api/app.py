@@ -572,6 +572,16 @@ def _fonte_de(
         ) from erro
 
 
+# O `tipo` do discriminador vira prosa. Escrito uma vez, aqui, para que uma
+# mensagem ao cliente nunca precise adivinhar como chamar a fonte que ele usou.
+_NOME_DA_FONTE = {
+    "arquivo": "de arquivo",
+    "postgres": "postgres",
+    "http": "http",
+    "sintetica": "sintética",
+}
+
+
 def _ler(
     fonte: SyntheticSource | ArquivoSource | PostgresSource | HttpSource, pedido: RunRequest
 ) -> tuple[str, WorkSet]:
@@ -595,10 +605,19 @@ def _ler(
         # sem token, sem o que o driver ecoou. Ver `sources/erros.py`.
         raise HTTPException(status_code=422, detail=str(erro)) from erro
     except (OSError, ValueError) as erro:
-        if pedido.fonte.tipo != "arquivo":
-            # Uma fonte sintética não lê disco; se ela levantou, é defeito do
-            # servidor e precisa subir como 500 em vez de virar um 422 que
-            # culpa o cliente.
+        if pedido.fonte.tipo == "sintetica":
+            # A ÚNICA fonte cujo erro é defeito do SERVIDOR. Ela não lê disco,
+            # não conecta em nada e é gerada por nós a partir de três números:
+            # se ela levantou, ninguém do lado de fora tem o que consertar, e um
+            # 422 culparia o cliente por um bug nosso.
+            #
+            # A condição era `!= "arquivo"`, escrita quando as duas únicas
+            # fontes eram arquivo e sintética. Com `postgres` e `http`, aquela
+            # frase passou a significar "toda fonte conectada é defeito do
+            # servidor": um `ValueError` puro vindo de `WorkSet.__post_init__`
+            # — id repetido, que um `JOIN` do parceiro produz sem esforço —
+            # subia como 500 pelas fontes novas e voltava 422 pela de arquivo,
+            # sobre o MESMO dado. A lista que merece re-raise é `{sintetica}`.
             raise
         if isinstance(erro, OSError):
             # NUNCA `str(erro)` para um erro de SO: a mensagem do errno embute
@@ -611,13 +630,20 @@ def _ler(
             )
         else:
             motivo = str(erro)
-        raise HTTPException(
-            status_code=422,
-            detail=f"{pedido.fonte.caminho!r}: {motivo}",
-        ) from erro
+        # QUEM falhou. `caminho` só existe (com esse sentido) na fonte de
+        # arquivo: `FontePostgres` não tem o campo, e o `caminho` da fonte HTTP
+        # é o caminho DENTRO do JSON. Ler `pedido.fonte.caminho` para as duas
+        # novas era um `AttributeError` — um 500 dentro do `except` que existe
+        # para não devolver 500.
+        onde = (
+            repr(pedido.fonte.caminho)
+            if pedido.fonte.tipo == "arquivo"
+            else f"fonte {pedido.fonte.tipo}"
+        )
+        raise HTTPException(status_code=422, detail=f"{onde}: {motivo}") from erro
 
 
-def _conferir_payload(definicao: WorkflowDefinition, pool: WorkSet) -> None:
+def _conferir_payload(definicao: WorkflowDefinition, pool: WorkSet, tipo_da_fonte: str) -> None:
     """A fonte entrega o que os resolvers deste workflow exigem?
 
     **Esta borda existe porque é a única que junta uma FONTE a um WORKFLOW**, e
@@ -668,7 +694,12 @@ def _conferir_payload(definicao: WorkflowDefinition, pool: WorkSet) -> None:
                         f"o resolver {resolver.name!r} exige que itens de kind "
                         f"{kind!r} carreguem {exigido.__name__}, e a fonte "
                         f"entregou {', '.join(t.__name__ for t in entregues)}. "
-                        f"uma fonte de arquivo entrega dicionários: escolha um "
+                        # O TIPO que o pedido usou, e não "uma fonte de
+                        # arquivo": a frase foi escrita quando dict só vinha de
+                        # arquivo, e hoje três fontes entregam dict — mandava a
+                        # pessoa procurar um arquivo que ela não usou.
+                        f"uma fonte {_NOME_DA_FONTE.get(tipo_da_fonte, tipo_da_fonte)} "
+                        f"entrega dicionários: escolha um "
                         f"workflow cujos blocos leiam campos genéricos, ou um "
                         f"`kind` que esta cascata não consuma."
                     ),
@@ -757,19 +788,62 @@ def _executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
     bus = EventBus()
     coletor = SpanCollector().subscribe(bus)
     fonte, gabarito = _fonte_de(pedido)
+    fabrica = registry(_RAIZ_RECEITAS, _RAIZ_COMPOSICOES)[workflow_id]
+    # A FORMA da cascata, antes de qualquer leitura: `WorkflowContext.vazio()`
+    # é o mesmo contexto que `GET /api/workflows` usa para publicar `classes`,
+    # e a forma não muda com o conteúdo da fila nem com quem pagaria a conta.
+    #
+    # Ela existe aqui por causa da guarda logo abaixo: saber se a cascata GASTA
+    # é o que permite recusar um pedido sem teto ANTES de tocar a fonte. A
+    # definição de verdade — com a fila e, se for o caso, com o cliente — é
+    # construída depois, sobre a mesma fábrica.
+    forma = construir_definicao(fabrica, WorkflowContext.vazio())
+    tem_agente = CostClass.AGENTE in {r.cost_class for s in forma.stages for r in s.cascade}
+
+    # Guarda 1, hasteada para ANTES da fonte, e esta é a razão.
+    #
+    # Ela é uma checagem PURA sobre o pedido e a cascata: não olha uma linha do
+    # pool. Enquanto as fontes eram sintética e arquivo, rodá-la depois da
+    # leitura custava trabalho local e barato. Com fontes conectadas, a borda
+    # gastava recurso de TERCEIRO — conectava no Postgres do parceiro e esperava
+    # a query inteira — para então recusar por um campo ausente do próprio
+    # pedido. Repetido, isso é uma torneira contra o banco do parceiro, sem
+    # autenticação, disparável por qualquer um que alcance a rota.
+    #
+    # "Erro do PEDIDO antes de erro do AMBIENTE" continua valendo abaixo; o que
+    # esta fatia acrescenta é "erro do pedido antes de TOCAR o parceiro".
+    #
+    # A guarda inteira é "gasta com teto, E O TETO É DITO ANTES". Um pedido que
+    # omite `teto_microcents` não disse teto nenhum: ele HERDA o do agente, que
+    # é 400.000.000 µ¢ — US$ 4,00 por requisição — e herdar em silêncio é
+    # exatamente o fallback que a primeira regra deste projeto proíbe.
+    #
+    # `None` continua VÁLIDO no schema, e de propósito: para a CLI e para quem
+    # chama a biblioteca, "use o teto do agente" é uma escolha legítima feita
+    # por quem já sabe qual é. O que não é legítimo é um cliente HTTP anônimo
+    # fazer essa escolha sem escrevê-la.
+    if tem_agente and pedido.teto_microcents is None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"o workflow {workflow_id!r} tem etapa paga: informe "
+                f"`teto_microcents` (micro-centavos de USD, 1e-8 USD cada) "
+                f"neste pedido. executar pela web gasta COM TETO, e o teto "
+                f"é dito antes — omiti-lo herdaria em silêncio o do agente, "
+                f"que é generoso por ser um default."
+            ),
+        )
+
     # O `ref` vem ANTES da fila porque a fila depende dele: a chave de
     # `data/fila/**` sai do `ref` da fonte (ver `dataset_de_ref`), e não mais
     # de `(seed, n, taxa)` — que uma fonte de arquivo não tem.
     ref, pool = _ler(fonte, pedido)
     fila, _ = _abrir_fila(workflow_id, ref)
-    fabrica = registry(_RAIZ_RECEITAS, _RAIZ_COMPOSICOES)[workflow_id]
     # A definição com a TRANCA. `cliente=None` é o default de
     # `WorkflowContext`, e `construir` o traduz em `ClienteAusente` — o
     # sentinela que levanta se algum caminho chegar ao modelo por onde não
     # deveria existir caminho nenhum.
     definicao = construir_definicao(fabrica, WorkflowContext(fila=fila))
-    classes = {r.cost_class for s in definicao.stages for r in s.cascade}
-    tem_agente = CostClass.AGENTE in classes
 
     # ANTES da guarda de chave, e a ordem inverteu de propósito nesta fatia.
     #
@@ -780,36 +854,15 @@ def _executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
     # pode consertar. Devolvê-lo primeiro mandaria a pessoa atrás de um
     # administrador para, depois da chave posta, descobrir que o CSV dela seria
     # recusado do mesmo jeito. Erro do PEDIDO antes de erro do AMBIENTE.
-    _conferir_payload(definicao, pool)
+    _conferir_payload(definicao, pool, pedido.fonte.tipo)
     _conferir_kinds(definicao, pool)
 
     cliente: ClienteComTeto | None = None
     if tem_agente:
-        # Guarda 1, a metade que faltava: pela WEB, com agente, o teto é
-        # OBRIGATÓRIO. Antes do 409 porque é erro do PEDIDO, não do ambiente.
+        # A guarda de teto (guarda 1) já rodou lá em cima, antes de a fonte ser
+        # tocada — é checagem pura sobre o pedido. Aqui sobra o que depende do
+        # AMBIENTE, e ele fica DEPOIS das duas conferências acima de propósito.
         #
-        # A guarda inteira é "gasta com teto, E O TETO É DITO ANTES". Um pedido
-        # que omite `teto_microcents` não disse teto nenhum: ele HERDA o do
-        # agente, que é 400.000.000 µ¢ — US$ 4,00 por requisição — e herdar em
-        # silêncio é exatamente o fallback que a primeira regra deste projeto
-        # proíbe. Sem isto, `POST /api/workflows/<pago>/runs` com corpo `{}`,
-        # sem autenticação e sem cache, é uma torneira de US$ 4 por F5.
-        #
-        # `None` continua VÁLIDO no schema, e de propósito: para a CLI e para
-        # quem chama a biblioteca, "use o teto do agente" é uma escolha
-        # legítima feita por quem já sabe qual é. O que não é legítimo é um
-        # cliente HTTP anônimo fazer essa escolha sem escrevê-la.
-        if pedido.teto_microcents is None:
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    f"o workflow {workflow_id!r} tem etapa paga: informe "
-                    f"`teto_microcents` (micro-centavos de USD, 1e-8 USD cada) "
-                    f"neste pedido. executar pela web gasta COM TETO, e o teto "
-                    f"é dito antes — omiti-lo herdaria em silêncio o do agente, "
-                    f"que é generoso por ser um default."
-                ),
-            )
         # Guarda 3. ANTES de executar, e não no meio: sem isto o SDK levantaria
         # no primeiro turno com o pool já pela metade, e o que a pessoa veria
         # seria um 500 sobre um problema que tem conserto e nome.

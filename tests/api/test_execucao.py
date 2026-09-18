@@ -1357,6 +1357,12 @@ def test_o_422_de_PAYLOAD_vem_ANTES_do_409_de_chave(tmp_path, monkeypatch):
     recusado de qualquer jeito.
 
     Erro do PEDIDO antes de erro do AMBIENTE.
+
+    O `teto_microcents` vai no corpo porque a guarda de teto passou a rodar
+    ANTES da fonte (ela é checagem pura sobre o pedido, e conectar no banco do
+    parceiro para depois recusar por um campo ausente é gastar recurso de
+    terceiro à toa). Sem ele, o 422 que voltaria seria o do teto, e este teste
+    — que é sobre payload-vs-chave — não chegaria a observar o que mede.
     """
     import orchestrator.api.app as api_app
     from orchestrator.agent.declarado import construir_agente
@@ -1391,7 +1397,8 @@ def test_o_422_de_PAYLOAD_vem_ANTES_do_409_de_chave(tmp_path, monkeypatch):
     r = cliente.post(
         "/api/workflows/misto/runs",
         json={"fonte": {"tipo": "arquivo", "caminho": "itens.csv",
-                        "kind": "banco", "campo_id": "id"}},
+                        "kind": "banco", "campo_id": "id"},
+              "teto_microcents": 1_000_000},
     )
 
     assert r.status_code == 422, r.text
@@ -1528,6 +1535,85 @@ def test_uma_fonte_CONECTADA_roda_no_triador_pela_borda(tmp_path, monkeypatch, f
     assert corpo["contra_gabarito"] is None
     assert corpo["input_ref"].startswith(("http:", "pg:"))
     assert "SEGREDO-4F2A" not in r.text
+
+
+_FONTE_PG = {
+    "tipo": "postgres", "dsn_env": "ERP_DSN",
+    "query": "SELECT id, titulo, corpo FROM issues", "kind": "issue", "campo_id": "id",
+}
+_FONTE_HTTP = {
+    "tipo": "http", "url": "https://api.exemplo/issues", "token_env": "CRM_TOKEN",
+    "kind": "issue", "campo_id": "id",
+}
+
+
+@pytest.mark.parametrize(
+    "fonte, preparar", [(_FONTE_HTTP, _issues_http), (_FONTE_PG, _issues_pg)],
+    ids=["http", "postgres"],
+)
+def test_id_REPETIDO_numa_fonte_conectada_e_422_e_nao_500(monkeypatch, fonte, preparar):
+    """Um `JOIN` que duplica a chave, ou uma página de API com o mesmo `id`
+    duas vezes.
+
+    `WorkSet.__post_init__` levanta um `ValueError` PURO — não um `ErroDeFonte`
+    —, e o `except` de `_ler` só o virava em 422 quando o tipo era `arquivo`.
+    O MESMO dado num CSV devolvia 422 com mensagem e pelas fontes novas subia
+    como 500: uma regressão em relação à fonte que já existia, e um "o servidor
+    quebrou" sobre um dado que quem pediu consegue consertar.
+    """
+    preparar(monkeypatch, [{"id": 1, "titulo": "a"}, {"id": 1, "titulo": "b"}])
+    r = cliente.post("/api/workflows/conciliacao/runs", json={"fonte": fonte})
+    assert r.status_code == 422, r.text
+    assert "id repetido" in r.json()["detail"]
+    # E a recusa continua sem carregar o que o pedido nomeou por variável.
+    assert "SEGREDO-4F2A" not in r.text
+
+
+def test_o_erro_de_PAYLOAD_nomeia_a_fonte_que_o_pedido_USOU(monkeypatch):
+    """A frase dizia "uma fonte de arquivo entrega dicionários" para QUALQUER
+    fonte — escrita quando dict só vinha de arquivo. Hoje três fontes entregam
+    dict, e a mensagem mandava a pessoa procurar um arquivo que ela não usou."""
+    _issues_pg(monkeypatch, _ISSUES)
+    r = cliente.post("/api/workflows/conciliacao/runs",
+                     json={"fonte": {**_FONTE_PG, "kind": "banco"}})
+    assert r.status_code == 422, r.text
+    detalhe = r.json()["detail"]
+    assert "uma fonte postgres entrega dicionários" in detalhe
+    assert "fonte de arquivo" not in detalhe
+
+
+@pytest.mark.parametrize("fonte", [_FONTE_HTTP, _FONTE_PG], ids=["http", "postgres"])
+def test_pedido_sem_teto_e_recusado_ANTES_de_TOCAR_a_fonte(monkeypatch, fonte):
+    """A costura entre a guarda de teto e as fontes conectadas.
+
+    A guarda de `teto_microcents` é checagem PURA sobre o pedido e a cascata —
+    não olha uma linha do pool. Rodando depois de `_ler`, a borda conectava no
+    Postgres do parceiro (ou fazia a requisição à API dele) e esperava a query
+    inteira para então recusar por um campo ausente do PRÓPRIO pedido.
+    Repetido, é uma torneira contra o banco do parceiro, sem autenticação,
+    disparável por qualquer um que alcance a rota.
+
+    O dublê aqui não devolve dado: ele FALHA se for chamado. É a única forma de
+    o teste medir "não tocou" em vez de "tocou e deu certo".
+    """
+    import orchestrator.api.app as api_app
+    import orchestrator.sources.http as mod_http
+    import orchestrator.sources.postgres as mod_pg
+
+    def _nao_deveria(*args, **kwargs):
+        raise AssertionError("a borda tocou a fonte antes de recusar o pedido")
+
+    monkeypatch.setenv("ERP_DSN", "postgresql://u:SEGREDO-4F2A@h/db")
+    monkeypatch.setenv("CRM_TOKEN", "SEGREDO-4F2A")
+    monkeypatch.setattr(mod_pg, "_conectar_padrao", _nao_deveria)
+    monkeypatch.setattr(mod_http, "_transporte_padrao", _nao_deveria)
+    monkeypatch.setattr(api_app, "_tem_chave", lambda: True)
+    _registrar(monkeypatch, "com-agente", _fabrica_com_agentes(_declarado()))
+
+    r = cliente.post("/api/workflows/com-agente/runs", json={"fonte": fonte})
+
+    assert r.status_code == 422, r.text
+    assert "teto_microcents" in r.json()["detail"]
 
 
 def test_variavel_de_ambiente_ausente_e_422_com_o_NOME(monkeypatch):
