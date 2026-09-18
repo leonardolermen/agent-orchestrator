@@ -65,7 +65,13 @@ class HttpSource:
 
 `load()` faz **um** `GET` com `Authorization: Bearer <os.environ[token_env]>` quando `token_env` está dado. O corpo tem que ser JSON; a lista é o corpo inteiro ou o que `caminho` aponta (`a.b.c`, só chaves de objeto, sem índices); cada objeto vira um item como acima. **Uma página só nesta fatia** — paginação e cursor ficam em §9, com o porquê.
 
-**`ref`:** `http:<url>@<etag>` quando o servidor manda `ETag`; senão `http:<url>@<sha256(corpo)>`. É o que o spec anterior desenhou. A URL entra inteira (é identidade), o cabeçalho de autorização nunca.
+**`ref`:** ~~`http:<url>@<etag>` quando o servidor manda `ETag`; senão `http:<url>@<sha256(corpo)>`. É o que o spec anterior desenhou.~~ A URL entra inteira (é identidade), o cabeçalho de autorização nunca.
+
+> **SUPERADO na revisão final (achado 4), depois de a fatia estar escrita.** O que está riscado acima é o que este spec pediu e o que a implementação original fez. A regra que vale é: **`ref` é `http:<url>@<sha256(corpo)>`, SEMPRE — o ETag não entra.**
+>
+> O motivo: o ETag é escolhido pelo servidor do parceiro e não tem relação garantida com os bytes. Um ETag fraco (`W/"v1"`) significa, por definição da própria especificação de HTTP, "equivalente, não idêntico" — então dois pools DIFERENTES podiam compartilhar um `ref`, e uma decisão humana tomada sobre o pool A seria casada com os itens do pool B. O inverso também: ETag derivado de inode ou variado por nó de CDN muda para bytes idênticos, e cada `ref` novo órfã a fila de revisão daquele conjunto. A garantia de content-addressing do protocolo `Source` é mais funda do que esta linha do spec, e o dono decidiu que é ela que vence. O ETag volta a ter uso no dia em que houver cache, como `If-None-Match`, que é para o que ele serve.
+>
+> A mesma correção vale para a linha de §7 sobre testes: onde se lê "etag → `ref` usa o etag", leia-se "mesmo corpo → mesmo `ref`, corpos diferentes → `ref` diferentes, com ou sem ETag". O registro completo está em `.superpowers/sdd/2026-09-20-fontes-conectadas/final-review.md` e no relatório da onda de correção ao lado dele.
 
 **Segurança dita em voz alta.** Com esta fonte o servidor passa a fazer requisições para URLs que vêm da tela. `localhost`, `127.0.0.0/8`, `::1`, `169.254.0.0/16` e esquemas que não sejam `http`/`https` são recusados com 422 **antes de qualquer requisição** — a proteção mínima contra usar a plataforma para alcançar o que só o servidor alcança. Um erro HTTP cita status e URL; o cabeçalho de autorização não aparece em resposta, log, `ref` nem run.
 
@@ -141,7 +147,7 @@ Nenhum caminho devolve 500 sobre uma escolha do cliente, e nenhum devolve um seg
 
 **Higiene de segredo — os que importam.** Com `ERP_DSN` e `CRM_TOKEN` apontando para um sentinela (`SEGREDO-4F2A`), cada caminho de falha roda — conexão recusada, query inválida, 401, corpo que não é lista, teto de linhas — e o sentinela **não aparece** em corpo da resposta, `ref`, run persistido, nem `stderr`. Variável ausente → 422 com o nome, e só o nome. A redução do erro do psycopg (§3.3) tem teste: uma `OperationalError` cuja mensagem contém o sentinela vira *"conexão falhou: OperationalError"*.
 
-**`ref` estável ou não há replay.** Mesmas linhas → mesmo `ref`; uma linha mudada → outro; query mudada → outro. HTTP: etag → `ref` usa o etag; sem etag → hash do corpo; mesmo corpo → mesmo `ref`. `dataset_de_ref` das duas fontes é nome de arquivo válido e distinto por conteúdo — por construção, como na fatia anterior.
+**`ref` estável ou não há replay.** Mesmas linhas → mesmo `ref`; uma linha mudada → outro; query mudada → outro. HTTP: ~~etag → `ref` usa o etag; sem etag → hash do corpo;~~ (superado — ver §3.2) hash do corpo sempre; mesmo corpo → mesmo `ref`. `dataset_de_ref` das duas fontes é nome de arquivo válido e distinto por conteúdo — por construção, como na fatia anterior.
 
 **A guarda de `SELECT`.** `SELECT …`, `select …`, `  -- comentário\nSELECT …`, `WITH x AS (…) SELECT …` passam; `INSERT`, `UPDATE`, `DELETE`, `DROP`, `CALL`, `SELECT 1; DELETE …` são 422 — e o teste afirma que **`conectar` não foi chamado**.
 
