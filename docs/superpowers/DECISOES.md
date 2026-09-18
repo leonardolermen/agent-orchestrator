@@ -3155,3 +3155,34 @@ guarda confia no `produz` declarado sem conferir: um resolver que declara
 `produz={"banco"}` e não emite nada passa pela borda sem erro — reabre "200
 sobre um pool que ninguém leu", contida hoje só pelo tripwire
 `test_a_lacuna_do_produtor_nao_e_alcancavel_pelo_CATALOGO`.
+
+### P9.2. Uma fonte conectada guarda o NOME do segredo, lê o valor na hora, e nunca o devolve
+
+**Decisão.** `PostgresSource(dsn_env, …)` e `HttpSource(url, token_env, …)`
+guardam o nome de uma variável de ambiente do servidor; o valor é lido no
+`load()`, usado e descartado. Variável ausente é 422 com o nome. Erros do
+driver voltam como `<classe>` (a mensagem inteira vai ao log do servidor).
+A query é leitura (`SELECT`/`WITH`, uma instrução), conferida antes de
+conectar; loopback e link-local são recusados antes de qualquer requisição.
+
+**Por que nome e não valor.** A tela é o único lugar por onde um segredo
+entraria — e entraria em composição, pedido persistido e `ref`, que são
+gravados. O nome não é segredo; o ambiente do servidor já é onde a
+`ANTHROPIC_API_KEY` mora. Um campo de senha na tela ensinaria a colar o
+valor; por isso nenhum existe (pinado no bundle).
+
+**Por que reduzir o erro do driver.** `OperationalError` do psycopg ecoa host
+e usuário. A classe diz ao cliente o que aconteceu; o texto inteiro diz ao
+operador — no log, que é dele.
+
+**Por que a guarda de SELECT é conservadora.** A plataforma lê. Um SELECT
+legítimo recusado é bug a corrigir; um DELETE que passasse seria um
+incidente no banco do parceiro. Parâmetros entram quando houver caso.
+
+**Por que loopback é recusado, e o que não é.** O servidor passa a fazer
+requisições para URLs da tela. Recusar o que só o servidor alcança é o
+mínimo; a guarda olha o host literal, e um nome DNS que resolva para
+loopback não é pego — dito em voz alta, allowlist é decisão do operador.
+
+**O que fica fora.** Paginação e cursor; outros bancos (a costura —
+`conectar` injetável, `ref` por hash — está pronta); "testar conexão"; CLI.
