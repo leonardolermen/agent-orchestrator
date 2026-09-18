@@ -87,3 +87,46 @@ def test_help_mostra_os_subcomandos_em_vez_do_benchmark(capsys):
     assert "init" in saida and "trace" in saida
     # E a invocação antiga continua documentada, para quem a procurar.
     assert "Invocação antiga" in saida
+
+
+def test_workflows_lista_tambem_as_COMPOSICOES_do_canvas(tmp_path, monkeypatch, capsys):
+    """A CLI e a API respondem a MESMA pergunta.
+
+    `descrever(cfg.raiz_receitas)` lia só receitas: uma composição salva pelo
+    canvas — que a API lista e roda por `/runs` — fazia
+    `orch workflows <id>` responder "workflow desconhecido". É exatamente a
+    divergência contra a qual o docstring de `registry()` existe, e por isso a
+    `Config` ganhou `raiz_composicoes` ao lado de `raiz_receitas`.
+    """
+    from datetime import UTC, datetime
+
+    from orchestrator.authoring.composicao import BlocoRegra, Composicao, gravar
+    from orchestrator.cli import comandos
+    from orchestrator.cli.config import Config
+
+    composicoes = tmp_path / "composicoes"
+    composicoes.mkdir()
+    gravar(
+        Composicao(
+            id="do-canvas", nome="Do canvas", gerado_em=datetime.now(UTC),
+            blocos=(BlocoRegra(nome="L1", parametros={}),),
+        ),
+        composicoes,
+    )
+    cfg = Config(
+        raiz_dados=tmp_path,
+        raiz_receitas=tmp_path / "receitas",
+        raiz_composicoes=composicoes,
+    )
+    monkeypatch.setattr(comandos, "_config", lambda: cfg)
+
+    assert main(["workflows", "do-canvas"]) == 0
+    assert "Do canvas" in capsys.readouterr().out
+
+    # E uma config SÓ de receitas continua igual ao que era: a composição não
+    # aparece, porque a raiz não foi dita.
+    monkeypatch.setattr(
+        comandos, "_config", lambda: Config(raiz_receitas=tmp_path / "receitas")
+    )
+    assert main(["workflows", "do-canvas"]) == 1
+    assert "desconhecido" in capsys.readouterr().err

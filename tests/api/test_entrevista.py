@@ -63,7 +63,7 @@ def com_entrevistador(monkeypatch, tmp_path):
     """Troca o entrevistador por um de brinquedo e a raiz por tmp_path."""
     monkeypatch.setattr(app_mod, "_RAIZ_RECEITAS", tmp_path)
 
-    def instalar(respostas):
+    def instalar(respostas, gravar=None):
         fabrica = lambda: Entrevistador(client=FakeLLMClient(list(respostas)))  # noqa: E731
         original = app_mod.entrevista
 
@@ -74,7 +74,10 @@ def com_entrevistador(monkeypatch, tmp_path):
             await conduzir(
                 ws,
                 fabrica_entrevistador=fabrica,
-                gravar=lambda r: gravar_receita(r, tmp_path),
+                # `gravar` injetável para que um teste possa exercitar o
+                # gravador REAL da rota (`_gravar_receita_do_chat`, que checa o
+                # `registry()`) em vez deste, que só escreve.
+                gravar=gravar or (lambda r: gravar_receita(r, tmp_path)),
             )
 
         # Substitui o handler da rota já registrada, sem tocar no app global.
@@ -332,3 +335,113 @@ def test_a_thread_que_termina_NORMALMENTE_nao_muda_de_desfecho(com_entrevistador
         msg = ws.receive_json()
 
     assert msg["tipo"] == "proposta"
+
+
+# -- a TERCEIRA porta de escrita --------------------------------------------
+
+
+def _composicao_em(raiz, cid):
+    from datetime import UTC, datetime
+
+    from orchestrator.authoring.composicao import BlocoRegra, Composicao, gravar
+
+    raiz.mkdir(parents=True, exist_ok=True)
+    gravar(
+        Composicao(
+            id=cid, nome="do canvas", gerado_em=datetime.now(UTC),
+            blocos=(BlocoRegra(nome="L1", parametros={}),),
+        ),
+        raiz,
+    )
+
+
+def test_o_chat_NAO_grava_por_cima_de_uma_composicao_do_canvas(
+    com_entrevistador, monkeypatch, tmp_path
+):
+    """O chat era a terceira porta de escrita, e a única sem a tranca do id.
+
+    `gravar_receita` só sabe se o ARQUIVO de receita existe — não consulta o
+    `registry()`. Com uma composição `acme2` salva pela tela, o chat gravava
+    uma receita homônima, `registry()` passava a devolver a do chat, e a
+    composição sumia no pulo-com-aviso: um `stderr` do servidor que ninguém na
+    tela vê, e o link `/?workflow=acme2` do painel abrindo outro workflow.
+
+    A recusa chega como `recusa` e não como erro porque WebSocket não carrega
+    status HTTP: é o desfecho que a tela já sabe mostrar, com a MESMA frase do
+    409 das outras duas portas.
+    """
+    composicoes = tmp_path / "composicoes"
+    _composicao_em(composicoes, "acme2")
+    monkeypatch.setattr(app_mod, "_RAIZ_RECEITAS", tmp_path)
+    monkeypatch.setattr(app_mod, "_RAIZ_COMPOSICOES", composicoes)
+    com_entrevistador(
+        [_propor([{"nome": "L1"}, {"nome": "revisor"}])],
+        gravar=app_mod._gravar_receita_do_chat,
+    )
+
+    with cliente.websocket_connect("/api/entrevista") as ws:
+        ws.send_json({"workflow_id": "acme2", "descricao": "conciliar meu extrato"})
+        msg = ws.receive_json()
+
+    assert msg["tipo"] == "recusa"
+    assert "já existe um workflow com id 'acme2'" in msg["motivo"]
+    # Nada foi gravado, e o `registry()` continua entregando A COMPOSIÇÃO.
+    assert not (tmp_path / "workflows" / "acme2.json").exists()
+    from orchestrator.workflows import registry
+
+    assert "acme2" in registry(tmp_path, composicoes)
+
+
+def test_um_id_LIVRE_continua_passando_pela_mesma_porta(
+    com_entrevistador, monkeypatch, tmp_path
+):
+    """A tranca recusa o id tomado, não a gravação — o desfecho feliz é o mesmo
+    de sempre pelo gravador REAL da rota."""
+    composicoes = tmp_path / "composicoes"
+    _composicao_em(composicoes, "outra-coisa")
+    monkeypatch.setattr(app_mod, "_RAIZ_RECEITAS", tmp_path)
+    monkeypatch.setattr(app_mod, "_RAIZ_COMPOSICOES", composicoes)
+    com_entrevistador(
+        [_propor([{"nome": "L1"}, {"nome": "revisor"}])],
+        gravar=app_mod._gravar_receita_do_chat,
+    )
+
+    with cliente.websocket_connect("/api/entrevista") as ws:
+        ws.send_json({"workflow_id": "livre", "descricao": "conciliar meu extrato"})
+        msg = ws.receive_json()
+
+    assert msg["tipo"] == "proposta"
+    assert (tmp_path / "workflows" / "livre.json").exists()
+
+
+def test_a_ORDEM_INVERSA_continua_no_409_de_sempre(monkeypatch, tmp_path):
+    """Receita primeiro, composição depois: `/api/composicoes` já recusava, e a
+    correção do chat não mexeu nisso. As três portas leem o mesmo `registry()`.
+    """
+    from orchestrator.grill.receita import Receita, ResolverReceita
+    from orchestrator.grill.registro import gravar_receita
+
+    composicoes = tmp_path / "composicoes"
+    monkeypatch.setattr(app_mod, "_RAIZ_RECEITAS", tmp_path)
+    monkeypatch.setattr(app_mod, "_RAIZ_COMPOSICOES", composicoes)
+    from datetime import UTC, datetime
+
+    gravar_receita(
+        Receita(
+            id="acme3", nome="Acme", justificativa="j",
+            gerado_em=datetime.now(UTC),
+            resolvers=(ResolverReceita("L1", {}), ResolverReceita("revisor", {})),
+        ),
+        tmp_path,
+    )
+
+    r = cliente.post(
+        "/api/composicoes",
+        json={
+            "id": "acme3", "nome": "Do canvas", "justificativa": "j",
+            "blocos": [{"tipo": "regra", "nome": "L1", "parametros": {}}],
+        },
+    )
+
+    assert r.status_code == 409
+    assert "já existe um workflow com id 'acme3'" in r.json()["detail"]

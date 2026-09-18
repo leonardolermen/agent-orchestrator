@@ -312,10 +312,29 @@ def ambiente() -> AmbienteJSON:
     )
 
 
+def _gravar_receita_do_chat(receita: Receita) -> None:
+    """A TERCEIRA porta de escrita, com a mesma tranca das outras duas.
+
+    `gravar_receita` só sabe se o ARQUIVO de receita existe — não consulta o
+    `registry()`. Sem esta checagem, o chat gravava uma receita com o id de uma
+    composição do canvas, e a composição sumia no pulo-com-aviso de
+    `registry()`: um `stderr` do servidor, invisível para quem usa a tela, e o
+    link `/?workflow=<id>` do painel passava a abrir outro workflow.
+
+    O id é um espaço só para embutido, receita e composição — então as três
+    portas recusam pela MESMA leitura e com a MESMA frase. `ValueError` e não
+    `HTTPException` porque um WebSocket não carrega status HTTP: `conduzir`
+    traduz esta recusa no desfecho `recusa` que a tela já sabe mostrar.
+    """
+    if receita.id in registry(_RAIZ_RECEITAS, _RAIZ_COMPOSICOES):
+        raise ValueError(f"já existe um workflow com id {receita.id!r}; escolha outro")
+    gravar_receita(receita, _RAIZ_RECEITAS)
+
+
 @app.websocket("/api/entrevista")
 async def entrevista(ws: WebSocket) -> None:
     """O chat que compõe. GASTA DINHEIRO — ver `api/entrevista.py`."""
-    await conduzir(ws, gravar=lambda r: gravar_receita(r, _RAIZ_RECEITAS))
+    await conduzir(ws, gravar=_gravar_receita_do_chat)
 
 
 @app.post("/api/receitas", response_model=WorkflowJSON, status_code=201)
@@ -424,9 +443,11 @@ def criar_composicao(pedido: ComposicaoRequest) -> WorkflowJSON:
         raise HTTPException(status_code=422, detail=str(erro)) from erro
 
     if pedido.id in registry(_RAIZ_RECEITAS, _RAIZ_COMPOSICOES):
-        # Simétrico a `/api/receitas`: o id é um só espaço para embutido,
-        # receitas e composições. Recusar aqui é o que faz o pulo-com-aviso
-        # de `registry()` ser um caso de disco editado à mão, não de tela.
+        # Simétrico a `/api/receitas` e a `_gravar_receita_do_chat`: o id é um
+        # só espaço para embutido, receitas e composições. As TRÊS portas de
+        # escrita recusam pela mesma leitura — e é isso que faz o
+        # pulo-com-aviso de `registry()` ser um caso de disco editado à mão,
+        # não de tela. Enquanto o chat gravava sem checar, era caso de tela.
         raise HTTPException(
             status_code=409,
             detail=f"já existe um workflow com id {pedido.id!r}; escolha outro",
