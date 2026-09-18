@@ -52,6 +52,19 @@ não ajuste de teste.
 Regra nº 1, com teste próprio: **`kernel` não importa nada.** E ninguém importa
 `domains` — se uma camada precisar, o conceito está na camada errada.
 
+**Isto aqui é um framework, não um produto de conciliação.** `kernel`,
+`runtime`, `agent`, `crew`, `storage`, `sources`, `observability` e `review` não
+sabem o que é uma divergência bancária. Conciliação é UM domínio em
+`domains/reconciliation/`, do lado de `procurement`, `swe` e `redacao` — a mais
+completa das quatro, e por isso a que se lê para ver o runtime inteiro
+funcionando, mas sem nenhum privilégio. As 4 arestas que restam em
+`VIOLACOES_CONHECIDAS` são o que falta para isso ser verdade sem asterisco, e
+todas saem de `metrics.py`.
+
+Na prática, ao mexer aqui: se você está prestes a importar algo de
+`domains/` em código do framework, pare — o conceito está na camada errada, e a
+catraca vai recusar de qualquer forma.
+
 ## Uma ferramenta por arquivo
 
 `domains/reconciliation/agent/ferramentas/` é o formato. Cada arquivo tem a
@@ -87,8 +100,11 @@ O que não fazer, porque já custou caro:
 
 ## Estilo
 
-**Português**, no código e na prosa: `ferramentas`, `conciliacao`, `receita`,
-`catalogo`. Commits recentes escrevem o assunto sem acento.
+**Português**, no código e na prosa: `ferramentas`, `receita`, `catalogo`,
+`divergencia`. Vale inclusive dentro de `domains/reconciliation/`, cujo nome de
+diretório é inglês porque é o nome do domínio na arquitetura, mas cujo
+vocabulário interno é do negócio e fica em português (ADR-10). Commits recentes
+escrevem o assunto sem acento.
 
 **Comentário registra POR QUÊ, com evidência — nunca O QUÊ.** É a convenção mais
 visível do repositório e é deliberada: quase todo comentário aqui traz a
