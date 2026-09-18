@@ -622,7 +622,10 @@ def test_a_borda_e_POR_RESOLVER_e_nao_pela_uniao_do_degrau(tmp_path, monkeypatch
         "id": "mista", "nome": "m", "justificativa": "j",
         "resolvers": [{"nome": "L1"}, {"nome": "triador"}]})
     assert criada.status_code == 201, criada.text
-    monkeypatch.setattr(api_app, "_tem_chave", lambda: True)
+    # `_executar` constrói o cliente ANTES da borda: sem este stub, a tranca de
+    # rede do conftest levantaria `RedeProibida` no `AnthropicClient()` e o
+    # teste morreria antes do 422. `_cliente_falso` também stuba `_tem_chave`.
+    _cliente_falso(monkeypatch, [])
 
     r = cliente.post("/api/workflows/mista/runs", json={"teto_microcents": 1_000_000})
 
