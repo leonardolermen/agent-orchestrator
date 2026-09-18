@@ -5,7 +5,6 @@ import {
   type AgenteDeclarado,
   type Catalogo,
   type Regra,
-  type Run,
   type WorkflowConstruido,
 } from "./api";
 import { classeDo, nomeDo, type DadosAgente, type DadosDoNo } from "./NoResolver";
@@ -23,8 +22,6 @@ interface Props {
   selecionado: NoEscolhido | null;
   erro: string | null;
   construido: WorkflowConstruido | null;
-  run: Run | null;
-  rodando: boolean;
   ambiente: Ambiente | null;
   onAcrescentarRegra: (r: Regra) => void;
   onAcrescentarAgente: (a: AgenteDeclarado) => void;
@@ -33,7 +30,6 @@ interface Props {
   onMudarParametro: (id: string, param: string, valor: number) => void;
   onMudarAgente: (id: string, patch: Partial<AgenteDeclarado>) => void;
   onCompor: (id: string, nome: string) => void;
-  onExecutar: () => void;
   onMudarAmbiente: (a: Ambiente) => void;
 }
 
@@ -47,8 +43,6 @@ export function Painel(p: Props) {
 
   const usados = new Set(p.escolhidos.map((n) => nomeDo(n.data)));
   const temAgente = p.escolhidos.some((n) => classeDo(n.data) === "AGENTE");
-  const paga =
-    p.construido?.stages.some((s) => s.cascade.some((r) => r.cost_class === "AGENTE")) ?? false;
 
   return (
     <aside className="overflow-y-auto border-l border-borda bg-white px-4 py-4 dark:border-noite-borda dark:bg-noite-painel">
@@ -182,7 +176,7 @@ export function Painel(p: Props) {
           ].join(" ")}
         >
           {temAgente
-            ? "Tem classe AGENTE: gasta dinheiro ao rodar, e a API não a executa."
+            ? "Tem classe AGENTE: gasta dinheiro ao rodar — a execução pede teto e chave no servidor."
             : "Nenhum bloco paga por token. Roda de graça."}
         </div>
       )}
@@ -265,23 +259,17 @@ export function Painel(p: Props) {
             Compor e validar
           </button>
           {p.construido && (
-            <button
-              type="button"
-              disabled={paga || p.rodando}
-              onClick={p.onExecutar}
-              // A tela desabilita, mas quem GARANTE é o servidor: a regra de
-              // `api/app.py` é que executar pela web nunca gasta dinheiro, e ela
-              // não é flag — é ausência de caminho de código. O botão existe
-              // para a pessoa não descobrir isso num 409.
-              title={
-                paga
-                  ? "esta cascata tem etapa paga; a API não executa nada que gaste dinheiro — rode pela CLI"
-                  : "roda sobre o benchmark sintético, de graça"
-              }
-              className="rounded border border-regra bg-regra px-3 py-1.5 text-[12.5px] text-white transition disabled:cursor-not-allowed disabled:border-borda disabled:bg-white disabled:text-neutral-400 dark:disabled:border-noite-borda dark:disabled:bg-noite-fundo dark:disabled:text-noite-fraca"
+            // Hand-off, não execução: fonte, teto e resultado moram na vista
+            // de execução, e é lá que o servidor exige o teto ANTES de gastar.
+            // O mesmo idioma do link "fila de revisão →" e a mesma URL que o
+            // grill imprime na CLI. Só existe DEPOIS de salvo: uma composição
+            // validada e não gravada não está no registry.
+            <a
+              href={`/?workflow=${encodeURIComponent(p.construido.id)}`}
+              className="rounded border border-regra bg-regra px-3 py-1.5 text-[12.5px] text-white transition hover:opacity-90"
             >
-              {p.rodando ? "rodando…" : "▶ Run"}
-            </button>
+              abrir na execução →
+            </a>
           )}
         </div>
         {p.erro && (
@@ -321,49 +309,6 @@ export function Painel(p: Props) {
         </Secao>
       )}
 
-      {p.run && (
-        <Secao
-          titulo="Execução"
-          ajuda={
-            p.run.contra_gabarito
-              ? `benchmark sintético, semente ${p.run.contra_gabarito.seed}, ${p.run.contra_gabarito.n} lançamentos.`
-              : "sem gabarito: não há com o que comparar."
-          }
-        >
-          {p.run.contra_gabarito && (
-            <p className="mb-2 flex items-baseline gap-2">
-              <strong className="text-2xl font-semibold text-regra dark:text-noite-regra">
-                {(100 * p.run.contra_gabarito.deterministic_rate).toFixed(1)}%
-              </strong>
-              <span className="text-[11px] text-neutral-500 dark:text-noite-fraca">
-                resolvido sem gastar nada
-              </span>
-            </p>
-          )}
-          <ul className="mb-2">
-            {p.run.por_resolver.map((l) => (
-              <li
-                key={l.name}
-                className="flex items-baseline gap-2 border-b border-neutral-100 py-1 text-[11.5px] dark:border-noite-borda"
-              >
-                <span className="font-medium">{l.name}</span>
-                <span className="ml-auto font-mono tabular-nums">{l.matches}</span>
-                <span className="w-20 text-right font-mono text-[10.5px] text-neutral-400 dark:text-noite-fraca">
-                  {/* µ¢ de dólar, inteiro — a constraint de dinheiro do projeto
-                      proíbe ponto flutuante acumulando. Aqui só é dividido para
-                      exibir. */}
-                  {l.microcents > 0 ? `US$ ${(l.microcents / 1e8).toFixed(4)}` : "grátis"}
-                </span>
-              </li>
-            ))}
-          </ul>
-          {/* A LACUNA, sempre declarada — inclusive quando é zero. É invariante
-              do §1.5, e esconder a linha faria o leitor não saber se foi medida. */}
-          <p className="rounded-md bg-lacuna-fundo px-2.5 py-2 text-[11.5px] text-lacuna dark:bg-noite-lacuna-fundo dark:text-noite-crew">
-            {p.run.gap.items} item(ns) sem resolução ({(100 * p.run.gap.rate).toFixed(1)}%)
-          </p>
-        </Secao>
-      )}
     </aside>
   );
 }

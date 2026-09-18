@@ -102,15 +102,38 @@ def test_COM_chave_o_workflow_com_agente_deixa_de_ser_recusado(tmp_path, monkeyp
     guarda, e provar roteamento indo à API paga seria pagar para saber o que um
     dublê responde de graça. Quanto ela gasta e onde o teto morde estão em
     `tests/api/test_execucao.py`.
+
+    **O dublê ganhou RESPOSTAS.** Ele era `FakeLLMClient([])`, e isso bastava
+    enquanto o `investigador` do catálogo declarava `kind="lancamento"`: cego,
+    ele nunca chamava o cliente, e uma lista vazia nunca acabava. Com o bloco
+    consertado o agente VÊ os lançamentos bancários que a cascata deixou em
+    aberto, e um cliente sem respostas faria cada item morrer no
+    `AssertionError` do dublê — o run continuaria 200 e a asserção continuaria
+    verde, agora provando roteamento sobre um agente que só erra. Com respostas
+    preparadas o que roda é o caminho feliz de verdade.
     """
-    from orchestrator.agent.llm import FakeLLMClient
+    from orchestrator.agent.llm import FakeLLMClient, LLMResponse
     from orchestrator.agent.teto import ClienteComTeto
+    from orchestrator.kernel.cost import Cost
+
+    def _resposta() -> LLMResponse:
+        """Uma resposta válida para o vocabulário do `investigador`."""
+        return LLMResponse(
+            text=(
+                '{"tipo": "DEFASAGEM_TEMPORAL", "explicacao": "liquidou depois", '
+                '"evidencia": ["o documento"], "confianca": "ALTA"}'
+            ),
+            tool_calls=[],
+            cost=Cost(input_tokens=100, output_tokens=50),
+        )
 
     monkeypatch.setattr(app_mod, "_tem_chave", lambda: True)
     monkeypatch.setattr(
         app_mod,
         "_cliente_de_execucao",
-        lambda teto: ClienteComTeto(FakeLLMClient([]), teto_microcents=teto),
+        # Folga deliberada: o número de itens que sobra para o agente é
+        # propriedade da fonte sintética e da cascata, não deste teste.
+        lambda teto: ClienteComTeto(FakeLLMClient([_resposta()] * 200), teto_microcents=teto),
     )
     _gravar_pago(tmp_path)
     cliente = TestClient(app_mod.app)

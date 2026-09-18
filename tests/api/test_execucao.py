@@ -185,8 +185,8 @@ def test_resolver_com_layer_diferente_do_name_e_reportado_pelo_proprio_nome(monk
     # entradas reais (`conciliacao`).
     from orchestrator.workflows import registry as _registry_original
 
-    def _registry_com_extra(raiz=None):
-        fabricas = _registry_original(raiz)
+    def _registry_com_extra(raiz=None, raiz_composicoes=None):
+        fabricas = _registry_original(raiz, raiz_composicoes)
         fabricas["layer_diferente"] = _fabrica
         return fabricas
 
@@ -303,12 +303,12 @@ def test_a_fonte_SINTETICA_continua_medindo_contra_gabarito():
 
 
 def test_a_fonte_de_ARQUIVO_nao_inventa_taxa_de_acerto(tmp_path, monkeypatch):
-    """O teste que existe por causa de um bug real.
-
-    Antes desta fatia, compor uma cascata de compras e rodar devolvia `200` com
-    `deterministic_rate: 0.0` e lacuna de 100% — um número que parece medido e
-    não é. AUSENTE é a forma de dizer "não medido contra verdade"; `0.0` seria
-    a mesma mentira com outra roupa.
+    """Este teste provava que o arquivo é lido, hasheado e vira pool — usando um
+    kind que NENHUM resolver consome, e recebendo 200 com lacuna de 100%. Era
+    o "200 sobre um pool que ninguém leu" do README. Com a borda por resolver
+    isso é 422, e a prova de que o arquivo É lido mora em
+    `test_um_CSV_de_verdade_e_CONSUMIDO_e_produz_resolucao`, que consome o kind
+    do arquivo e lê um campo dele.
     """
     import orchestrator.api.app as api_app
 
@@ -323,11 +323,10 @@ def test_a_fonte_de_ARQUIVO_nao_inventa_taxa_de_acerto(tmp_path, monkeypatch):
                         "kind": "lancamento", "campo_id": "id"}},
     )
 
-    assert r.status_code == 200, r.text
-    corpo = r.json()
-    assert corpo["contra_gabarito"] is None
-    assert corpo["itens"] == 2
-    assert corpo["input_ref"].startswith("file:")
+    assert r.status_code == 422, r.text
+    detalhe = r.json()["detail"]
+    assert "'L1'" in detalhe
+    assert "lancamento" in detalhe
 
 
 def test_caminho_fora_da_raiz_vira_422_e_nao_500(tmp_path, monkeypatch):
@@ -408,7 +407,9 @@ def test_o_custo_da_execucao_volta_na_resposta():
     assert corpo["custo_microcents"] >= 0
 
 
-def test_a_fila_de_uma_fonte_de_arquivo_e_ESCOPADA_por_conteudo(tmp_path, monkeypatch):
+def test_a_fila_de_uma_fonte_de_arquivo_CONSUMIDA_e_ESCOPADA_por_conteudo(
+    tmp_path, monkeypatch
+):
     """A chave que o ENDPOINT de fato usa, observada — não recalculada.
 
     A primeira versão deste teste comparava `dataset_de_ref(ref_antes)` com
@@ -417,15 +418,25 @@ def test_a_fila_de_uma_fonte_de_arquivo_e_ESCOPADA_por_conteudo(tmp_path, monkey
     `_executar` — ou seja, provava que o `ref` muda com o conteúdo e nada sobre
     a fila. Aqui o `caminho_da_fila` do módulo é espionado, então o que a
     asserção vê é o caminho que o servidor abriu.
+
+    A propriedade é da FILA, não do kind — mas com a borda por resolver, um
+    `kind` que nenhum bloco consome (`"k"`, contra a conciliação, o caso do
+    teste original) nem chega a `_abrir_fila`: vira 422 antes. A observação
+    migrou para cá, sobre a mesma cascata CONSUMIDORA de
+    `test_um_CSV_de_verdade_e_CONSUMIDO_e_produz_resolucao` (`_triagem`,
+    kind `issue`), onde a execução completa de verdade e a fila é aberta. O
+    teste com o nome original (`..._ESCOPADA_por_conteudo`) continua
+    existindo, agora provando a recusa — ver o docstring dele.
     """
     import orchestrator.api.app as api_app
     from orchestrator.review.fila import caminho_da_fila, dataset_de_ref
 
     raiz = tmp_path / "entradas"
     raiz.mkdir()
-    alvo = raiz / "itens.csv"
-    alvo.write_text("id,texto\na,um\n", encoding="utf-8")
+    alvo = raiz / "issues.csv"
+    alvo.write_text("numero,prioridade\n1,baixa\n", encoding="utf-8")
     monkeypatch.setattr(api_app, "_RAIZ_ENTRADAS", raiz)
+    _registrar(monkeypatch, "triagem", _triagem())
 
     abertas: list[tuple[str, str]] = []
 
@@ -437,23 +448,54 @@ def test_a_fila_de_uma_fonte_de_arquivo_e_ESCOPADA_por_conteudo(tmp_path, monkey
 
     def _rodar() -> str:
         return cliente.post(
-            "/api/workflows/conciliacao/runs",
-            json={"fonte": {"tipo": "arquivo", "caminho": "itens.csv",
-                            "kind": "k", "campo_id": "id"}},
+            "/api/workflows/triagem/runs",
+            json={"fonte": {"tipo": "arquivo", "caminho": "issues.csv",
+                            "kind": "issue", "campo_id": "numero"}},
         ).json()["input_ref"]
 
     antes = _rodar()
-    alvo.write_text("id,texto\na,OUTRO\n", encoding="utf-8")
+    alvo.write_text("numero,prioridade\n1,OUTRO\n", encoding="utf-8")
     depois = _rodar()
 
     assert antes != depois
     # O endpoint abriu UMA fila por execução, no workflow certo, com a chave
     # derivada do `ref` da fonte de ARQUIVO — nunca a de uma sintética.
-    assert [w for w, _ in abertas] == ["conciliacao", "conciliacao"]
+    assert [w for w, _ in abertas] == ["triagem", "triagem"]
     assert [d for _, d in abertas] == [dataset_de_ref(antes), dataset_de_ref(depois)]
     assert abertas[0][1] != abertas[1][1]
     for _, chave in abertas:
         assert chave.startswith("file-")
+
+
+def test_a_fila_de_uma_fonte_de_arquivo_e_ESCOPADA_por_conteudo(tmp_path, monkeypatch):
+    """Este teste provava que o arquivo é lido, hasheado e vira pool — usando um
+    kind que NENHUM resolver consome, e recebendo 200 com lacuna de 100%. Era
+    o "200 sobre um pool que ninguém leu" do README. Com a borda por resolver
+    isso é 422, e a prova de que o arquivo É lido mora em
+    `test_um_CSV_de_verdade_e_CONSUMIDO_e_produz_resolucao`, que consome o kind
+    do arquivo e lê um campo dele. A propriedade da FILA escopada por
+    conteúdo, que este teste provava sobre um caminho `200` que não existe
+    mais para este `kind`, sobrevive em
+    `test_a_fila_de_uma_fonte_de_arquivo_CONSUMIDA_e_ESCOPADA_por_conteudo`.
+    """
+    import orchestrator.api.app as api_app
+
+    raiz = tmp_path / "entradas"
+    raiz.mkdir()
+    alvo = raiz / "itens.csv"
+    alvo.write_text("id,texto\na,um\n", encoding="utf-8")
+    monkeypatch.setattr(api_app, "_RAIZ_ENTRADAS", raiz)
+
+    r = cliente.post(
+        "/api/workflows/conciliacao/runs",
+        json={"fonte": {"tipo": "arquivo", "caminho": "itens.csv",
+                        "kind": "k", "campo_id": "id"}},
+    )
+
+    assert r.status_code == 422, r.text
+    detalhe = r.json()["detail"]
+    assert "'L1'" in detalhe
+    assert "'k'" in detalhe
 
 
 def _registrar(monkeypatch, workflow_id: str, fabrica) -> None:
@@ -465,8 +507,8 @@ def _registrar(monkeypatch, workflow_id: str, fabrica) -> None:
     """
     from orchestrator.workflows import registry as _original
 
-    def _com_extra(raiz=None):
-        fabricas = _original(raiz)
+    def _com_extra(raiz=None, raiz_composicoes=None):
+        fabricas = _original(raiz, raiz_composicoes)
         fabricas[workflow_id] = fabrica
         return fabricas
 
@@ -565,6 +607,67 @@ def test_um_CSV_de_verdade_e_CONSUMIDO_e_produz_resolucao(tmp_path, monkeypatch)
     assert corpo["input_ref"].startswith("file:issues.csv@")
     soma = sum(x["rate"] for x in corpo["por_resolver"]) + corpo["gap"]["rate"]
     assert soma == pytest.approx(1.0)
+
+
+def test_a_borda_recusa_bloco_que_a_fonte_NAO_alimenta(tmp_path, monkeypatch):
+    """A frase do README que esta fatia apaga: "200 com lacuna de 100% sobre
+    um pool que ninguém leu". Um CSV de issues na conciliação: L1 consome
+    {banco, contabil}, a fonte entrega {issue}. Antes desta guarda o stage não
+    enxergava nada, não rodava, e a resposta era 200 com tudo por resolver —
+    um número com cara de medido sobre o que não foi medido."""
+
+    _csv_de_issues(tmp_path, monkeypatch, linhas=2)
+
+    r = cliente.post("/api/workflows/conciliacao/runs", json={"fonte": _FONTE_ISSUES})
+
+    assert r.status_code == 422, r.text
+    detalhe = r.json()["detail"]
+    assert "'L1'" in detalhe and "banco" in detalhe and "issue" in detalhe
+
+
+def test_a_borda_e_POR_RESOLVER_e_nao_pela_uniao_do_degrau(tmp_path, monkeypatch):
+    """Pela união do degrau, um agente cego dentro de um degrau vivo passaria:
+    L1 consome banco, a fonte traz banco, união satisfeita — e o agente que
+    consome outra coisa roda sem ver item nenhum. Era o catálogo até a Task 3.
+    Aqui uma receita `L1 + triador` sobre a fonte SINTÉTICA: L1 é alimentado,
+    o triador (issue) não — e é o triador que a mensagem nomeia."""
+    import orchestrator.api.app as api_app
+
+    monkeypatch.setattr(api_app, "_RAIZ_RECEITAS", tmp_path / "receitas")
+    criada = cliente.post("/api/receitas", json={
+        "id": "mista", "nome": "m", "justificativa": "j",
+        "resolvers": [{"nome": "L1"}, {"nome": "triador"}]})
+    assert criada.status_code == 201, criada.text
+    # `_executar` constrói o cliente ANTES da borda: sem este stub, a tranca de
+    # rede do conftest levantaria `RedeProibida` no `AnthropicClient()` e o
+    # teste morreria antes do 422. `_cliente_falso` também stuba `_tem_chave`.
+    _cliente_falso(monkeypatch, [])
+
+    r = cliente.post("/api/workflows/mista/runs", json={"teto_microcents": 1_000_000})
+
+    assert r.status_code == 422, r.text
+    detalhe = r.json()["detail"]
+    assert "'triador'" in detalhe and "issue" in detalhe and "banco" in detalhe
+
+
+def test_pool_VAZIO_e_recusado_e_nao_um_run_concluido_com_zero(tmp_path, monkeypatch):
+    """Um CSV só com cabeçalho não é uma execução: é ausência de trabalho.
+    Devolver 200 com zero itens seria outro número com cara de medido."""
+    import orchestrator.api.app as api_app
+
+    raiz = tmp_path / "entradas"
+    raiz.mkdir()
+    (raiz / "vazio.csv").write_text("id,titulo\n", encoding="utf-8")
+    monkeypatch.setattr(api_app, "_RAIZ_ENTRADAS", raiz)
+
+    r = cliente.post(
+        "/api/workflows/conciliacao/runs",
+        json={"fonte": {"tipo": "arquivo", "caminho": "vazio.csv",
+                        "kind": "banco", "campo_id": "id"}},
+    )
+
+    assert r.status_code == 422, r.text
+    assert "item nenhum" in r.json()["detail"]
 
 
 def test_o_run_de_um_CSV_e_PERSISTIDO_com_o_ref_do_arquivo(tmp_path, monkeypatch):
@@ -951,18 +1054,24 @@ def _cliente_falso(monkeypatch, respostas, teto_visto: dict | None = None):
 # -- guarda 3: sem chave, recusa legível ------------------------------------
 
 
-def test_sem_chave_a_execucao_com_agente_e_recusada_com_MOTIVO(monkeypatch):
+def test_sem_chave_a_execucao_com_agente_e_recusada_com_MOTIVO(tmp_path, monkeypatch):
     """Guarda 3, a mesma do chat. Sem chave, recusa legível — em vez de o SDK
-    levantar no meio do laço com o trabalho já pela metade."""
+    levantar no meio do laço com o trabalho já pela metade.
+
+    A fonte precisa alimentar o agente (`kind="issue"`) — desde a borda de
+    `_conferir_kinds` a fonte sintética padrão (`banco`/`contabil`) não faz
+    isso, e este teste não é sobre kind nenhum."""
     import orchestrator.api.app as api_app
 
+    _csv_de_issues(tmp_path, monkeypatch, linhas=1)
     monkeypatch.setattr(api_app, "_tem_chave", lambda: False)
     _registrar(monkeypatch, "com-agente", _fabrica_com_agentes(_declarado()))
 
     # COM teto: o teto é exigência do PEDIDO e é conferida antes, então um
     # pedido sem ele levaria 422 e este teste não chegaria a observar o 409.
     r = cliente.post(
-        "/api/workflows/com-agente/runs", json={"teto_microcents": 1_000_000}
+        "/api/workflows/com-agente/runs",
+        json={"fonte": _FONTE_ISSUES, "teto_microcents": 1_000_000},
     )
 
     assert r.status_code == 409, r.text
@@ -1000,16 +1109,20 @@ def test_sem_agente_o_cliente_de_execucao_NUNCA_e_construido(monkeypatch):
 # -- guarda 1: o teto, dito antes ------------------------------------------
 
 
-def test_o_teto_do_pedido_chega_ao_agente(monkeypatch):
+def test_o_teto_do_pedido_chega_ao_agente(tmp_path, monkeypatch):
     """Guarda 1. O teto é dito ANTES, e é o do pedido que vale — não o default
     do agente, que é generoso por ser um default."""
+    _csv_de_issues(tmp_path, monkeypatch, linhas=1)
     vistos: dict = {}
     _cliente_falso(monkeypatch, [_resposta()], teto_visto=vistos)
     _registrar(
         monkeypatch, "com-teto", _fabrica_com_agentes(_declarado(), workflow_id="com-teto")
     )
 
-    cliente.post("/api/workflows/com-teto/runs", json={"teto_microcents": 12345})
+    cliente.post(
+        "/api/workflows/com-teto/runs",
+        json={"fonte": _FONTE_ISSUES, "teto_microcents": 12345},
+    )
 
     assert vistos["teto"] == 12345
 
@@ -1042,7 +1155,7 @@ def test_o_teto_do_pedido_PARA_o_gasto(tmp_path, monkeypatch):
     assert r.json()["custo_microcents"] == _POR_CHAMADA > 100_000
 
 
-def test_pedido_com_agente_SEM_teto_e_RECUSADO_pela_web(monkeypatch):
+def test_pedido_com_agente_SEM_teto_e_RECUSADO_pela_web(tmp_path, monkeypatch):
     """"Gasta com teto, E O TETO É DITO ANTES" — a segunda metade é a regra.
 
     Um pedido que omite `teto_microcents` não disse teto nenhum: ele HERDA o do
@@ -1053,14 +1166,18 @@ def test_pedido_com_agente_SEM_teto_e_RECUSADO_pela_web(monkeypatch):
 
     A recusa é 422 e não 409: falta um campo do PEDIDO. E vem ANTES da guarda de
     chave, pela mesma ordem que o resto desta rota segue — erro do pedido antes
-    de erro do ambiente.
+    de erro do ambiente. A `fonte` vai no corpo (alimenta o agente, kind
+    `issue`), e o que falta continua sendo só o teto.
     """
     import orchestrator.api.app as api_app
 
+    _csv_de_issues(tmp_path, monkeypatch, linhas=1)
     monkeypatch.setattr(api_app, "_tem_chave", lambda: True)
     _registrar(monkeypatch, "com-agente", _fabrica_com_agentes(_declarado()))
 
-    r = cliente.post("/api/workflows/com-agente/runs", json={})
+    r = cliente.post(
+        "/api/workflows/com-agente/runs", json={"fonte": _FONTE_ISSUES}
+    )
 
     assert r.status_code == 422, r.text
     # A recusa diz O QUE MANDAR, com a unidade. Uma recusa que não diz isso
@@ -1607,11 +1724,34 @@ def test_o_teto_VENCE_aguardando_humano_quando_os_dois_valem(tmp_path, monkeypat
     para a revisao esconderia a causa atras do efeito, e ele aprovaria itens sem
     saber que o agente nem chegou a olha-los. E a mesma precedencia que o motor
     ja usa: `LIMITE_DE_RONDAS` vence `AGUARDANDO_HUMANO` em `runtime/engine.py`.
+
+    `RevisorHumano.describe().consome` é fixo em `{banco, contabil}` — a
+    conferência de PAYLOAD (`_conferir_payload`) exige que esses kinds
+    carreguem `BankEntry`/`LedgerEntry`, e uma fonte de arquivo só entrega
+    `dict`. Usar o `RevisorHumano` de verdade aqui acoplaria este teste — que
+    é sobre a PRECEDÊNCIA teto-vs-fila, não sobre conciliação — ao domínio
+    errado. `_RevisorSemFila` é um dublê LOCAL: a mesma forma (fila vazia,
+    nada resolvido, produz `aguardando_humano`), sem a declaração de kind do
+    domínio de conciliação. `RevisorHumano` de verdade tem cobertura própria
+    em `tests/review/`.
     """
     from orchestrator.agent.declarado import construir_agente
     from orchestrator.grill.catalogo import ClienteAusente
+    from orchestrator.kernel.cost import CostClass
     from orchestrator.kernel.definition import Stage, WorkflowDefinition
-    from orchestrator.review.revisor import RevisorHumano
+    from orchestrator.kernel.resolver import ResolverDescription, ResolverOutput
+
+    class _RevisorSemFila:
+        name = "revisor"
+        cost_class = CostClass.HUMANO
+
+        def describe(self) -> ResolverDescription:
+            return ResolverDescription(
+                self.name, self.cost_class, "gate humano (dublê de teste)"
+            )
+
+        def resolve(self, work):
+            return ResolverOutput(resolutions=[])
 
     def fabrica(ctx):
         cliente_do_ctx = ctx.cliente if ctx.cliente is not None else ClienteAusente()
@@ -1623,7 +1763,7 @@ def test_o_teto_VENCE_aguardando_humano_quando_os_dois_valem(tmp_path, monkeypat
                     name="triar",
                     cascade=(
                         construir_agente(_declarado(), cliente_do_ctx),
-                        RevisorHumano(fila=ctx.fila),
+                        _RevisorSemFila(),
                     ),
                 ),
             ),
@@ -1757,3 +1897,68 @@ def test_teto_negativo_tambem_e_recusado_pelo_SCHEMA_antes_da_rota():
     )
 
     assert r.status_code == 422, r.text
+
+
+def test_um_CSV_de_issues_roda_numa_COMPOSICAO_do_CANVAS(tmp_path, monkeypatch):
+    """A frase do dono, de ponta a ponta: compor um agente na tela e rodar de
+    verdade. A fatia anterior provou isto sobre uma RECEITA; uma composição
+    vivia em data/composicoes/ e o registry não a conhecia — o botão do canvas
+    recebia 404. Agora ela entra no registry e este é o mesmo teste, pela
+    porta que a tela usa."""
+    import orchestrator.api.app as api_app
+
+    monkeypatch.setattr(api_app, "_RAIZ_RECEITAS", tmp_path / "receitas")
+    monkeypatch.setattr(api_app, "_RAIZ_COMPOSICOES", tmp_path / "composicoes")
+    _csv_de_issues(tmp_path, monkeypatch, linhas=3)
+    fake = _cliente_falso(monkeypatch, [_resposta()] * 3)
+
+    criada = cliente.post("/api/composicoes", json={
+        "id": "triagem-canvas", "nome": "Triagem", "justificativa": "",
+        "blocos": [{"tipo": "agente", "declaracao": {
+            "name": "meu-triador", "system": "classifique a issue",
+            "kind": "issue", "prompt": "{titulo}\n\n{corpo}",
+            "tipos": ["BUG", "FEATURE"], "abstem_com": "NAO_SEI",
+            "ferramentas": [], "max_turns": 3, "budget_microcents": 4_000_000}}]})
+    assert criada.status_code == 201, criada.text
+
+    listados = {w["id"]: w for w in cliente.get("/api/workflows").json()}
+    assert "triagem-canvas" in listados
+    assert listados["triagem-canvas"]["gerado_em"] is not None
+
+    r = cliente.post(
+        "/api/workflows/triagem-canvas/runs",
+        json={"fonte": _FONTE_ISSUES, "teto_microcents": 10_000_000},
+    )
+
+    assert r.status_code == 200, r.text
+    corpo = r.json()
+    assert corpo["itens"] == 3
+    assert len(fake.chamadas) == 3
+    assert corpo["propostas_por_tipo"] == {"BUG": 3}
+    assert corpo["falhas"] == 0
+    assert corpo["teto_atingido"] is False
+    assert corpo["contra_gabarito"] is None
+
+
+def test_compor_com_id_de_workflow_EXISTENTE_e_409(tmp_path, monkeypatch):
+    """O id é um só espaço para embutido, receitas e composições.
+
+    `"conciliacao"` (o embutido) já é recusado por `validar_id` no schema, com
+    422 — a mesma tranca que `/api/receitas` tem. O 409 desta fatia é o outro
+    caso: um id que NÃO é reservado, mas já está ocupado por uma receita em
+    disco. É aí que só `registry()` sabe responder.
+    """
+    import orchestrator.api.app as api_app
+
+    monkeypatch.setattr(api_app, "_RAIZ_RECEITAS", tmp_path / "receitas")
+    monkeypatch.setattr(api_app, "_RAIZ_COMPOSICOES", tmp_path / "composicoes")
+    receita = cliente.post("/api/receitas", json={
+        "id": "ja-existe", "nome": "x", "justificativa": "j",
+        "resolvers": [{"nome": "L1"}]})
+    assert receita.status_code == 201, receita.text
+
+    r = cliente.post("/api/composicoes", json={
+        "id": "ja-existe", "nome": "x", "justificativa": "",
+        "blocos": [{"tipo": "regra", "nome": "L1", "parametros": {}}]})
+    assert r.status_code == 409, r.text
+    assert "ja-existe" in r.json()["detail"]

@@ -166,3 +166,73 @@ def test_renomear_o_parametro_da_fabrica_deixou_de_ter_consequencia(nome_do_para
 
     revisor = next(r for r in definicao.stages[0].ordered() if r.name == "revisor")
     assert revisor.fila is fila
+
+
+def _composicao_em(raiz, cid="comp-1"):
+    from datetime import UTC, datetime
+
+    from orchestrator.authoring.composicao import BlocoRegra, Composicao, gravar
+
+    raiz.mkdir(parents=True, exist_ok=True)
+    c = Composicao(
+        id=cid, nome="composta", gerado_em=datetime.now(UTC),
+        blocos=(BlocoRegra(nome="L1", parametros={}),),
+    )
+    gravar(c, raiz)
+    return c
+
+
+def test_uma_COMPOSICAO_salva_entra_no_registry(tmp_path):
+    _composicao_em(tmp_path / "composicoes")
+    fabricas = registry(tmp_path / "receitas", tmp_path / "composicoes")
+    definicao = construir_definicao(fabricas["comp-1"], WorkflowContext.vazio())
+    assert definicao.id == "comp-1"
+    assert [r.name for r in definicao.stages[0].cascade] == ["L1"]
+
+
+def test_sem_raiz_de_composicoes_o_registry_e_o_de_ANTES(tmp_path):
+    """Todo chamador existente passa só a raiz de receitas — e continua igual."""
+    assert set(registry(tmp_path / "receitas")) == {ID_EMBUTIDO}
+
+
+def test_a_ordem_e_a_tranca_receita_VENCE_composicao_com_o_mesmo_id(tmp_path, capsys):
+    """Dois arquivos com o mesmo id em disco — criados antes desta fatia, ou à
+    mão. A receita vence, a composição é PULADA com aviso: a configuração
+    inválida não some em silêncio nem derruba a listagem inteira por causa de
+    um id. Mesmo padrão com que `descrever()` isola uma receita que não
+    constrói."""
+    gravar_receita(_receita("mesmo-id"), raiz=tmp_path / "receitas")
+    _composicao_em(tmp_path / "composicoes", cid="mesmo-id")
+
+    fabricas = registry(tmp_path / "receitas", tmp_path / "composicoes")
+    definicao = construir_definicao(fabricas["mesmo-id"], WorkflowContext.vazio())
+
+    assert definicao.name != "composta"  # é a receita, não a composição
+    assert "mesmo-id" in capsys.readouterr().err
+
+
+def test_uma_composicao_que_NAO_constroi_some_da_listagem_com_aviso_e_nao_derruba_as_outras(
+    tmp_path, capsys
+):
+    """O mesmo isolamento que `descrever()` já dá a uma receita ruim, agora
+    para composições: um bloco que saiu do catálogo não pode matar o seletor
+    da tela para TODOS os workflows."""
+    from datetime import UTC, datetime
+
+    from orchestrator.authoring.composicao import BlocoRegra, Composicao, gravar
+
+    raiz = tmp_path / "composicoes"
+    raiz.mkdir()
+    gravar(
+        Composicao(
+            id="quebrada", nome="q", gerado_em=datetime.now(UTC),
+            blocos=(BlocoRegra(nome="bloco-que-nao-existe", parametros={}),),
+        ),
+        raiz,
+    )
+
+    ids = [wid for wid, _ in descrever(tmp_path / "receitas", raiz)]
+
+    assert ID_EMBUTIDO in ids
+    assert "quebrada" not in ids
+    assert "quebrada" in capsys.readouterr().err

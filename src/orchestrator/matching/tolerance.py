@@ -37,6 +37,7 @@ class ToleranceMatcher:
             cost_class=self.cost_class,
             summary="mesmo documento, com folga de valor e dias úteis",
             payloads=PAYLOADS,
+            consome=frozenset(PAYLOADS),
         )
 
     def resolve(self, work: WorkSet) -> ResolverOutput:

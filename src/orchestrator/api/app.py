@@ -197,21 +197,22 @@ def listar_workflows() -> list[WorkflowResumoJSON]:
     com_chave = _tem_chave()
     resumos = []
     por_id = {r.id: r for r in listar_receitas(_RAIZ_RECEITAS)}
+    por_id.update({c.id: c for c in listar(_RAIZ_COMPOSICOES)})
     # `descrever` já isola a receita que parseia e não constrói: um arquivo
     # ruim não derruba a listagem inteira, mas também não some em silêncio.
     # A lógica saiu daqui para `workflows.py` porque a CLI precisa da mesma
     # resposta, e duas cópias seriam o join frágil de sempre.
-    for workflow_id, definicao in descrever(_RAIZ_RECEITAS):
+    for workflow_id, definicao in descrever(_RAIZ_RECEITAS, _RAIZ_COMPOSICOES):
         classes = sorted(
             {r.cost_class.name for s in definicao.stages for r in s.cascade}
         )
-        receita = por_id.get(workflow_id)
+        origem = por_id.get(workflow_id)
         resumos.append(
             WorkflowResumoJSON(
                 id=workflow_id,
                 nome=definicao.name,
                 classes=classes,
-                gerado_em=receita.gerado_em.isoformat() if receita else None,
+                gerado_em=origem.gerado_em.isoformat() if origem else None,
                 executavel=CostClass.AGENTE.name not in classes or com_chave,
             )
         )
@@ -347,7 +348,7 @@ def criar_receita(pedido: ReceitaRequest) -> WorkflowJSON:
     except ValueError as erro:
         raise HTTPException(status_code=422, detail=str(erro)) from erro
 
-    if pedido.id in registry(_RAIZ_RECEITAS):
+    if pedido.id in registry(_RAIZ_RECEITAS, _RAIZ_COMPOSICOES):
         raise HTTPException(
             status_code=409,
             detail=f"já existe um workflow com id {pedido.id!r}; escolha outro",
@@ -422,6 +423,14 @@ def criar_composicao(pedido: ComposicaoRequest) -> WorkflowJSON:
     except ValueError as erro:
         raise HTTPException(status_code=422, detail=str(erro)) from erro
 
+    if pedido.id in registry(_RAIZ_RECEITAS, _RAIZ_COMPOSICOES):
+        # Simétrico a `/api/receitas`: o id é um só espaço para embutido,
+        # receitas e composições. Recusar aqui é o que faz o pulo-com-aviso
+        # de `registry()` ser um caso de disco editado à mão, não de tela.
+        raise HTTPException(
+            status_code=409,
+            detail=f"já existe um workflow com id {pedido.id!r}; escolha outro",
+        )
     try:
         gravar(composicao, _RAIZ_COMPOSICOES)
     except FileExistsError as erro:
@@ -434,9 +443,12 @@ def listar_composicoes() -> list[ComposicaoResumoJSON]:
     """As composições em disco.
 
     Existe para que gravar não seja escrever num buraco: sem esta rota, uma
-    composição criada pela tela sumiria de vista — ela não entra no `registry()`
-    dos workflows, que lê receitas do grill. **Executar uma composição ainda não
-    tem caminho**, e essa lacuna fica visível aqui em vez de escondida.
+    composição criada pela tela sumiria de vista antes mesmo de aparecer no
+    seletor. Composições entram no `registry()` por `workflows._de_composicao`
+    e são executadas pelo MESMO `/api/workflows/{id}/runs` que já executa
+    receitas — não há uma segunda rota de execução para composição. "Compor
+    pela web não gasta" continua valendo para ESTA rota, que só valida e
+    grava; quem gasta, com teto e cliente de verdade, é `/runs`.
     """
     return [
         ComposicaoResumoJSON(
@@ -452,7 +464,7 @@ def listar_composicoes() -> list[ComposicaoResumoJSON]:
 
 @app.get("/api/workflows/{workflow_id}", response_model=WorkflowJSON)
 def obter_workflow(workflow_id: str) -> WorkflowJSON:
-    fabrica = registry(_RAIZ_RECEITAS).get(workflow_id)
+    fabrica = registry(_RAIZ_RECEITAS, _RAIZ_COMPOSICOES).get(workflow_id)
     if fabrica is None:
         raise HTTPException(status_code=404, detail=f"workflow desconhecido: {workflow_id}")
     # Mesma construção de `_executar`, nunca uma segunda via direto
@@ -466,7 +478,7 @@ def obter_workflow(workflow_id: str) -> WorkflowJSON:
 
 @app.post("/api/workflows/{workflow_id}/runs", response_model=RunJSON)
 def executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
-    fabrica = registry(_RAIZ_RECEITAS).get(workflow_id)
+    fabrica = registry(_RAIZ_RECEITAS, _RAIZ_COMPOSICOES).get(workflow_id)
     if fabrica is None:
         # 404 antes do cache, de propósito: um id desconhecido nunca deve
         # entrar em `_executar`, nem para virar um run persistido de um
@@ -615,6 +627,56 @@ def _conferir_payload(definicao: WorkflowDefinition, pool: WorkSet) -> None:
                 )
 
 
+def _conferir_kinds(definicao: WorkflowDefinition, pool: WorkSet) -> None:
+    """Cada resolver que declara o que consome é alimentado por esta fonte?
+
+    A irmã de `_conferir_payload`, para a outra pergunta: aquela confere o
+    TIPO do payload de um kind que o resolver exige; esta confere se o KIND
+    que o resolver pega do pool existe na fonte. Sem ela, um CSV de issues na
+    conciliação devolvia 200 com lacuna de 100% — o stage não enxergava nada,
+    não rodava, e a resposta parecia medida. É a frase do README que esta
+    guarda apaga: "não achei nada" indistinguível de "não procurei".
+
+    **Por RESOLVER, não pela união do degrau.** A união deixaria passar um
+    agente cego dentro de um degrau vivo: `L1` alimentado por `banco`
+    satisfaz a união, e o agente que consome outro kind roda sem ver item
+    nenhum. Foi o caso do `investigador` do catálogo até o conserto.
+
+    **Aqui, e não no motor.** `runtime/engine.py` reserva os kinds que um
+    degrau não consome e pula o degrau sem trabalho — semântica certa para um
+    grafo de vários degraus. Recusar o RUN inteiro por kind errado é decisão
+    de borda: só aqui existem, juntos, a fonte e o workflow.
+
+    Pool vazio é recusa própria, não passe: sem item não há execução, e um
+    run "concluído" com zero itens seria mais um número com cara de medido.
+
+    **`entregues` CRESCE a cada degrau, pelo `produz` declarado do stage —
+    não fica fixo no pool inicial.** Sem isto, um stage que PRODUZ um kind
+    para o próximo (`Stage.produz`, o mesmo grafo do canvas) seria recusado
+    aqui mesmo quando o stage seguinte está corretamente alimentado pelo
+    anterior: a união do degrau é proibida acima por esconder um agente cego
+    dentro de um mesmo stage, mas isso não autoriza fingir que o stage
+    seguinte não existe. `Stage.produz` já é a declaração ANTES da execução
+    que este módulo pede — é o mesmo grafo que a recusa de beco sem saída em
+    `kernel/definition.py` valida.
+    """
+    if not pool.items:
+        raise HTTPException(status_code=422, detail="a fonte não entregou item nenhum")
+    entregues = frozenset(item.kind for item in pool.items)
+    for stage in definicao.stages:
+        for resolver in stage.ordered():
+            consome = resolver.describe().consome
+            if consome and not (consome & entregues):
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"o bloco {resolver.name!r} consome {sorted(consome)}, "
+                        f"e a fonte entrega {sorted(entregues)}"
+                    ),
+                )
+        entregues = entregues | stage.produz
+
+
 def _executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
     """Executa e PERSISTE o run. Sem cache.
 
@@ -652,7 +714,7 @@ def _executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
     # de `(seed, n, taxa)` — que uma fonte de arquivo não tem.
     ref, pool = _ler(fonte, pedido)
     fila, _ = _abrir_fila(workflow_id, ref)
-    fabrica = registry(_RAIZ_RECEITAS)[workflow_id]
+    fabrica = registry(_RAIZ_RECEITAS, _RAIZ_COMPOSICOES)[workflow_id]
     # A definição com a TRANCA. `cliente=None` é o default de
     # `WorkflowContext`, e `construir` o traduz em `ClienteAusente` — o
     # sentinela que levanta se algum caminho chegar ao modelo por onde não
@@ -671,6 +733,7 @@ def _executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
     # administrador para, depois da chave posta, descobrir que o CSV dela seria
     # recusado do mesmo jeito. Erro do PEDIDO antes de erro do AMBIENTE.
     _conferir_payload(definicao, pool)
+    _conferir_kinds(definicao, pool)
 
     cliente: ClienteComTeto | None = None
     if tem_agente:
@@ -1015,7 +1078,7 @@ def ler_fila(
     # aviso nenhum.
     estado: Literal["pendente", "decidida"] = "pendente",
 ) -> FilaJSON:
-    if workflow_id not in registry(_RAIZ_RECEITAS):
+    if workflow_id not in registry(_RAIZ_RECEITAS, _RAIZ_COMPOSICOES):
         raise HTTPException(status_code=404, detail=f"workflow desconhecido: {workflow_id}")
     # A chave da fila sai do `ref` da fonte, e a fonte desta rota é a
     # sintética — as duas telas precisam concordar sobre qual arquivo abrir, e
@@ -1050,7 +1113,7 @@ def decidir(
     n: int = Query(300, ge=1, le=5000),
     taxa_divergencia: float = Query(0.15, ge=0.0, le=1.0),
 ) -> ItemFilaJSON:
-    if workflow_id not in registry(_RAIZ_RECEITAS):
+    if workflow_id not in registry(_RAIZ_RECEITAS, _RAIZ_COMPOSICOES):
         raise HTTPException(status_code=404, detail=f"workflow desconhecido: {workflow_id}")
     fila, _ = _abrir_fila(
         workflow_id,

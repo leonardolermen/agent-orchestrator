@@ -32,6 +32,7 @@ class RevisorHumano:
             cost_class=self.cost_class,
             summary="aplica as decisões aprovadas na fila de revisão",
             payloads=PAYLOADS,
+            consome=frozenset(PAYLOADS),
         )
 
     def resolve(self, work: WorkSet) -> ResolverOutput:

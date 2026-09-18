@@ -47,6 +47,7 @@ class GroupingMatcher:
             cost_class=self.cost_class,
             summary="um lançamento bancário cobrindo N contábeis do mesmo fornecedor",
             payloads=PAYLOADS,
+            consome=frozenset(PAYLOADS),
         )
 
     def resolve(self, work: WorkSet) -> ResolverOutput:

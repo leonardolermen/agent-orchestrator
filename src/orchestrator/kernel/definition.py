@@ -15,6 +15,7 @@ e a execução — e um desenho que não corresponde ao motor é a decoração q
 
 import hashlib
 import json
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 from orchestrator.kernel.policy import ExecutionPolicy
@@ -51,6 +52,23 @@ class Stage:
         dentro de uma classe é a que o autor da definição escreveu.
         """
         return sorted(self.cascade, key=lambda r: r.cost_class)
+
+
+def consome_de(cascade: Iterable[Resolver]) -> frozenset[str]:
+    """A união do que cada resolver da cascata declara consumir.
+
+    Mora aqui, e não em `workflows.py`, por um motivo mecânico e um de
+    desenho. O mecânico: `authoring/composicao.py` precisa chamar isto, e
+    `workflows.py` importa `authoring/composicao.py` — em `workflows.py` seria
+    um ciclo. O de desenho: esta função só lê `Resolver.describe()`; é
+    conhecimento de kernel, sem domínio.
+
+    E é uma FUNÇÃO chamada por cada construtor, não uma derivação em
+    `Stage.__post_init__`: popular `consome` no kernel trocaria em silêncio o
+    significado do default vazio ("vê o pool inteiro") para toda definição
+    escrita em Python. Cada construtor decide; o kernel não muda de semântica.
+    """
+    return frozenset().union(*(r.describe().consome for r in cascade))
 
 
 def Task(  # noqa: N802 — é um construtor, e o nome é o do conceito
