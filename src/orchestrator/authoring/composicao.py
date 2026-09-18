@@ -155,10 +155,13 @@ def construir_composicao(
     exatamente para impedir que uma fila vazia entre em silêncio: um revisor
     sobre fila vazia CONSTRÓI, a cascata fica desenhável, e nenhuma decisão
     aprovada chega à execução — sem erro nenhum avisando. O default aqui é
-    seguro pelo mesmo motivo que `ClienteDeValidacao` é: a chamada default não
-    EXECUTA nada (`/api/composicoes` só compõe e grava, e composição não entra
-    no `registry()` dos workflows — ver `listar_composicoes`). Quem for
-    executar passa a fila de verdade, de propósito, e isso aparece no diff.
+    seguro não porque composição não execute — ela executa, pelo mesmo
+    `/api/workflows/{id}/runs` que roda receita — mas porque o ÚNICO caminho
+    que executa uma composição, `workflows._de_composicao`, nunca chama esta
+    função com o default: ele passa `fila=ctx.fila` sempre, verbatim. Quem
+    chega ao default é só `/api/composicoes`, que compõe e grava e não
+    executa. Quem for executar passa a fila de verdade, de propósito, e isso
+    aparece no diff.
 
     **O cliente default é a TRANCA, não um modelo.** `ClienteDeValidacao`
     constrói o agente e recusa falar com modelo. É a mesma escolha do

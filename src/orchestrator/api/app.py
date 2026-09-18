@@ -443,9 +443,12 @@ def listar_composicoes() -> list[ComposicaoResumoJSON]:
     """As composições em disco.
 
     Existe para que gravar não seja escrever num buraco: sem esta rota, uma
-    composição criada pela tela sumiria de vista — ela não entra no `registry()`
-    dos workflows, que lê receitas do grill. **Executar uma composição ainda não
-    tem caminho**, e essa lacuna fica visível aqui em vez de escondida.
+    composição criada pela tela sumiria de vista antes mesmo de aparecer no
+    seletor. Composições entram no `registry()` por `workflows._de_composicao`
+    e são executadas pelo MESMO `/api/workflows/{id}/runs` que já executa
+    receitas — não há uma segunda rota de execução para composição. "Compor
+    pela web não gasta" continua valendo para ESTA rota, que só valida e
+    grava; quem gasta, com teto e cliente de verdade, é `/runs`.
     """
     return [
         ComposicaoResumoJSON(
