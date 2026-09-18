@@ -56,12 +56,12 @@ from orchestrator.agent.declarado import (
     construir_agente,
 )
 from orchestrator.agent.llm import LLMClient
+from orchestrator.domains.reconciliation.revisor import RevisorHumano
 from orchestrator.domains.registro import CATALOGO
 from orchestrator.kernel.cost import CostClass
 from orchestrator.kernel.definition import Stage, WorkflowDefinition, consome_de
 from orchestrator.kernel.resolver import Resolver
 from orchestrator.review.fila import Fila
-from orchestrator.review.revisor import RevisorHumano
 
 _RAIZ_PADRAO = Path("data") / "composicoes"
 

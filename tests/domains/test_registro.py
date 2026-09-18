@@ -257,8 +257,8 @@ def test_resumo_da_REGRA_bate_com_o_describe_do_resolver():
     literalmente o texto que `grill/ferramentas.py::_catalogo_em_texto` serve
     ao MODELO — um resumo desatualizado é uma instrução errada no prompt.
     """
+    from orchestrator.domains.reconciliation.revisor import RevisorHumano
     from orchestrator.review.fila import Fila
-    from orchestrator.review.revisor import RevisorHumano
 
     for r in CATALOGO.regras:
         if r.cost_class is CostClass.HUMANO:
@@ -315,8 +315,8 @@ def _exigencias_esperadas() -> dict[str, dict[str, type]]:
 def _construir(bloco):
     """O resolver de verdade, montado como quem compõe monta."""
     from orchestrator.agent.declarado import ClienteDeValidacao
+    from orchestrator.domains.reconciliation.revisor import RevisorHumano
     from orchestrator.review.fila import Fila
-    from orchestrator.review.revisor import RevisorHumano
 
     if isinstance(bloco, AgenteDeclarado):
         return construir_agente(bloco, ClienteDeValidacao(), CATALOGO.ferramentas)

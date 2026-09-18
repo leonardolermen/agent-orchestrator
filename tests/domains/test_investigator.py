@@ -2,9 +2,9 @@ import json
 
 import pytest
 
-from orchestrator.agent.investigator import SYSTEM, Investigator
 from orchestrator.agent.llm import FakeLLMClient, LLMResponse, ToolCall
 from orchestrator.domains.reconciliation.agent.ferramentas import TOOL_SCHEMAS, ToolContext
+from orchestrator.domains.reconciliation.agent.investigator import SYSTEM, Investigator
 from orchestrator.domains.reconciliation.models import Divergence, divergencias, pool
 from orchestrator.domains.reconciliation.synth.generator import build_dataset, generate_clean_pairs
 from orchestrator.domains.reconciliation.taxonomy import DivergenceType
@@ -541,7 +541,7 @@ def test_interpretar_proposta_e_funcao_de_modulo_reusavel():
     mesmo JSON. Duplicar o parsing significaria dois caminhos divergindo em
     silêncio no dia em que um deles ganhasse uma guarda nova.
     """
-    from orchestrator.agent.investigator import interpretar_proposta
+    from orchestrator.domains.reconciliation.agent.investigator import interpretar_proposta
 
     texto = (
         '{"tipo":"DEFASAGEM_TEMPORAL","explicacao":"liquidou depois",'
@@ -569,8 +569,8 @@ def test_descrever_divergencia_e_funcao_de_modulo_reusavel():
     """
     import json
 
-    from orchestrator.agent.investigator import descrever_divergencia
     from orchestrator.domains.reconciliation.agent.ferramentas import ToolContext
+    from orchestrator.domains.reconciliation.agent.investigator import descrever_divergencia
     from orchestrator.domains.reconciliation.models import Divergence
     from orchestrator.domains.reconciliation.synth.generator import generate_clean_pairs
 

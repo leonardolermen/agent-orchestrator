@@ -78,19 +78,33 @@ DESTINO: dict[str, str] = {
     # entram nesta tabela os dois vizinhos deles que vão para OUTRA camada —
     # `agent.proposal` (kernel, acima) e `agent.tools` (domains, abaixo).
     # --- humano ---
+    # O que sobrou em `review/` é a INFRAESTRUTURA da revisão: a fila
+    # append-only, o veredito e a serialização. Nenhum dos três conhece
+    # conciliação.
+    #
+    # `review.revisor` saiu daqui: `RevisorHumano` conhece divergência, lado
+    # bancário e lado contábil, e o próprio `domains/procurement` já o chamava
+    # de "o `RevisorHumano` DA CONCILIAÇÃO" — tanto que escreveu um resolver
+    # humano próprio em vez de reusá-lo. Ele mora em `domains/reconciliation/`,
+    # e a fila que ele lê continua aqui.
     "review.decision": "human",
     "review.fila": "human",
-    "review.revisor": "human",
     "review.serial": "human",
     # --- avaliação ---
     "metrics": "evaluation",
-    # `replay.py` e `assinatura.py` moram em `eval/` por PROPÓSITO de uso, mas
-    # são implementações de `LLMClient` e de `Resolver` — a camada é dada pelo
-    # que a coisa É, não por quem a usa. Mapeá-las para `evaluation` produziria
-    # violações falsas (`evaluation -> agent`) que nenhum PR deveria fechar,
-    # porque não há nada errado ali.
+    # `replay.py` mora em `eval/` por PROPÓSITO de uso, mas é uma implementação
+    # de `LLMClient` — a camada é dada pelo que a coisa É, não por quem a usa.
+    # Mapeá-lo para `evaluation` produziria uma violação falsa
+    # (`evaluation -> agent`) que nenhum PR deveria fechar, porque não há nada
+    # errado ali.
+    #
+    # `assinatura.py` seguia a mesma regra e estava mapeado para `agent`. Não
+    # era suficiente: ele não é um `Resolver` qualquer, é o investigador de
+    # CONCILIAÇÃO movido a assinatura, e a camada que a coisa É era `domains`
+    # desde sempre. Foi para `domains/reconciliation/agent/`, ao lado do
+    # investigador pago de quem ele reusa prompt e parser — e o diretório
+    # responde por ele agora.
     "eval.replay": "agent",
-    "eval.assinatura": "agent",
     # --- domínios ---
     # NENHUM domínio aparece mais aqui, e é o ponto: `domains/` responde
     # sozinho por `procurement`, `swe`, `redacao` — e agora por `reconciliation`.

@@ -12,10 +12,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from orchestrator.agent.investigator import Investigator
 from orchestrator.agent.llm import LLMClient
 from orchestrator.domains.reconciliation import default_resolvers, reconcile
 from orchestrator.domains.reconciliation.agent.ferramentas import ToolContext
+from orchestrator.domains.reconciliation.agent.investigator import Investigator
 from orchestrator.domains.reconciliation.synth.benchmark import build_benchmark
 from orchestrator.kernel.definition import Stage, WorkflowDefinition
 from orchestrator.kernel.resolution import TraceKind
@@ -150,7 +150,7 @@ def avaliar(
     elif via == "assinatura":
         # Import local: o extra `[assinatura]` é opcional e o núcleo não pode
         # depender do Claude Code para importar este módulo.
-        from orchestrator.eval.assinatura import InvestigadorAssinatura
+        from orchestrator.domains.reconciliation.agent.assinatura import InvestigadorAssinatura
 
         investigador = InvestigadorAssinatura(context=contexto)
     else:

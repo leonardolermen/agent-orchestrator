@@ -1143,12 +1143,18 @@ def _item(proposta, decisao, por_id) -> ItemFilaJSON:
             continue
         lado, e = par
         lancamentos.append(_do_banco(e) if lado == "banco" else _do_contabil(e))
+    # `!=` e não `is not`: funcionava por identidade porque os dois lados eram
+    # membros do MESMO enum, e enum é singleton. Com `tipo` sendo `str` — que é
+    # o que `Proposal.tipo` e `Decision.tipo` declaram —, `is` passa a depender
+    # de interning do CPython, e o sintoma seria "o humano discordou do agente"
+    # aparecendo para decisões idênticas. Falha silenciosa, na tela, sobre
+    # concordância.
     divergiu = decisao is not None and (
-        decisao.tipo is not proposta.tipo or decisao.conciliar_com != ids
+        decisao.tipo != proposta.tipo or decisao.conciliar_com != ids
     )
     return ItemFilaJSON(
         divergence_id=proposta.item_id,
-        tipo=proposta.tipo.value,
+        tipo=proposta.tipo,
         confianca=proposta.confianca.value,
         explicacao=proposta.explicacao,
         evidencia=list(proposta.evidencia),
@@ -1157,7 +1163,7 @@ def _item(proposta, decisao, por_id) -> ItemFilaJSON:
         lancamentos=lancamentos,
         decidido=decisao is not None,
         veredito=decisao.veredito.value if decisao else None,
-        tipo_decidido=decisao.tipo.value if decisao and decisao.tipo else None,
+        tipo_decidido=decisao.tipo if decisao else None,
         autor=decisao.autor if decisao else None,
         divergiu=divergiu,
     )

@@ -47,38 +47,30 @@ from .camadas import (
     violacoes,
 )
 
-# As 13 arestas ilegais que existem hoje, agrupadas pela CAUSA, não pelo arquivo.
+# As 7 arestas ilegais que existem hoje, agrupadas pela CAUSA, não pelo arquivo.
 #
 # Uma entrada sai daqui no mesmo PR que a elimina — nunca antes, nunca depois.
 # O PR anotado ao lado de cada grupo é o de `§27` do spec desta migração.
 VIOLACOES_CONHECIDAS: frozenset[tuple[str, str]] = frozenset(
     {
         # ---------------------------------------------------------------
-        # CAUSA 1 — tipos de domínio fora do domínio. 10 das 13 arestas, e a
-        # maior das cinco. É a lacuna nº 1 do §1.2.
+        # CAUSA 1 — tipos de domínio fora do domínio. Eram 10 das 13 arestas, a
+        # maior das cinco, e a lacuna nº 1 do §1.2. Hoje são 6 de 7.
         #
-        # O KERNEL já saiu dela: `WorkSet` e `Resolution` viraram genéricos no
-        # PR #3, e `Proposal.tipo` virou `str` no PR #6. O que resta é `agent` e
-        # `human` conhecendo conciliação — fecha no PR #12, com `AgentSpec` e o
-        # `ToolRegistry`.
+        # O KERNEL saiu dela no PR #3/#6 (`WorkSet` e `Resolution` genéricos,
+        # `Proposal.tipo` virando `str`). O AGENTE saiu quando o investigador
+        # desceu para o domínio: ele nunca foi "o agente", era o agente DE
+        # CONCILIAÇÃO morando no pacote do agente genérico, e o laço que sobrou
+        # em `agent/agent.py` não conhece divergência nenhuma.
+        #
+        # O HUMANO saiu por dois caminhos diferentes, e a diferença importa:
+        # `RevisorHumano` MUDOU DE CASA (ele é da conciliação, e o próprio
+        # `domains/procurement` já dizia isso), enquanto `decision` e `serial`
+        # ficaram e pararam de coagir `tipo` à taxonomia — quem compara passou
+        # a comparar por valor, e aí a coerção não era mais necessária.
+        #
+        # O que resta é `evaluation` conhecendo conciliação: a lacuna nº 4.
         # ---------------------------------------------------------------
-        ("agent.investigator", "domains.reconciliation.models"),
-        ("agent.investigator", "domains.reconciliation.taxonomy"),
-        ("agent.investigator", "domains.reconciliation.agent.ferramentas"),
-        ("eval.assinatura", "domains.reconciliation.agent.ferramentas"),
-        # ENTROU no PR #3, e não é regressão — é um acoplamento que já existia
-        # e estava ESCONDIDO. `eval/assinatura.py` chamava
-        # `work.as_divergences()`, e como `as_divergences` morava dentro do
-        # próprio `WorkSet`, a dependência de conciliação não aparecia como
-        # import nenhum. Mover o método para o domínio (`models.divergencias`)
-        # revelou a seta que sempre esteve lá.
-        #
-        # É o caso mais forte a favor da catraca: ela não só barra acoplamento
-        # novo, ela acha o que o desenho antigo camuflava.
-        ("eval.assinatura", "domains.reconciliation.models"),
-        ("review.revisor", "domains.reconciliation.models"),
-        ("review.decision", "domains.reconciliation.taxonomy"),
-        ("review.serial", "domains.reconciliation.taxonomy"),
         ("metrics", "domains.reconciliation.taxonomy"),
         ("metrics", "domains.reconciliation.money"),
         # Esta é a mais consequente das dez: a avaliação importa o GERADOR
@@ -116,11 +108,21 @@ VIOLACOES_CONHECIDAS: frozenset[tuple[str, str]] = frozenset(
         ("metrics", "domains.reconciliation"),
 
         # ---------------------------------------------------------------
-        # CAUSA 5 — o agente usa a fila humana como cache de idempotência.
-        # É o bug latente do §6.4, não só uma seta errada: o cache é permanente
-        # e sem invalidação. Fecha no PR #11, com `IdempotencyKey`.
+        # CAUSA 5 — A SETA FECHOU, O BUG NÃO. Era `agent.investigator ->
+        # review.fila`, e sumiu porque o investigador desceu para o domínio, de
+        # onde importar `human` é legal. Nenhuma linha do cache mudou.
+        #
+        # O §6.4 continua aberto: o investigador usa a fila humana como cache de
+        # idempotência, e esse cache é PERMANENTE e sem invalidação — uma
+        # divergência que já tem proposta nunca é reinvestigada, mesmo que o
+        # prompt mude, o modelo troque ou um defeito do agente seja corrigido.
+        # `AgentSpec.version` já existe e é a metade da chave que falta; fecha
+        # no PR #11, com `IdempotencyKey`.
+        #
+        # Está escrito aqui porque esta lista é lida como "o que falta", e uma
+        # seta que some sem o defeito sumir junto é exatamente o jeito de um
+        # bug conhecido virar um bug esquecido.
         # ---------------------------------------------------------------
-        ("agent.investigator", "review.fila"),
     }
 )
 
@@ -177,11 +179,11 @@ def test_extrator_enxerga_import_local_e_type_checking():
     não pode é o extrator voltar a ler só o cabeçalho.
     """
     arestas = {(d.de, d.para) for d in dependencias()}
-    assert ("domains.reconciliation.workflow", "review.revisor") in arestas, (
+    assert ("domains.reconciliation.workflow", "domains.reconciliation.revisor") in arestas, (
         "o extrator perdeu um import DENTRO de função — foi exatamente onde a "
         "circularidade `engine <-> definition` se escondia até o PR #5"
     )
-    assert ("agent.investigator", "review.fila") in arestas, (
+    assert ("domains.reconciliation.agent.investigator", "review.fila") in arestas, (
         "o extrator perdeu um import sob TYPE_CHECKING — acoplamento de "
         "conhecimento também é acoplamento"
     )

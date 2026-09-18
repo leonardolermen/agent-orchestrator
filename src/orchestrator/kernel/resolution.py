@@ -120,13 +120,15 @@ class Proposal:
         # logo abaixo, que compara por identidade.
         #
         # `tipo` NÃO é coagido, e é a diferença que torna esta classe genérica:
-        # o vocabulário de tipos é do domínio. Quem constrói uma proposta de
-        # conciliação já coage explicitamente na fronteira — `interpretar_
-        # proposta` faz `DivergenceType(...)` e `serial.proposta_de_dict`
-        # também. Como `DivergenceType` é `StrEnum`, o valor coagido É um
-        # `str`, e as comparações por identidade (`p.tipo is
-        # DivergenceType.X`, P2.6) continuam válidas sem o kernel conhecer a
-        # taxonomia.
+        # o vocabulário de tipos é do domínio.
+        #
+        # Por um tempo isso dependeu de uma coerção na FRONTEIRA — `serial.
+        # proposta_de_dict` fazia `DivergenceType(...)` — só para que as
+        # comparações por identidade (`p.tipo is DivergenceType.X`) seguissem
+        # válidas. Custava caro: obrigava a camada `human` a conhecer a
+        # taxonomia de conciliação. Quem compara passou a comparar por VALOR, e
+        # aí nenhuma fronteira precisa coagir: um `tipo` que chegue como `str`
+        # cru compara igual a um membro do enum, porque `StrEnum` é `str`.
         object.__setattr__(self, "confianca", Confidence(self.confianca))
 
         # Confiança alta sem evidência é a combinação que destrói a

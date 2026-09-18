@@ -13,12 +13,12 @@ from typing import Any
 from orchestrator.agent.declarado import AgenteDeclarado, RegraDisponivel, construir_agente
 from orchestrator.agent.llm import LLMClient
 from orchestrator.domains.reconciliation.agent.ferramentas import ToolContext
+from orchestrator.domains.reconciliation.revisor import RevisorHumano
 from orchestrator.domains.registro import CATALOGO
 from orchestrator.grill.catalogo import ClienteAusente
 from orchestrator.kernel.cost import CostClass
 from orchestrator.kernel.definition import Stage, WorkflowDefinition, consome_de
 from orchestrator.review.fila import Fila
-from orchestrator.review.revisor import RevisorHumano
 
 PADRAO_ID = re.compile(r"^[a-z][a-z0-9-]{2,39}$")
 ID_RESERVADOS = frozenset({"conciliacao"})

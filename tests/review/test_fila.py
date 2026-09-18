@@ -113,7 +113,10 @@ def test_primeira_proposta_vence_tambem_ao_recarregar_do_arquivo(tmp_path):
 
     f = Fila(caminho)
 
-    assert f.proposta("d-1").tipo is DivergenceType.DEFASAGEM_TEMPORAL
+    # `==` e não `is`: o que volta do arquivo é o `str` cru do JSON. `review/`
+    # deixou de coagir ao enum do domínio — a fila humana não conhece a
+    # taxonomia de conciliação, e quem compara compara por valor.
+    assert f.proposta("d-1").tipo == DivergenceType.DEFASAGEM_TEMPORAL
 
 
 def test_ultima_decisao_vence_tambem_ao_recarregar_do_arquivo(tmp_path):

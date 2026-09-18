@@ -1,11 +1,16 @@
 """O investigador de conciliação: uma divergência entra, uma proposta sai.
 
-Desde o M2 este módulo é DOMÍNIO, não runtime. O laço — turnos, orçamento em
-dois níveis, retry de formato, erro de ferramenta voltando ao modelo, abstenção
-como saída — mora em `agent/agent.py` e é o mesmo para qualquer agente. O que
-sobra aqui é o que só a conciliação sabe: o prompt, como uma divergência vira
-pergunta, como o JSON do modelo vira `Proposal`, e o cache de idempotência na
-fila.
+Desde o M2 este módulo é DOMÍNIO, não runtime — e desde o mover que trouxe a
+conciliação para `domains/`, o diretório finalmente diz isso. Enquanto ele
+morava em `agent/`, três das treze arestas ilegais da catraca saíam daqui, e a
+leitura mais natural do repositório era que "o agente" sabia o que é uma
+divergência.
+
+O laço — turnos, orçamento em dois níveis, retry de formato, erro de ferramenta
+voltando ao modelo, abstenção como saída — mora em `agent/agent.py` e é o mesmo
+para qualquer agente. O que sobra aqui é o que só a conciliação sabe: o prompt,
+como uma divergência vira pergunta, como o JSON do modelo vira `Proposal`, e o
+cache de idempotência na fila.
 
 `Investigator` continua existindo com a mesma assinatura pública porque 714
 linhas de teste dependem dela — e é exatamente isso que prova que a extração não

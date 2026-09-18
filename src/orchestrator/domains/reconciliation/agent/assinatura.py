@@ -21,17 +21,17 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
-from orchestrator.agent.investigator import (
-    SYSTEM,
-    descrever_divergencia,
-    interpretar_proposta,
-)
 from orchestrator.agent.tools.registry import ToolSpec
 from orchestrator.domains.reconciliation.agent.ferramentas import (
     FERRAMENTAS,
     TOOL_SCHEMAS,
     ToolContext,
     registry_de,
+)
+from orchestrator.domains.reconciliation.agent.investigator import (
+    SYSTEM,
+    descrever_divergencia,
+    interpretar_proposta,
 )
 from orchestrator.domains.reconciliation.models import abstencao, divergencias
 from orchestrator.kernel.cost import Cost, CostClass

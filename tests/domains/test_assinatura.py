@@ -42,7 +42,7 @@ def test_importar_o_modulo_nao_exige_o_sdk_instalado():
                 return None
 
         sys.meta_path.insert(0, Bloqueio())
-        import orchestrator.eval.assinatura as m
+        import orchestrator.domains.reconciliation.agent.assinatura as m
         print(m.InvestigadorAssinatura.__name__)
         """
     )
@@ -56,7 +56,7 @@ def test_importar_o_modulo_nao_exige_o_sdk_instalado():
 
 
 def test_e_um_resolver_da_classe_agente():
-    from orchestrator.eval.assinatura import InvestigadorAssinatura
+    from orchestrator.domains.reconciliation.agent.assinatura import InvestigadorAssinatura
 
     inv = InvestigadorAssinatura(context=_contexto())
 
@@ -76,6 +76,6 @@ def test_declara_que_o_proprio_custo_nao_e_mensuravel():
     imprimiria US$ 0,00 — que é exatamente o modo de falha que a avaliação já
     cometeu uma vez, relatando falha total como medição.
     """
-    from orchestrator.eval.assinatura import InvestigadorAssinatura
+    from orchestrator.domains.reconciliation.agent.assinatura import InvestigadorAssinatura
 
     assert InvestigadorAssinatura(context=_contexto()).custo_mensuravel is False

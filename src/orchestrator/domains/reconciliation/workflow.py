@@ -87,8 +87,8 @@ def default_definition(
     circulares, porque `domains` pode importar `human`. Eram locais só enquanto
     esta função morava no kernel.
     """
+    from orchestrator.domains.reconciliation.revisor import RevisorHumano
     from orchestrator.review.fila import Fila
-    from orchestrator.review.revisor import RevisorHumano
 
     revisor = RevisorHumano(fila=fila if fila is not None else Fila.vazia())
     cascata = (*default_resolvers(), revisor)

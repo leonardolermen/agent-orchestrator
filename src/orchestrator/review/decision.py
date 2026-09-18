@@ -8,8 +8,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 
-from orchestrator.domains.reconciliation.taxonomy import DivergenceType
-
 _PREFIXO = "conciliar_com("
 
 
@@ -44,7 +42,16 @@ def ids_de_conciliar_com(acao: str) -> frozenset[str]:
 class Decision:
     divergence_id: str
     veredito: Veredito
-    tipo: DivergenceType | None
+    # `str` e não a taxonomia de conciliação: a fila humana revisa proposta de
+    # QUALQUER domínio, e `Proposal.tipo` já é `str` desde o PR #6 pela mesma
+    # razão. Era `DivergenceType | None`, e o único efeito prático disso era a
+    # camada `human` importar `domains` — validação não havia, porque
+    # `Decision` nunca checou o valor contra a enum.
+    #
+    # Quem conhece os tipos válidos é o domínio, e é ele quem os anuncia ao
+    # modelo (ver o `SYSTEM` do investigador, que monta a lista a partir de
+    # `DivergenceType`).
+    tipo: str | None
     conciliar_com: frozenset[str]
     autor: str
     quando: datetime
