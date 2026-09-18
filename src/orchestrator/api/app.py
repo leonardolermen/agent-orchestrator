@@ -615,6 +615,56 @@ def _conferir_payload(definicao: WorkflowDefinition, pool: WorkSet) -> None:
                 )
 
 
+def _conferir_kinds(definicao: WorkflowDefinition, pool: WorkSet) -> None:
+    """Cada resolver que declara o que consome é alimentado por esta fonte?
+
+    A irmã de `_conferir_payload`, para a outra pergunta: aquela confere o
+    TIPO do payload de um kind que o resolver exige; esta confere se o KIND
+    que o resolver pega do pool existe na fonte. Sem ela, um CSV de issues na
+    conciliação devolvia 200 com lacuna de 100% — o stage não enxergava nada,
+    não rodava, e a resposta parecia medida. É a frase do README que esta
+    guarda apaga: "não achei nada" indistinguível de "não procurei".
+
+    **Por RESOLVER, não pela união do degrau.** A união deixaria passar um
+    agente cego dentro de um degrau vivo: `L1` alimentado por `banco`
+    satisfaz a união, e o agente que consome outro kind roda sem ver item
+    nenhum. Foi o caso do `investigador` do catálogo até o conserto.
+
+    **Aqui, e não no motor.** `runtime/engine.py` reserva os kinds que um
+    degrau não consome e pula o degrau sem trabalho — semântica certa para um
+    grafo de vários degraus. Recusar o RUN inteiro por kind errado é decisão
+    de borda: só aqui existem, juntos, a fonte e o workflow.
+
+    Pool vazio é recusa própria, não passe: sem item não há execução, e um
+    run "concluído" com zero itens seria mais um número com cara de medido.
+
+    **`entregues` CRESCE a cada degrau, pelo `produz` declarado do stage —
+    não fica fixo no pool inicial.** Sem isto, um stage que PRODUZ um kind
+    para o próximo (`Stage.produz`, o mesmo grafo do canvas) seria recusado
+    aqui mesmo quando o stage seguinte está corretamente alimentado pelo
+    anterior: a união do degrau é proibida acima por esconder um agente cego
+    dentro de um mesmo stage, mas isso não autoriza fingir que o stage
+    seguinte não existe. `Stage.produz` já é a declaração ANTES da execução
+    que este módulo pede — é o mesmo grafo que a recusa de beco sem saída em
+    `kernel/definition.py` valida.
+    """
+    if not pool.items:
+        raise HTTPException(status_code=422, detail="a fonte não entregou item nenhum")
+    entregues = frozenset(item.kind for item in pool.items)
+    for stage in definicao.stages:
+        for resolver in stage.ordered():
+            consome = resolver.describe().consome
+            if consome and not (consome & entregues):
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"o bloco {resolver.name!r} consome {sorted(consome)}, "
+                        f"e a fonte entrega {sorted(entregues)}"
+                    ),
+                )
+        entregues = entregues | stage.produz
+
+
 def _executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
     """Executa e PERSISTE o run. Sem cache.
 
@@ -671,6 +721,7 @@ def _executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
     # administrador para, depois da chave posta, descobrir que o CSV dela seria
     # recusado do mesmo jeito. Erro do PEDIDO antes de erro do AMBIENTE.
     _conferir_payload(definicao, pool)
+    _conferir_kinds(definicao, pool)
 
     cliente: ClienteComTeto | None = None
     if tem_agente:
