@@ -362,20 +362,15 @@ def test_o_modelo_do_agente_e_PADRAO_e_nao_escolha_gravada():
 # carrega estruturalmente.
 
 
-# -- o botão Run ------------------------------------------------------------
-
-
-def test_a_pagina_tem_o_botao_RUN():
-    from pathlib import Path
-
-    import orchestrator.api.app as mod
-
-    bundles = list((Path(mod.__file__).parents[3] / "web" / "assets").glob("*.js"))
-    fonte = "\n".join(b.read_text(encoding="utf-8") for b in bundles)
-
-    assert "Run" in fonte
-    # E a mensagem que explica por que ele fica desabilitado numa cascata paga.
-    assert "etapa paga" in fonte
+# -- o botão Run --------------------------------------------------------
+#
+# `test_a_pagina_tem_o_botao_RUN` (o "▶ Run" que chamava /runs direto do
+# canvas, com fonte sintética e sem teto) foi REMOVIDO nesta task: o botão
+# não existe mais. O canvas agora entrega para a vista de execução — ver
+# `test_o_canvas_ENTREGA_para_a_execucao_em_vez_de_fingir_que_roda`, abaixo.
+# A mensagem "etapa paga" continua no bundle, mas agora só na vista de
+# execução (`Execucao.tsx`), coberta por
+# `test_cascata_com_AGENTE_so_e_executavel_onde_HA_CHAVE` e pelo gate manual.
 
 
 def test_a_rota_de_dominios_nao_existe_mais():
@@ -514,3 +509,21 @@ def test_a_tela_de_execucao_pede_o_teto_ANTES_do_botao_de_rodar():
     assert "teto_microcents" in fonte
     # A rotulagem que evita a tela sugerir um teto agregado que não existe.
     assert "teto desta execução" in fonte
+
+
+def test_o_canvas_ENTREGA_para_a_execucao_em_vez_de_fingir_que_roda():
+    """O botão do canvas chamava /runs com o id da composição e recebia 404.
+    Agora, depois de salvar, ele leva à tela de execução — onde fonte, teto e
+    resultado moram. Um caminho só para o que gasta dinheiro."""
+    js = _bundle()
+    assert "abrir na execução" in js
+    assert "?workflow=" in js
+
+
+def test_a_copia_do_canvas_nao_diz_mais_que_a_API_nao_executa():
+    """Virou mentira na Task 4 da fatia anterior: a API executa, com teto e
+    chave. Uma tela que diz o contrário ensina a pessoa a rodar pela CLI o
+    que ela podia rodar ali."""
+    js = _bundle()
+    assert "a API não a executa" not in js
+    assert "pede teto e chave" in js

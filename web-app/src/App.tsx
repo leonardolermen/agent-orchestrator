@@ -24,7 +24,6 @@ import {
   type Catalogo,
   type Receita,
   type Regra,
-  type Run,
   type WorkflowConstruido,
 } from "./api";
 import { Chat } from "./Chat";
@@ -52,8 +51,6 @@ export default function App() {
   const [erro, setErro] = useState<string | null>(null);
   const [aviso, setAviso] = useState<string | null>(null);
   const [construido, setConstruido] = useState<WorkflowConstruido | null>(null);
-  const [run, setRun] = useState<Run | null>(null);
-  const [rodando, setRodando] = useState(false);
   const [ambiente, setAmbiente] = useState<Ambiente | null>(null);
   const [escuro, alternarTema] = usarTema();
 
@@ -127,7 +124,6 @@ export default function App() {
 
   const invalidar = () => {
     setConstruido(null);
-    setRun(null);
   };
 
   // O AUTO-LAYOUT, na ordem de EXECUÇÃO.
@@ -229,7 +225,6 @@ export default function App() {
   const compor = async (id: string, nome: string) => {
     setErro(null);
     setAviso(null);
-    setRun(null);
     try {
       setConstruido(
         await api.criarComposicao({
@@ -249,35 +244,6 @@ export default function App() {
       );
     } catch (e) {
       setErro((e as ErroDaApi).message);
-    }
-  };
-
-  const executar = async () => {
-    if (!construido || !ambiente) return;
-    setErro(null);
-    setRodando(true);
-    try {
-      setRun(
-        await api.rodar(
-          construido.id,
-          {
-            tipo: "sintetica",
-            seed: ambiente.seed,
-            n: ambiente.n,
-            taxa_divergencia: ambiente.taxa_divergencia,
-          },
-          // Este canvas é de AUTORIA, não de execução com teto: mantém o
-          // comportamento de antes desta fatia — sem teto declarado, uma
-          // cascata com agente é recusada pelo servidor com 422, que `erro`
-          // já exibe abaixo. Inventar um default aqui é o fallback silencioso
-          // que a guarda do servidor existe para recusar.
-          null,
-        ),
-      );
-    } catch (e) {
-      setErro((e as ErroDaApi).message);
-    } finally {
-      setRodando(false);
     }
   };
 
@@ -445,8 +411,6 @@ export default function App() {
           selecionado={selecionado}
           erro={erro}
           construido={construido}
-          run={run}
-          rodando={rodando}
           onAcrescentarRegra={acrescentarRegra}
           onAcrescentarAgente={acrescentarAgente}
           onNovoAgente={novoAgente}
@@ -454,7 +418,6 @@ export default function App() {
           onMudarParametro={mudarParametro}
           onMudarAgente={mudarAgente}
           onCompor={compor}
-          onExecutar={executar}
           ambiente={ambiente}
           onMudarAmbiente={setAmbiente}
         />
