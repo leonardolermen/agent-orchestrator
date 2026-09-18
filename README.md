@@ -148,10 +148,18 @@ Anti-escopo vale tanto quanto escopo:
   recebe `fonte` — `sintetica`, `arquivo` (CSV/JSON sob `data/entradas/`),
   `postgres` (query de LEITURA num DSN referenciado por nome de variável de
   ambiente) ou `http` (uma página JSON com token referenciado por nome) — e um
-  `teto_microcents`, obrigatório quando a cascata tem agente. Nenhum segredo
-  passa pela tela, pelo pedido persistido, pelo `ref` ou pela resposta: o
-  servidor lê o valor do ambiente na hora e o erro do driver volta reduzido à
-  classe. Uma fonte sem gabarito devolve `contra_gabarito: null`; uma cujos
+  `teto_microcents`, obrigatório quando a cascata tem agente — e recusado
+  ANTES de a fonte ser tocada, para que um campo ausente do pedido não custe
+  uma conexão no banco do parceiro. Nenhum segredo passa pela tela, pelo pedido
+  persistido, pelo `ref` ou pela resposta: o servidor lê o valor do ambiente na
+  hora e o erro do driver volta reduzido à classe. Uma url com `usuario:senha@`
+  é RECUSADA — ela funcionaria como autenticação, e a url inteira entra no
+  `ref`; quem tem Basic Auth usa `token_env`. O `ref` é o hash do CONTEÚDO nas
+  duas fontes novas (linhas ordenadas no Postgres, corpo no HTTP — o ETag não
+  entra), e os tetos valem para o `ref` também, não só para o `load()`: no
+  máximo `max_linhas + 1` linhas saem do cursor, e o corpo HTTP para em 32 MiB.
+  A conexão Postgres tem `connect_timeout` e `statement_timeout` fixos no
+  módulo. Uma fonte sem gabarito devolve `contra_gabarito: null`; uma cujos
   kinds nenhum bloco consome é recusada antes de rodar; pool vazio também. O
   que ainda NÃO existe: paginação/cursor no HTTP, query com parâmetros,
   outros bancos, "testar conexão", allowlist de hosts, upload de arquivo, e
