@@ -98,6 +98,9 @@ def spec_de_conciliacao(
             AgentTask(id=d.id, prompt=descrever_divergencia(context, d))
             for d in divergencias(work)
         ],
+        # Lê os DOIS lados de uma vez: `divergencias(work)` pareia banco e
+        # contábil. As chaves de PAYLOADS são exatamente esses dois kinds.
+        consome=frozenset(PAYLOADS),
         parse=interpretar_proposta,
         abstain=abstencao,
         max_turns=max_turns,

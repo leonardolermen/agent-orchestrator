@@ -72,7 +72,8 @@ class FornecedorPreferido:
 
     def describe(self) -> ResolverDescription:
         return ResolverDescription(
-            self.name, self.cost_class, "fornecedor preferido", payloads=PAYLOADS
+            self.name, self.cost_class, "fornecedor preferido",
+            payloads=PAYLOADS, consome=frozenset(PAYLOADS),
         )
 
     def resolve(self, work: WorkSet) -> ResolverOutput:
@@ -111,7 +112,8 @@ class ComprasAnteriores:
 
     def describe(self) -> ResolverDescription:
         return ResolverDescription(
-            self.name, self.cost_class, "compras anteriores", payloads=PAYLOADS
+            self.name, self.cost_class, "compras anteriores",
+            payloads=PAYLOADS, consome=frozenset(PAYLOADS),
         )
 
     def resolve(self, work: WorkSet) -> ResolverOutput:
@@ -152,7 +154,8 @@ class BuscadorDeFornecedor:
 
     def describe(self) -> ResolverDescription:
         return ResolverDescription(
-            self.name, self.cost_class, "busca fornecedor novo", payloads=PAYLOADS
+            self.name, self.cost_class, "busca fornecedor novo",
+            payloads=PAYLOADS, consome=frozenset(PAYLOADS),
         )
 
     def resolve(self, work: WorkSet) -> ResolverOutput:

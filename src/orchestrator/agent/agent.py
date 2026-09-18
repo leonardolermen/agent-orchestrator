@@ -77,6 +77,12 @@ class AgentSpec:
     max_turns: int = 6
     max_format_retries: int = 2
 
+    # Quais `WorkItem.kind` este agente pega do pool. Vazio = o pool inteiro.
+    # Mora na SPEC porque o kind de um `AgenteDeclarado` é apagado na
+    # construção — vira a closure de `units` — e `describe()` não teria de
+    # onde lê-lo. A spec é a declaração; `describe()` a repassa.
+    consome: frozenset[str] = frozenset()
+
     # CRITICAL 1 — derivação do padrão, não um chute. Medido em código, não
     # suposto (ver `test_orcamento_padrao_admite_um_turno_realista...`):
     #
@@ -166,6 +172,7 @@ class Agent:
             name=self.name,
             cost_class=self.cost_class,
             summary=f"agente {self.spec.model}",
+            consome=self.spec.consome,
         )
 
     def resolve(self, work: WorkSet) -> ResolverOutput:

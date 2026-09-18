@@ -244,6 +244,9 @@ def construir_agente(
             system=decl.system,
             model=decl.model or client.model,
             units=_units(decl),
+            # Um kind só, porque `AgenteDeclarado.kind: str`. É o mesmo kind
+            # que `_units` filtra com `work.of_kind(decl.kind)`.
+            consome=frozenset({decl.kind}),
             parse=_parse(decl),
             abstain=_abstain(decl),
             max_turns=decl.max_turns,

@@ -19,6 +19,7 @@ class ExactMatcher:
             cost_class=self.cost_class,
             summary="documento, valor e data coincidem exatamente",
             payloads=PAYLOADS,
+            consome=frozenset(PAYLOADS),
         )
 
     def resolve(self, work: WorkSet) -> ResolverOutput:

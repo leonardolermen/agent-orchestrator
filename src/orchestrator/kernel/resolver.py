@@ -70,6 +70,21 @@ class ResolverDescription:
     # payload. Quem lê é a borda que junta uma FONTE a um WORKFLOW, e hoje há
     # uma só: `api/app.py`.
     payloads: dict[str, type] = field(default_factory=dict)
+    # Quais `WorkItem.kind` este resolver PEGA do pool. Vazio — o default — é
+    # "vejo o pool inteiro", o MESMO significado do default de `Stage.consome`.
+    #
+    # Não é derivado de `payloads`, de propósito: `payloads` diz que TIPO exijo
+    # de um kind; `consome` diz que KINDS pego. O `investigador` lê objetos
+    # tipados por ferramentas; o `triador` lê dicionário e não exige tipo — e
+    # ambos consomem um kind só. Amarrar as duas perguntas obrigaria um agente
+    # a declarar um tipo para dizer o que consome, e a borda de `payloads`
+    # passaria a recusar fonte válida.
+    #
+    # DECLARADO, pela mesma razão de `payloads` e de `Stage.produz`: quem
+    # compõe precisa da recusa ANTES de executar. Quem lê é `consome_de`
+    # (`kernel/definition.py`), que popula `Stage.consome`, e a borda do
+    # `/runs`, que confere cada resolver contra os kinds da fonte.
+    consome: frozenset[str] = frozenset()
 
 
 class Resolver(Protocol):

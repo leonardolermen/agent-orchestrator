@@ -357,6 +357,59 @@ def test_a_tabela_de_exigencias_nao_tem_bloco_FANTASMA():
     assert set(_exigencias_esperadas()) == {nome for nome, _ in _blocos()}
 
 
+# ---------------------------------------------------------------------------
+# O que cada bloco do CATALOGO declara CONSUMIR. Pinado em tabela, e não
+# derivado de `payloads`, porque são perguntas diferentes: `payloads` é "que
+# TIPO exijo deste kind"; `consome` é "que KINDS pego do pool". O `triador` lê
+# dicionário e não exige tipo nenhum, mas consome `issue` — sem esta tabela
+# ele passaria como "vê o pool inteiro" por default, e a borda do `/runs` não
+# teria como dizer que um CSV de lançamentos não é para ele.
+# ---------------------------------------------------------------------------
+
+CONSOME_ESPERADO: dict[str, frozenset[str]] = {
+    "L1": frozenset({"banco", "contabil"}),
+    "L2": frozenset({"banco", "contabil"}),
+    "L3": frozenset({"banco", "contabil"}),
+    "revisor": frozenset({"banco", "contabil"}),
+    "preferido": frozenset({"requisicao", "fornecedor"}),
+    "anteriores": frozenset({"requisicao", "fornecedor"}),
+    # `lancamento` é o que ele DECLARA hoje — e nenhuma fonte produz. A Task 3
+    # deste plano corrige o bloco e troca esta linha para {"banco"}.
+    "investigador": frozenset({"lancamento"}),
+    "triador": frozenset({"issue"}),
+    "buscador": frozenset({"requisicao"}),
+}
+
+
+def test_TODO_bloco_do_catalogo_declara_o_que_CONSOME():
+    """Bloco sem entrada aqui falha ALTO: quem escreve o próximo resolver
+    decide o que ele consome, em vez de herdar "tudo" por default e ficar
+    invisível para a guarda da borda."""
+    for nome, bloco in _blocos():
+        assert nome in CONSOME_ESPERADO, (
+            f"{nome!r} não está na tabela CONSOME_ESPERADO. Decida quais kinds "
+            f"ele pega do pool e acrescente a linha."
+        )
+        assert _construir(bloco).describe().consome == CONSOME_ESPERADO[nome], nome
+
+
+def test_a_tabela_de_consumo_nao_tem_bloco_FANTASMA():
+    """O outro lado, igual ao de `payloads`: um nome que saiu do catálogo e
+    ficou na tabela protegeria um bloco que não existe mais."""
+    assert set(CONSOME_ESPERADO) == {nome for nome, _ in _blocos()}
+
+
+def test_agente_DECLARADO_consome_exatamente_o_kind_que_declara():
+    """O kind de um `AgenteDeclarado` era APAGADO na construção — virava a
+    closure de `units` — e `Agent.describe()` não tinha de onde lê-lo. Agora a
+    spec o carrega, e é isso que a borda lê."""
+    from orchestrator.agent.declarado import ClienteDeValidacao, construir_agente
+
+    triador = next(a for a in CATALOGO.agentes if a.name == "triador")
+    agente = construir_agente(triador, ClienteDeValidacao(), CATALOGO.ferramentas)
+    assert agente.describe().consome == frozenset({"issue"})
+
+
 def test_quem_exige_tipo_exige_o_TIPO_certo_e_nao_so_um_kind_qualquer():
     """A tabela compara dicionários inteiros, então um mapeamento trocado
     (`banco -> LedgerEntry`) também morre. Esta asserção explicita isso, porque
