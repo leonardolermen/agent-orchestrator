@@ -721,11 +721,21 @@ Em `_executar`, **logo depois** da chamada existente `_conferir_payload(definica
 ./.venv/Scripts/python.exe -m pytest tests/api/test_execucao.py -q
 ```
 
-Os três novos passam. **Dois testes existentes passam a falhar, e é esperado:** os que rodam a conciliação sobre um arquivo de kind `lancamento` ou `k` (por volta das linhas 527/532 — o docstring de `test_um_CSV_de_verdade_e_CONSUMIDO_e_produz_resolucao` os nomeia). Eles provavam que o arquivo é lido usando kinds que ninguém consome; agora isso é 422.
+Os três novos passam. **Dois testes existentes passam a falhar, e é esperado** — os que esperavam `200` da conciliação sobre um arquivo de kind que nenhum resolver consome:
 
-- [ ] **Step 5: Reescrever os dois — não apagar**
+- `test_a_fonte_de_ARQUIVO_nao_inventa_taxa_de_acerto` (kind `lancamento`)
+- `test_a_fila_de_uma_fonte_de_arquivo_e_ESCOPADA_por_conteudo` (kind `k`)
 
-Para cada um: mantenha a fixture do arquivo, troque a asserção de `200` por `422`, afirme que o detalhe nomeia o bloco e o kind, e reescreva o docstring:
+Os outros usos de `kind: "k"` no arquivo (raiz violada, arquivo inexistente, malformado, campo desconhecido) já eram `422` **antes** da borda — a recusa nasce em `_fonte_de`/`_ler`/schema, que rodam primeiro — e não mudam. Confirme rodando; se um terceiro teste virar, ele entra na mesma regra.
+
+- [ ] **Step 5: Reescrever os dois — não apagar, e não perder o que provavam**
+
+Cada um dos dois provava uma PROPRIEDADE num caminho `200` que agora não existe para kinds não consumidos. A propriedade não pode morrer com o 200:
+
+- `..._nao_inventa_taxa_de_acerto` provava **`contra_gabarito: null`** numa execução real de arquivo — a evidência central de "AUSENTE, não zero". Ela passa a ser afirmada sobre a cascata CONSUMIDORA que o arquivo já tem (a `fabrica` local usada por `test_um_CSV_de_verdade_e_CONSUMIDO_e_produz_resolucao`): se aquele teste ainda não afirma `corpo["contra_gabarito"] is None`, acrescente a asserção lá. Só então o teste antigo vira `422`.
+- `..._ESCOPADA_por_conteudo` provava que **a chave da fila sai do conteúdo do arquivo** (dois conteúdos → duas filas). Mova a observação da chave para uma execução sobre a mesma cascata consumidora — a propriedade é da fila, não do kind — e mantenha as duas asserções (uma fila por conteúdo, prefixo `file-`).
+
+Depois, para cada um dos dois testes antigos: mantenha a fixture do arquivo, troque a asserção de `200` por `422`, afirme que o detalhe nomeia o bloco (`'L1'`) e o kind, e reescreva o docstring:
 
 ```
     Este teste provava que o arquivo é lido, hasheado e vira pool — usando um
