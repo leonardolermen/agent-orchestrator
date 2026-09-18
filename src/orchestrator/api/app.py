@@ -115,6 +115,9 @@ from orchestrator.review.decision import Decision, Veredito, ids_de_conciliar_co
 from orchestrator.review.fila import Fila, caminho_da_fila, dataset_de_ref
 from orchestrator.runtime.engine import execute
 from orchestrator.sources.arquivo import ArquivoSource, RaizViolada
+from orchestrator.sources.erros import ErroDeFonte
+from orchestrator.sources.http import HttpSource
+from orchestrator.sources.postgres import PostgresSource
 from orchestrator.storage.jsonl.run_store import JsonlRunStore
 from orchestrator.storage.jsonl.trace_store import JsonlTraceStore
 from orchestrator.synth.benchmark import SyntheticSource, build_benchmark
@@ -508,7 +511,9 @@ def executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
     return _executar(workflow_id, pedido)
 
 
-def _fonte_de(pedido: RunRequest) -> tuple[SyntheticSource | ArquivoSource, Dataset | None]:
+def _fonte_de(
+    pedido: RunRequest,
+) -> tuple[SyntheticSource | ArquivoSource | PostgresSource | HttpSource, Dataset | None]:
     """A fonte e o gabarito, quando existe.
 
     Quem sabe se há gabarito é a FONTE — não um `if` sobre o id do workflow.
@@ -524,6 +529,22 @@ def _fonte_de(pedido: RunRequest) -> tuple[SyntheticSource | ArquivoSource, Data
     if f.tipo == "sintetica":
         fonte = SyntheticSource(seed=f.seed, n=f.n, taxa_divergencia=f.taxa_divergencia)
         return fonte, fonte.dataset()
+    if f.tipo == "postgres":
+        return (
+            PostgresSource(dsn_env=f.dsn_env, query=f.query, kind=f.kind, campo_id=f.campo_id),
+            None,
+        )
+    if f.tipo == "http":
+        return (
+            HttpSource(
+                url=f.url,
+                token_env=f.token_env,
+                kind=f.kind,
+                campo_id=f.campo_id,
+                caminho=f.caminho,
+            ),
+            None,
+        )
     try:
         return (
             # `_RAIZ_ENTRADAS / f.caminho` com um `f.caminho` ABSOLUTO não
@@ -551,7 +572,9 @@ def _fonte_de(pedido: RunRequest) -> tuple[SyntheticSource | ArquivoSource, Data
         ) from erro
 
 
-def _ler(fonte: SyntheticSource | ArquivoSource, pedido: RunRequest) -> tuple[str, WorkSet]:
+def _ler(
+    fonte: SyntheticSource | ArquivoSource | PostgresSource | HttpSource, pedido: RunRequest
+) -> tuple[str, WorkSet]:
     """O `ref` e o pool, na MESMA leitura.
 
     Os dois juntos de propósito: `ArquivoSource` memoiza os bytes, então pedir
@@ -567,6 +590,10 @@ def _ler(fonte: SyntheticSource | ArquivoSource, pedido: RunRequest) -> tuple[st
     """
     try:
         return fonte.ref, fonte.load()
+    except ErroDeFonte as erro:
+        # Toda mensagem desta hierarquia foi escrita para o cliente: sem DSN,
+        # sem token, sem o que o driver ecoou. Ver `sources/erros.py`.
+        raise HTTPException(status_code=422, detail=str(erro)) from erro
     except (OSError, ValueError) as erro:
         if pedido.fonte.tipo != "arquivo":
             # Uma fonte sintética não lê disco; se ela levantou, é defeito do

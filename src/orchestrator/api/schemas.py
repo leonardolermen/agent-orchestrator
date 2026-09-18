@@ -88,6 +88,34 @@ class FonteArquivo(BaseModel):
     campo_id: str
 
 
+class FontePostgres(BaseModel):
+    """Uma query num Postgres do parceiro. `dsn_env` é o NOME da variável de
+    ambiente do servidor que guarda o DSN — o valor nunca passa por aqui."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tipo: Literal["postgres"]
+    dsn_env: str = Field(min_length=1)
+    query: str = Field(min_length=1)
+    kind: str = Field(min_length=1)
+    campo_id: str = Field(min_length=1)
+
+
+class FonteHttp(BaseModel):
+    """Uma página de uma API JSON. `token_env` é o NOME da variável com o
+    token; `None` é uma API sem autenticação. `caminho` aponta a lista dentro
+    do corpo (`dados.itens`); vazio = o corpo é a lista."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tipo: Literal["http"]
+    url: str = Field(min_length=1)
+    token_env: str | None = None
+    kind: str = Field(min_length=1)
+    campo_id: str = Field(min_length=1)
+    caminho: str = ""
+
+
 class RunRequest(BaseModel):
     """O pedido de execução.
 
@@ -106,7 +134,7 @@ class RunRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    fonte: FonteSintetica | FonteArquivo = Field(
+    fonte: FonteSintetica | FonteArquivo | FontePostgres | FonteHttp = Field(
         default_factory=FonteSintetica, discriminator="tipo"
     )
     # Teto da EXECUÇÃO inteira, em micro-centavos. `None` = o teto do próprio

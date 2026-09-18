@@ -1460,6 +1460,112 @@ def test_um_CSV_de_issues_roda_no_TRIADOR_composto_pela_WEB(tmp_path, monkeypatc
     assert corpo["contra_gabarito"] is None
 
 
+def _issues_http(monkeypatch, itens):
+    """Transporte falso injetado no MÓDULO: a fonte que `_fonte_de` constrói
+    não recebe `transporte`, então o default `_transporte_padrao` é o que se
+    troca. Nenhum socket."""
+    import httpx
+
+    import orchestrator.sources.http as mod
+
+    def handler(pedido):
+        return httpx.Response(200, json=itens, headers={"ETag": '"v1"'})
+
+    monkeypatch.setattr(mod, "_transporte_padrao", lambda: httpx.MockTransport(handler))
+    monkeypatch.setenv("CRM_TOKEN", "SEGREDO-4F2A")
+
+
+def _issues_pg(monkeypatch, linhas):
+    import orchestrator.sources.postgres as mod
+
+    class _Cursor:
+        def execute(self, q): ...
+        def fetchall(self): return list(linhas)
+
+    class _Conexao:
+        def cursor(self): return _Cursor()
+        def close(self): ...
+
+    monkeypatch.setattr(mod, "_conectar_padrao", lambda dsn: _Conexao())
+    monkeypatch.setenv("ERP_DSN", "postgresql://u:SEGREDO-4F2A@h/db")
+
+
+_ISSUES = [{"id": i, "titulo": f"titulo {i}", "corpo": f"corpo {i}"} for i in (1, 2, 3)]
+
+
+@pytest.mark.parametrize(
+    "fonte, preparar",
+    [
+        ({"tipo": "http", "url": "https://api.exemplo/issues", "token_env": "CRM_TOKEN",
+          "kind": "issue", "campo_id": "id"}, _issues_http),
+        ({"tipo": "postgres", "dsn_env": "ERP_DSN", "query": "SELECT id, titulo, corpo FROM issues",
+          "kind": "issue", "campo_id": "id"}, _issues_pg),
+    ],
+    ids=["http", "postgres"],
+)
+def test_uma_fonte_CONECTADA_roda_no_triador_pela_borda(tmp_path, monkeypatch, fonte, preparar):
+    """O mesmo fim-a-fim do arquivo, pelas duas fontes novas: nada na borda
+    muda, e é isso que o teste prova."""
+    import orchestrator.api.app as api_app
+
+    monkeypatch.setattr(api_app, "_RAIZ_RECEITAS", tmp_path / "receitas")
+    preparar(monkeypatch, _ISSUES)
+    fake = _cliente_falso(monkeypatch, [_resposta()] * 3)
+    criada = cliente.post("/api/receitas", json={
+        "id": "triagem-conectada", "nome": "T", "justificativa": "j",
+        "resolvers": [{"nome": "triador"}]})
+    assert criada.status_code == 201, criada.text
+
+    r = cliente.post("/api/workflows/triagem-conectada/runs",
+                     json={"fonte": fonte, "teto_microcents": 10_000_000})
+
+    assert r.status_code == 200, r.text
+    corpo = r.json()
+    assert corpo["itens"] == 3 and len(fake.chamadas) == 3
+    assert corpo["propostas_por_tipo"] == {"BUG": 3} and corpo["falhas"] == 0
+    assert corpo["contra_gabarito"] is None
+    assert corpo["input_ref"].startswith(("http:", "pg:"))
+    assert "SEGREDO-4F2A" not in r.text
+
+
+def test_variavel_de_ambiente_ausente_e_422_com_o_NOME(monkeypatch):
+    monkeypatch.delenv("ERP_DSN", raising=False)
+    r = cliente.post("/api/workflows/conciliacao/runs", json={"fonte": {
+        "tipo": "postgres", "dsn_env": "ERP_DSN", "query": "SELECT 1",
+        "kind": "banco", "campo_id": "id"}})
+    assert r.status_code == 422, r.text
+    assert "ERP_DSN" in r.json()["detail"]
+
+
+def test_query_de_escrita_e_422_antes_de_conectar(monkeypatch):
+    monkeypatch.setenv("ERP_DSN", "postgresql://u:SEGREDO-4F2A@h/db")
+    import orchestrator.sources.postgres as mod
+
+    def _nao_deveria_conectar(dsn):
+        raise AssertionError("a guarda de SELECT deixou conectar")
+
+    monkeypatch.setattr(mod, "_conectar_padrao", _nao_deveria_conectar)
+    r = cliente.post("/api/workflows/conciliacao/runs", json={"fonte": {
+        "tipo": "postgres", "dsn_env": "ERP_DSN", "query": "DELETE FROM x",
+        "kind": "banco", "campo_id": "id"}})
+    assert r.status_code == 422 and "SELECT" in r.json()["detail"]
+    assert "SEGREDO" not in r.text
+
+
+def test_sem_o_extra_fontes_e_422_e_nao_500(monkeypatch):
+    monkeypatch.setenv("CRM_TOKEN", "x")
+    monkeypatch.setitem(__import__("sys").modules, "httpx", None)
+    r = cliente.post("/api/workflows/conciliacao/runs", json={"fonte": {
+        "tipo": "http", "url": "https://api.exemplo/x", "token_env": "CRM_TOKEN",
+        "kind": "banco", "campo_id": "id"}})
+    assert r.status_code == 422 and "[fontes]" in r.json()["detail"]
+
+
+def test_a_forma_antiga_sem_tipo_conhecido_continua_422(monkeypatch):
+    r = cliente.post("/api/workflows/conciliacao/runs", json={"fonte": {"tipo": "mysql", "x": 1}})
+    assert r.status_code == 422
+
+
 def test_o_triador_composto_pela_WEB_e_LISTADO_como_executavel(tmp_path, monkeypatch):
     """A tela não pode desabilitar um botão que o servidor aceitaria.
 
