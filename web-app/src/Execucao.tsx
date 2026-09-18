@@ -34,6 +34,8 @@ import { BotaoDeTema, usarTema } from "./tema";
  * ela não gasta nada.
  */
 
+type FonteTipo = "sintetica" | "arquivo" | "postgres" | "http";
+
 const NAO_MEDIDO = "não medido";
 
 /** Sempre USD: `microcents` nunca é reais, nem quando o valor é zero. */
@@ -86,13 +88,20 @@ export function Execucao() {
 
   // A fonte. Sintética por default — o mesmo comportamento de antes desta
   // fatia — mas agora é uma ESCOLHA visível, não a única opção.
-  const [fonteTipo, setFonteTipo] = useState<"sintetica" | "arquivo">("sintetica");
+  const [fonteTipo, setFonteTipo] = useState<FonteTipo>("sintetica");
   const [seed, setSeed] = useState(dataset.seed);
   const [n, setN] = useState(dataset.n);
   const [taxaDivergencia, setTaxaDivergencia] = useState(dataset.taxa_divergencia);
   const [caminho, setCaminho] = useState("");
   const [kind, setKind] = useState("");
   const [campoId, setCampoId] = useState("");
+  // postgres
+  const [dsnEnv, setDsnEnv] = useState("");
+  const [query, setQuery] = useState("");
+  // http
+  const [url, setUrl] = useState("");
+  const [tokenEnv, setTokenEnv] = useState("");
+  const [caminhoJson, setCaminhoJson] = useState("");
 
   // O teto, "dito antes". Texto cru e não número: um campo vazio precisa
   // virar `null`, nunca `0` nem `NaN` — um default inventado no cliente é
@@ -164,7 +173,14 @@ export function Execucao() {
       const fonte: FontePedido =
         fonteTipo === "sintetica"
           ? { tipo: "sintetica", seed, n, taxa_divergencia: taxaDivergencia }
-          : { tipo: "arquivo", caminho, kind, campo_id: campoId };
+          : fonteTipo === "arquivo"
+            ? { tipo: "arquivo", caminho, kind, campo_id: campoId }
+            : fonteTipo === "postgres"
+              ? { tipo: "postgres", dsn_env: dsnEnv, query, kind, campo_id: campoId }
+              // `token_env` vazio vira null: API sem autenticação. Não é
+              // fallback — é o que o campo opcional significa, e o servidor
+              // não inventa nada.
+              : { tipo: "http", url, token_env: tokenEnv.trim() === "" ? null : tokenEnv, kind, campo_id: campoId, caminho: caminhoJson };
       const r = await api.rodar(workflow, fonte, tetoMicrocents);
       setRun(r);
     } catch (e) {
@@ -272,11 +288,13 @@ export function Execucao() {
               fonte
               <select
                 value={fonteTipo}
-                onChange={(e) => setFonteTipo(e.target.value as "sintetica" | "arquivo")}
+                onChange={(e) => setFonteTipo(e.target.value as FonteTipo)}
                 className="rounded border border-borda bg-white px-2 py-1 text-tinta dark:border-noite-borda dark:bg-noite-fundo dark:text-noite-tinta"
               >
                 <option value="sintetica">sintética (com gabarito)</option>
                 <option value="arquivo">arquivo (sem gabarito)</option>
+                <option value="postgres">postgres (sem gabarito)</option>
+                <option value="http">api http (sem gabarito)</option>
               </select>
             </label>
 
@@ -293,7 +311,47 @@ export function Execucao() {
               </>
             ) : (
               <>
-                <CampoTexto rotulo="caminho" valor={caminho} definir={setCaminho} />
+                {fonteTipo === "arquivo" && (
+                  <CampoTexto rotulo="caminho" valor={caminho} definir={setCaminho} />
+                )}
+                {fonteTipo === "postgres" && (
+                  <>
+                    <CampoTexto
+                      rotulo="variável do DSN"
+                      valor={dsnEnv}
+                      definir={setDsnEnv}
+                      dica="nome da variável de ambiente no servidor — ex.: ERP_DSN"
+                    />
+                    <label className="grid gap-1 text-[11.5px]">
+                      <span>
+                        query <span className="text-neutral-500 dark:text-noite-fraca">(só SELECT)</span>
+                      </span>
+                      <textarea
+                        value={query}
+                        onChange={(e) => setQuery(e.target.value)}
+                        rows={3}
+                        className="rounded border border-borda bg-white px-2 py-1 font-mono text-[12px] dark:border-noite-borda dark:bg-noite-fundo"
+                      />
+                    </label>
+                  </>
+                )}
+                {fonteTipo === "http" && (
+                  <>
+                    <CampoTexto rotulo="url" valor={url} definir={setUrl} />
+                    <CampoTexto
+                      rotulo="variável do token"
+                      valor={tokenEnv}
+                      definir={setTokenEnv}
+                      dica="nome da variável de ambiente no servidor — vazio para API sem autenticação"
+                    />
+                    <CampoTexto
+                      rotulo="caminho na resposta"
+                      valor={caminhoJson}
+                      definir={setCaminhoJson}
+                      dica="deixe vazio se o corpo já é a lista"
+                    />
+                  </>
+                )}
                 <CampoTexto rotulo="kind" valor={kind} definir={setKind} />
                 <CampoTexto rotulo="campo id" valor={campoId} definir={setCampoId} />
               </>
@@ -401,20 +459,41 @@ function CampoTexto({
   rotulo,
   valor,
   definir,
+  dica,
 }: {
   rotulo: string;
   valor: string;
   definir: (v: string) => void;
+  dica?: string;
 }) {
+  const entrada = (
+    <input
+      type="text"
+      value={valor}
+      onChange={(e) => definir(e.target.value)}
+      className="w-40 rounded border border-borda bg-white px-2 py-1 text-tinta dark:border-noite-borda dark:bg-noite-fundo dark:text-noite-tinta"
+    />
+  );
+
+  // Sem `dica`: exatamente o que este componente sempre renderizou — cada
+  // chamada existente fica pixel-idêntica. Com `dica`: a variante vertical,
+  // que combina com o `<label>` da query acima — o texto fraco embaixo do
+  // campo é onde um nome de variável de ambiente precisa de uma pista sem
+  // virar um placeholder que some ao digitar.
+  if (dica === undefined) {
+    return (
+      <label className="flex items-center gap-1.5">
+        {rotulo}
+        {entrada}
+      </label>
+    );
+  }
+
   return (
-    <label className="flex items-center gap-1.5">
-      {rotulo}
-      <input
-        type="text"
-        value={valor}
-        onChange={(e) => definir(e.target.value)}
-        className="w-40 rounded border border-borda bg-white px-2 py-1 text-tinta dark:border-noite-borda dark:bg-noite-fundo dark:text-noite-tinta"
-      />
+    <label className="grid gap-1 text-[11.5px]">
+      <span>{rotulo}</span>
+      {entrada}
+      <span className="text-neutral-500 dark:text-noite-fraca">{dica}</span>
     </label>
   );
 }
