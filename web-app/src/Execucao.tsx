@@ -337,7 +337,17 @@ export function Execucao() {
                 )}
                 {fonteTipo === "http" && (
                   <>
-                    <CampoTexto rotulo="url" valor={url} definir={setUrl} />
+                    <CampoTexto
+                      rotulo="url"
+                      valor={url}
+                      definir={setUrl}
+                      // A tela é onde este erro é cometido: sem esta dica, quem
+                      // tem uma API com `?api_key=` ou com Basic Auth escreve o
+                      // segredo aqui, porque é a única coisa que parece
+                      // funcionar. O servidor o mantém fora do `ref`, do log e
+                      // do run — mas melhor é ele não ser digitado.
+                      dica="sem segredo aqui: token vai na variável abaixo, nunca na url (nem `?api_key=`, nem `usuario:senha@`)"
+                    />
                     <CampoTexto
                       rotulo="variável do token"
                       valor={tokenEnv}
