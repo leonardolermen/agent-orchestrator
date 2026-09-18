@@ -197,21 +197,22 @@ def listar_workflows() -> list[WorkflowResumoJSON]:
     com_chave = _tem_chave()
     resumos = []
     por_id = {r.id: r for r in listar_receitas(_RAIZ_RECEITAS)}
+    por_id.update({c.id: c for c in listar(_RAIZ_COMPOSICOES)})
     # `descrever` já isola a receita que parseia e não constrói: um arquivo
     # ruim não derruba a listagem inteira, mas também não some em silêncio.
     # A lógica saiu daqui para `workflows.py` porque a CLI precisa da mesma
     # resposta, e duas cópias seriam o join frágil de sempre.
-    for workflow_id, definicao in descrever(_RAIZ_RECEITAS):
+    for workflow_id, definicao in descrever(_RAIZ_RECEITAS, _RAIZ_COMPOSICOES):
         classes = sorted(
             {r.cost_class.name for s in definicao.stages for r in s.cascade}
         )
-        receita = por_id.get(workflow_id)
+        origem = por_id.get(workflow_id)
         resumos.append(
             WorkflowResumoJSON(
                 id=workflow_id,
                 nome=definicao.name,
                 classes=classes,
-                gerado_em=receita.gerado_em.isoformat() if receita else None,
+                gerado_em=origem.gerado_em.isoformat() if origem else None,
                 executavel=CostClass.AGENTE.name not in classes or com_chave,
             )
         )
@@ -347,7 +348,7 @@ def criar_receita(pedido: ReceitaRequest) -> WorkflowJSON:
     except ValueError as erro:
         raise HTTPException(status_code=422, detail=str(erro)) from erro
 
-    if pedido.id in registry(_RAIZ_RECEITAS):
+    if pedido.id in registry(_RAIZ_RECEITAS, _RAIZ_COMPOSICOES):
         raise HTTPException(
             status_code=409,
             detail=f"já existe um workflow com id {pedido.id!r}; escolha outro",
@@ -422,6 +423,14 @@ def criar_composicao(pedido: ComposicaoRequest) -> WorkflowJSON:
     except ValueError as erro:
         raise HTTPException(status_code=422, detail=str(erro)) from erro
 
+    if pedido.id in registry(_RAIZ_RECEITAS, _RAIZ_COMPOSICOES):
+        # Simétrico a `/api/receitas`: o id é um só espaço para embutido,
+        # receitas e composições. Recusar aqui é o que faz o pulo-com-aviso
+        # de `registry()` ser um caso de disco editado à mão, não de tela.
+        raise HTTPException(
+            status_code=409,
+            detail=f"já existe um workflow com id {pedido.id!r}; escolha outro",
+        )
     try:
         gravar(composicao, _RAIZ_COMPOSICOES)
     except FileExistsError as erro:
@@ -452,7 +461,7 @@ def listar_composicoes() -> list[ComposicaoResumoJSON]:
 
 @app.get("/api/workflows/{workflow_id}", response_model=WorkflowJSON)
 def obter_workflow(workflow_id: str) -> WorkflowJSON:
-    fabrica = registry(_RAIZ_RECEITAS).get(workflow_id)
+    fabrica = registry(_RAIZ_RECEITAS, _RAIZ_COMPOSICOES).get(workflow_id)
     if fabrica is None:
         raise HTTPException(status_code=404, detail=f"workflow desconhecido: {workflow_id}")
     # Mesma construção de `_executar`, nunca uma segunda via direto
@@ -466,7 +475,7 @@ def obter_workflow(workflow_id: str) -> WorkflowJSON:
 
 @app.post("/api/workflows/{workflow_id}/runs", response_model=RunJSON)
 def executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
-    fabrica = registry(_RAIZ_RECEITAS).get(workflow_id)
+    fabrica = registry(_RAIZ_RECEITAS, _RAIZ_COMPOSICOES).get(workflow_id)
     if fabrica is None:
         # 404 antes do cache, de propósito: um id desconhecido nunca deve
         # entrar em `_executar`, nem para virar um run persistido de um
@@ -702,7 +711,7 @@ def _executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
     # de `(seed, n, taxa)` — que uma fonte de arquivo não tem.
     ref, pool = _ler(fonte, pedido)
     fila, _ = _abrir_fila(workflow_id, ref)
-    fabrica = registry(_RAIZ_RECEITAS)[workflow_id]
+    fabrica = registry(_RAIZ_RECEITAS, _RAIZ_COMPOSICOES)[workflow_id]
     # A definição com a TRANCA. `cliente=None` é o default de
     # `WorkflowContext`, e `construir` o traduz em `ClienteAusente` — o
     # sentinela que levanta se algum caminho chegar ao modelo por onde não
@@ -1066,7 +1075,7 @@ def ler_fila(
     # aviso nenhum.
     estado: Literal["pendente", "decidida"] = "pendente",
 ) -> FilaJSON:
-    if workflow_id not in registry(_RAIZ_RECEITAS):
+    if workflow_id not in registry(_RAIZ_RECEITAS, _RAIZ_COMPOSICOES):
         raise HTTPException(status_code=404, detail=f"workflow desconhecido: {workflow_id}")
     # A chave da fila sai do `ref` da fonte, e a fonte desta rota é a
     # sintética — as duas telas precisam concordar sobre qual arquivo abrir, e
@@ -1101,7 +1110,7 @@ def decidir(
     n: int = Query(300, ge=1, le=5000),
     taxa_divergencia: float = Query(0.15, ge=0.0, le=1.0),
 ) -> ItemFilaJSON:
-    if workflow_id not in registry(_RAIZ_RECEITAS):
+    if workflow_id not in registry(_RAIZ_RECEITAS, _RAIZ_COMPOSICOES):
         raise HTTPException(status_code=404, detail=f"workflow desconhecido: {workflow_id}")
     fila, _ = _abrir_fila(
         workflow_id,

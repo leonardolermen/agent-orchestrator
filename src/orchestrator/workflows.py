@@ -36,6 +36,8 @@ from pathlib import Path
 from typing import Protocol
 
 from orchestrator.agent.llm import LLMClient
+from orchestrator.authoring.composicao import Composicao, construir_composicao
+from orchestrator.authoring.composicao import listar as listar_composicoes
 from orchestrator.conciliacao import default_definition
 from orchestrator.grill.receita import Receita, construir
 from orchestrator.grill.registro import listar_receitas
@@ -107,12 +109,36 @@ def _de_receita(receita: Receita) -> WorkflowFactory:
     return fabrica
 
 
-def registry(raiz: Path | None = None) -> dict[str, WorkflowFactory]:
-    """Os workflows disponíveis: o embutido mais os gerados em disco.
+def _de_composicao(composicao: Composicao) -> WorkflowFactory:
+    """Fábrica para uma cascata composta no canvas. O espelho de `_de_receita`.
+
+    `ctx.cliente` repassado VERBATIM, inclusive `None`: quem decide o que
+    `None` significa é `construir_composicao`, que cai em `ClienteDeValidacao`
+    — a tranca. O docstring de `construir_composicao` previu esta linha: "para
+    que o dia em que uma composição ganhar caminho de execução seja um
+    `fila=ctx.fila` a mais, e não uma segunda via de configuração".
+    """
+
+    def fabrica(ctx: WorkflowContext) -> WorkflowDefinition:
+        return construir_composicao(composicao, fila=ctx.fila, cliente=ctx.cliente)
+
+    return fabrica
+
+
+def registry(
+    raiz: Path | None = None, raiz_composicoes: Path | None = None
+) -> dict[str, WorkflowFactory]:
+    """Os workflows disponíveis: o embutido, os gerados em disco, os compostos.
 
     Saiu de `api/app.py`: quais workflows existem não é assunto da camada HTTP.
     A CLI e o benchmark precisam da mesma resposta, e duas listas paralelas
     seriam o join frágil que P3.2 já custou uma correção.
+
+    A ORDEM é a tranca: embutida → receitas → composições. `conciliacao` é id
+    reservado; disco nunca sobrescreve a embutida; uma composição nunca
+    sobrescreve uma receita. Composições ficam em raiz própria porque são
+    outro formato com outra serialização — um diretório só obrigaria o leitor
+    a farejar o formato pelo conteúdo.
     """
     fabricas: dict[str, WorkflowFactory] = {
         ID_EMBUTIDO: lambda ctx: default_definition(ctx.fila)
@@ -123,6 +149,17 @@ def registry(raiz: Path | None = None) -> dict[str, WorkflowFactory]:
         if receita.id in fabricas:
             continue
         fabricas[receita.id] = _de_receita(receita)
+    for composicao in listar_composicoes(raiz_composicoes):
+        if composicao.id in fabricas:
+            # Não some em silêncio, não derruba a listagem: o mesmo isolamento
+            # que `descrever()` dá a uma receita que não constrói.
+            print(
+                f"aviso: composição {composicao.id!r} ignorada — já existe um "
+                f"workflow com esse id (embutido ou receita)",
+                file=sys.stderr,
+            )
+            continue
+        fabricas[composicao.id] = _de_composicao(composicao)
     return fabricas
 
 
@@ -138,7 +175,9 @@ def construir_definicao(
     return fabrica(ctx)
 
 
-def descrever(raiz: Path | None = None) -> list[tuple[str, WorkflowDefinition]]:
+def descrever(
+    raiz: Path | None = None, raiz_composicoes: Path | None = None
+) -> list[tuple[str, WorkflowDefinition]]:
     """Todos os workflows construtíveis, com a receita ruim isolada.
 
     Mesmo isolamento que `listar_receitas` já aplica ao PARSE, agora também na
@@ -152,7 +191,7 @@ def descrever(raiz: Path | None = None) -> list[tuple[str, WorkflowDefinition]]:
     200.
     """
     achados = []
-    for workflow_id, fabrica in registry(raiz).items():
+    for workflow_id, fabrica in registry(raiz, raiz_composicoes).items():
         try:
             achados.append(
                 (workflow_id, construir_definicao(fabrica, WorkflowContext.vazio()))

@@ -185,8 +185,8 @@ def test_resolver_com_layer_diferente_do_name_e_reportado_pelo_proprio_nome(monk
     # entradas reais (`conciliacao`).
     from orchestrator.workflows import registry as _registry_original
 
-    def _registry_com_extra(raiz=None):
-        fabricas = _registry_original(raiz)
+    def _registry_com_extra(raiz=None, raiz_composicoes=None):
+        fabricas = _registry_original(raiz, raiz_composicoes)
         fabricas["layer_diferente"] = _fabrica
         return fabricas
 
@@ -507,8 +507,8 @@ def _registrar(monkeypatch, workflow_id: str, fabrica) -> None:
     """
     from orchestrator.workflows import registry as _original
 
-    def _com_extra(raiz=None):
-        fabricas = _original(raiz)
+    def _com_extra(raiz=None, raiz_composicoes=None):
+        fabricas = _original(raiz, raiz_composicoes)
         fabricas[workflow_id] = fabrica
         return fabricas
 
@@ -1897,3 +1897,68 @@ def test_teto_negativo_tambem_e_recusado_pelo_SCHEMA_antes_da_rota():
     )
 
     assert r.status_code == 422, r.text
+
+
+def test_um_CSV_de_issues_roda_numa_COMPOSICAO_do_CANVAS(tmp_path, monkeypatch):
+    """A frase do dono, de ponta a ponta: compor um agente na tela e rodar de
+    verdade. A fatia anterior provou isto sobre uma RECEITA; uma composição
+    vivia em data/composicoes/ e o registry não a conhecia — o botão do canvas
+    recebia 404. Agora ela entra no registry e este é o mesmo teste, pela
+    porta que a tela usa."""
+    import orchestrator.api.app as api_app
+
+    monkeypatch.setattr(api_app, "_RAIZ_RECEITAS", tmp_path / "receitas")
+    monkeypatch.setattr(api_app, "_RAIZ_COMPOSICOES", tmp_path / "composicoes")
+    _csv_de_issues(tmp_path, monkeypatch, linhas=3)
+    fake = _cliente_falso(monkeypatch, [_resposta()] * 3)
+
+    criada = cliente.post("/api/composicoes", json={
+        "id": "triagem-canvas", "nome": "Triagem", "justificativa": "",
+        "blocos": [{"tipo": "agente", "declaracao": {
+            "name": "meu-triador", "system": "classifique a issue",
+            "kind": "issue", "prompt": "{titulo}\n\n{corpo}",
+            "tipos": ["BUG", "FEATURE"], "abstem_com": "NAO_SEI",
+            "ferramentas": [], "max_turns": 3, "budget_microcents": 4_000_000}}]})
+    assert criada.status_code == 201, criada.text
+
+    listados = {w["id"]: w for w in cliente.get("/api/workflows").json()}
+    assert "triagem-canvas" in listados
+    assert listados["triagem-canvas"]["gerado_em"] is not None
+
+    r = cliente.post(
+        "/api/workflows/triagem-canvas/runs",
+        json={"fonte": _FONTE_ISSUES, "teto_microcents": 10_000_000},
+    )
+
+    assert r.status_code == 200, r.text
+    corpo = r.json()
+    assert corpo["itens"] == 3
+    assert len(fake.chamadas) == 3
+    assert corpo["propostas_por_tipo"] == {"BUG": 3}
+    assert corpo["falhas"] == 0
+    assert corpo["teto_atingido"] is False
+    assert corpo["contra_gabarito"] is None
+
+
+def test_compor_com_id_de_workflow_EXISTENTE_e_409(tmp_path, monkeypatch):
+    """O id é um só espaço para embutido, receitas e composições.
+
+    `"conciliacao"` (o embutido) já é recusado por `validar_id` no schema, com
+    422 — a mesma tranca que `/api/receitas` tem. O 409 desta fatia é o outro
+    caso: um id que NÃO é reservado, mas já está ocupado por uma receita em
+    disco. É aí que só `registry()` sabe responder.
+    """
+    import orchestrator.api.app as api_app
+
+    monkeypatch.setattr(api_app, "_RAIZ_RECEITAS", tmp_path / "receitas")
+    monkeypatch.setattr(api_app, "_RAIZ_COMPOSICOES", tmp_path / "composicoes")
+    receita = cliente.post("/api/receitas", json={
+        "id": "ja-existe", "nome": "x", "justificativa": "j",
+        "resolvers": [{"nome": "L1"}]})
+    assert receita.status_code == 201, receita.text
+
+    r = cliente.post("/api/composicoes", json={
+        "id": "ja-existe", "nome": "x", "justificativa": "",
+        "blocos": [{"tipo": "regra", "nome": "L1", "parametros": {}}]})
+    assert r.status_code == 409, r.text
+    assert "ja-existe" in r.json()["detail"]
