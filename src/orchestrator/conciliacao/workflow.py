@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 
 from orchestrator.conciliacao.politica import POLITICA_ATUAL, contexto
 from orchestrator.kernel.cost import Cost, CostClass
-from orchestrator.kernel.definition import Stage, WorkflowDefinition
+from orchestrator.kernel.definition import Stage, WorkflowDefinition, consome_de
 from orchestrator.kernel.event import EventBus
 from orchestrator.kernel.policy import ExecutionPolicy, PolicyContext
 from orchestrator.kernel.resolution import Proposal, Resolution
@@ -85,13 +85,15 @@ def default_definition(
     from orchestrator.review.revisor import RevisorHumano
 
     revisor = RevisorHumano(fila=fila if fila is not None else Fila.vazia())
+    cascata = (*default_resolvers(), revisor)
     return WorkflowDefinition(
         id="conciliacao",
         name="Conciliação bancária",
         stages=(
             Stage(
                 name="conciliar lançamentos",
-                cascade=(*default_resolvers(), revisor),
+                cascade=cascata,
+                consome=consome_de(cascata),
                 policy=policy or POLITICA_ATUAL,
             ),
         ),

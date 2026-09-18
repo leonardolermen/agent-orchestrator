@@ -67,7 +67,7 @@ from orchestrator.agent.declarado import (
 from orchestrator.agent.llm import LLMClient
 from orchestrator.domains.registro import CATALOGO
 from orchestrator.kernel.cost import CostClass
-from orchestrator.kernel.definition import Stage, WorkflowDefinition
+from orchestrator.kernel.definition import Stage, WorkflowDefinition, consome_de
 from orchestrator.kernel.resolver import Resolver
 from orchestrator.review.fila import Fila
 from orchestrator.review.revisor import RevisorHumano
@@ -238,12 +238,10 @@ def construir_composicao(
         else:
             # Sem checagem de `kind`: a antiga comparava com os `kinds` do
             # domínio e recusava cascata válida depois que a tela perdeu o
-            # seletor. O lugar certo é o grafo — mas para uma composição
-            # construída aqui ele está INERTE: um stage só, `consome`/`produz`
-            # no default, e esta função não os popula a partir dos blocos. Um
-            # `kind` errado passa e o agente não pega item nenhum na execução.
-            # Ver o cabeçalho do módulo: religar precisa do X7/X8 E da fiação
-            # aqui.
+            # seletor. O lugar certo é o grafo, e agora o grafo desta
+            # composição não está mais inerte: `consome` abaixo é derivado dos
+            # blocos, então um `kind` errado deixa de casar item na execução
+            # em vez de passar em silêncio.
             resolvers.append(construir_agente(bloco.declaracao, cliente, ferramentas))
 
     return WorkflowDefinition(
@@ -257,7 +255,16 @@ def construir_composicao(
         # domínio, e o domínio era o mesmo para toda cascata composta sobre
         # ele — o que fazia todo estágio de conciliação se chamar "Conciliação
         # bancária", independentemente do que a pessoa tinha montado.
-        stages=(Stage(name=c.nome, cascade=tuple(resolvers)),),
+        stages=(
+            Stage(
+                name=c.nome,
+                cascade=tuple(resolvers),
+                # A fiação DESTE degrau, derivada dos blocos — a ponta X7 que
+                # o cabeçalho deste módulo dizia faltar. `produz` continua no
+                # default: nenhum bloco do catálogo produz item.
+                consome=consome_de(resolvers),
+            ),
+        ),
     )
 
 

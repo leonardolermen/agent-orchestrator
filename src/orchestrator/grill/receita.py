@@ -16,7 +16,7 @@ from orchestrator.conciliacao.ferramentas import ToolContext
 from orchestrator.domains.registro import CATALOGO
 from orchestrator.grill.catalogo import ClienteAusente
 from orchestrator.kernel.cost import CostClass
-from orchestrator.kernel.definition import Stage, WorkflowDefinition
+from orchestrator.kernel.definition import Stage, WorkflowDefinition, consome_de
 from orchestrator.review.fila import Fila
 from orchestrator.review.revisor import RevisorHumano
 
@@ -182,5 +182,11 @@ def construir(
     return WorkflowDefinition(
         id=receita.id,
         name=receita.nome,
-        stages=(Stage(name="conciliar lançamentos", cascade=tuple(resolvers)),),
+        stages=(
+            Stage(
+                name="conciliar lançamentos",
+                cascade=tuple(resolvers),
+                consome=consome_de(resolvers),
+            ),
+        ),
     )

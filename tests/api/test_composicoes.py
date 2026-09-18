@@ -154,12 +154,16 @@ def test_um_agente_de_KIND_qualquer_e_ACEITO():
     composição chegava com o domínio default e ela recusava todo kind que não
     fosse `"lancamento"` — cascata válida barrada pelo motivo errado.
 
-    **O que este teste NÃO afirma:** que alguma outra guarda tomou o lugar. Para
-    uma composição desta rota, a do grafo está inerte — `construir_composicao`
-    devolve um stage com `consome`/`produz` no default e não os popula a partir
-    dos blocos. Um `kind` digitado errado é aceito aqui e só aparece na
-    execução, como um agente que não pega item nenhum. Ver o cabeçalho de
-    `authoring/composicao.py`: religar precisa do X7/X8 e da fiação lá.
+    **O que este teste afirma, e o que não afirma.** Afirma que a composição
+    é ACEITA ao salvar: ela não conhece a fonte, e "valida construindo"
+    continua sendo a garantia. NÃO afirma que `lancamento` é um kind que
+    alguma fonte produz — hoje nenhuma produz. A guarda que pega isso mora na
+    BORDA do `/runs`, por resolver, contra os kinds da fonte que vai rodar
+    (`tests/api/test_execucao.py::test_a_borda_recusa_bloco_que_a_fonte_NAO_alimenta`),
+    e `Stage.consome` passou a carregar o kind para ela ler
+    (`tests/test_fiacao_derivada.py`). A guarda antiga — partição de catálogo
+    — saiu porque recusava cascata válida; esta compara o grafo que VAI
+    rodar com a fonte que VAI rodar.
     """
     r = cliente.post("/api/composicoes", json=_corpo([_agente(kind="lancamento")]))
 
