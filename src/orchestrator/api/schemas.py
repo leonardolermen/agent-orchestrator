@@ -529,6 +529,10 @@ class ComposicaoRequest(BaseModel):
     nome: str
     justificativa: str = ""
     blocos: list[BlocoJSON] = Field(min_length=1)
+    # Os kinds que SÃO a saída deste workflow — o `Output` da tela. Sem eles, um
+    # bloco que ramifica produz um kind que ninguém consome, e o kernel recusa
+    # por beco sem saída. É declaração e não degrau: nada roda aqui.
+    entrega: list[str] = Field(default_factory=list)
 
     @field_validator("id")
     @classmethod

@@ -335,6 +335,7 @@ def _exigencias_esperadas() -> dict[str, dict[str, type]]:
         # Os tres destinos leem UM campo, pelo nome que a pessoa escolheu. Mesma
         # razao: quem le campo por nome roda sobre qualquer fonte.
         "agrupamento": _SEM_EXIGENCIA,
+        "tabela": _SEM_EXIGENCIA,
         "filtro": _SEM_EXIGENCIA,
         "validacao": _SEM_EXIGENCIA,
         "condicao": _SEM_EXIGENCIA,
@@ -376,6 +377,7 @@ _EXEMPLOS: dict[str, dict] = {
         "chave": ("supplier",),
         "soma": "amount=net_amount",
     },
+    "tabela": {"kind": "banco", "campo": "document", "de_para": ("NF-1=urgente",)},
     "filtro": {"kind": "banco", "campo": "amount", "teste": "menor", "valor": "0"},
     "validacao": {"kind": "banco", "campo": "amount", "teste": "maior", "valor": "0"},
     "condicao": {
@@ -452,6 +454,7 @@ CONSOME_ESPERADO: dict[str, frozenset[str]] = {
     "tolerancia": frozenset({"banco", "contabil"}),
     # Uma ponta so: consomem o kind que `_EXEMPLOS` configurou.
     "agrupamento": frozenset({"banco", "contabil"}),
+    "tabela": frozenset({"banco"}),
     "filtro": frozenset({"banco"}),
     "validacao": frozenset({"banco"}),
     "condicao": frozenset({"banco"}),

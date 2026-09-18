@@ -215,6 +215,8 @@ export const api = {
     nome: string;
     justificativa: string;
     blocos: BlocoPedido[];
+    // Os kinds que SAO a saida do workflow. Declaracao, nao degrau.
+    entrega: string[];
   }) =>
     pedir<WorkflowConstruido>("/api/composicoes", {
       method: "POST",

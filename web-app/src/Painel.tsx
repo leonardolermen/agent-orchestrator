@@ -31,7 +31,7 @@ interface Props {
   onRemover: (id: string) => void;
   onMudarParametro: (id: string, param: string, valor: ValorParametro) => void;
   onMudarAgente: (id: string, patch: Partial<AgenteDeclarado>) => void;
-  onCompor: (id: string, nome: string) => void;
+  onCompor: (id: string, nome: string, entrega: string[]) => void;
   onMudarAmbiente: (a: Ambiente) => void;
 }
 
@@ -121,6 +121,7 @@ function CampoDeParametro({
 export function Painel(p: Props) {
   const [id, setId] = useState("");
   const [nome, setNome] = useState("");
+  const [entrega, setEntrega] = useState("");
 
   const usados = new Set(p.escolhidos.map((n) => nomeDo(n.data)));
   const temAgente = p.escolhidos.some((n) => classeDo(n.data) === "AGENTE");
@@ -310,13 +311,39 @@ export function Painel(p: Props) {
           value={nome}
           onChange={(e) => setNome(e.target.value)}
           placeholder="nome (opcional)"
-          className={`mb-2.5 ${CAMPO}`}
+          className={`mb-2 ${CAMPO}`}
         />
+        {/* A ENTREGA. Nao e um no do canvas de proposito: nada roda aqui, e um
+            no que nao executa sugere que executa. E uma afirmacao sobre o
+            workflow — "estes kinds SAO a saida" —, e o kernel exige que ela
+            seja escrita: sem ela, um bloco que ramifica produz um kind que
+            ninguem consome e a composicao e recusada por beco sem saida. */}
+        <input
+          value={entrega}
+          onChange={(e) => setEntrega(e.target.value)}
+          placeholder="entrega: suspeito, aprovado"
+          spellCheck={false}
+          className={`mb-1 font-mono ${CAMPO}`}
+        />
+        <p className="mb-2.5 text-[10.5px] leading-snug text-neutral-400 dark:text-noite-fraca">
+          os kinds que SÃO a saída. Um bloco que ramifica precisa declarar aqui
+          o ramo que ninguém mais consome — senão o item ficaria no pool para
+          sempre.
+        </p>
         <div className="flex gap-2">
           <button
             type="button"
             disabled={p.escolhidos.length === 0 || !id.trim()}
-            onClick={() => p.onCompor(id.trim(), nome.trim())}
+            onClick={() =>
+              p.onCompor(
+                id.trim(),
+                nome.trim(),
+                entrega
+                  .split(",")
+                  .map((s) => s.trim())
+                  .filter(Boolean),
+              )
+            }
             className="flex-1 rounded border border-tinta bg-tinta px-3 py-1.5 text-[12.5px] text-white transition disabled:cursor-not-allowed disabled:border-neutral-300 disabled:bg-neutral-300 dark:border-noite-borda dark:bg-noite-cartao dark:text-noite-tinta dark:disabled:bg-noite-fundo dark:disabled:text-noite-fraca"
           >
             Compor e validar

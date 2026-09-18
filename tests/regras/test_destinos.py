@@ -284,3 +284,64 @@ def test_compor_um_ramo_SEM_destino_recusa_na_COMPOSICAO():
 
     with pytest.raises(ValueError, match="beco sem saída"):
         construir_composicao(c)
+
+
+def test_declarar_a_ENTREGA_destrava_o_ramo():
+    """A outra metade, e é o que torna `condicao` utilizável.
+
+    O kernel diz que `entrega` existe "para que 'ninguém consome isto' seja
+    afirmação do autor em vez de acidente". Derivar sozinho — todo kind órfão
+    vira entrega — desligaria a guarda no grafo inteiro e ensinaria o autor a
+    mentir, que é textualmente o que o comentário daquela guarda proíbe.
+
+    Então quem monta declara. É o `Output` do canvas, e é uma DECLARAÇÃO e não
+    um degrau: nada roda ali.
+    """
+    from datetime import UTC, datetime
+
+    from orchestrator.authoring.composicao import (
+        BlocoRegra,
+        Composicao,
+        construir_composicao,
+    )
+
+    bloco = BlocoRegra(
+        nome="condicao",
+        parametros={
+            "kind": "banco",
+            "campo": "amount",
+            "teste": "maior",
+            "valor": "0",
+            "produz": "suspeito",
+        },
+    )
+    c = Composicao(
+        id="t",
+        nome="t",
+        blocos=(bloco,),
+        gerado_em=datetime.now(UTC),
+        entrega=("suspeito",),
+    )
+
+    d = construir_composicao(c)
+
+    assert d.stages[0].produz == frozenset({"suspeito"})
+    assert d.entrega == frozenset({"suspeito"})
+
+
+def test_a_entrega_muda_a_VERSAO_da_composicao():
+    """Os mesmos blocos com entregas diferentes são workflows diferentes — um
+    fecha o ramo, o outro o deixa em aberto. Dois resultados de benchmark só
+    são comparáveis se mediram a mesma coisa."""
+    from datetime import UTC, datetime
+
+    from orchestrator.authoring.composicao import BlocoRegra, Composicao
+
+    bloco = BlocoRegra(nome="L1", parametros={})
+    agora = datetime.now(UTC)
+    sem = Composicao(id="t", nome="t", blocos=(bloco,), gerado_em=agora)
+    com = Composicao(
+        id="t", nome="t", blocos=(bloco,), gerado_em=agora, entrega=("suspeito",)
+    )
+
+    assert sem.version != com.version

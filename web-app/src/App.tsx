@@ -223,7 +223,7 @@ export default function App() {
     invalidar();
   };
 
-  const compor = async (id: string, nome: string) => {
+  const compor = async (id: string, nome: string, entrega: string[]) => {
     setErro(null);
     setAviso(null);
     try {
@@ -241,6 +241,11 @@ export default function App() {
                 ? { tipo: "regra", nome: n.data.regra.nome, parametros: n.data.parametros }
                 : { tipo: "agente", declaracao: n.data.declaracao },
           ),
+          // Os kinds que SÃO a saída. Declaração, não degrau — ver o campo em
+          // `Painel.tsx`. Sem eles, um bloco que ramifica é recusado por beco
+          // sem saída, e a recusa acontece aqui, na composição, em vez de na
+          // execução.
+          entrega,
         }),
       );
     } catch (e) {

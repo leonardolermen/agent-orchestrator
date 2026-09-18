@@ -96,6 +96,21 @@ class Composicao:
     nome: str
     blocos: tuple[Bloco, ...]
     gerado_em: datetime
+    # Os `kind` que SÃO a saída deste workflow.
+    #
+    # É o `Output` do canvas, e é uma DECLARAÇÃO e não um degrau: nada roda
+    # aqui. Um nó no canvas sugeriria execução, e um nó que não executa é
+    # exatamente o tipo de coisa decorativa que este repositório evita.
+    #
+    # Existe porque um bloco que ramifica (`condicao`) produz um kind, e o
+    # kernel recusa "beco sem saída" — item produzido que ninguém consome fica
+    # no pool para sempre. `WorkflowDefinition.entrega` é a única exceção a essa
+    # recusa, e o comentário de lá diz por que ela precisa ser ESCRITA: para que
+    # "ninguém consome isto" seja afirmação do autor em vez de acidente. Derivar
+    # sozinho (todo kind órfão vira entrega) desligaria a guarda inteira e
+    # ensinaria o autor a mentir — que é textualmente o que aquele comentário
+    # proíbe.
+    entrega: tuple[str, ...] = ()
     justificativa: str = ""
     version: str = field(init=False)
 
@@ -108,9 +123,19 @@ class Composicao:
         # `EvalDataset.version`. Dois resultados de benchmark só são comparáveis
         # se mediram a mesma cascata, e sem derivação nada impede duas
         # composições diferentes alegarem a mesma versão.
+        # `entrega` entra no digest: duas composições com os mesmos blocos e
+        # entregas diferentes são workflows diferentes — uma fecha o ramo, a
+        # outra o deixa em aberto —, e dois resultados de benchmark só são
+        # comparáveis se mediram a mesma coisa.
         digest = hashlib.sha256(
-            json.dumps(_blocos_para_json(self.blocos), sort_keys=True, ensure_ascii=False)
-            .encode("utf-8")
+            json.dumps(
+                {
+                    "blocos": _blocos_para_json(self.blocos),
+                    "entrega": sorted(self.entrega),
+                },
+                sort_keys=True,
+                ensure_ascii=False,
+            ).encode("utf-8")
         ).hexdigest()
         object.__setattr__(self, "version", digest[:12])
 
@@ -270,6 +295,7 @@ def construir_composicao(
                 produz=produz_de(resolvers),
             ),
         ),
+        entrega=frozenset(c.entrega),
     )
 
 

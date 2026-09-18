@@ -447,6 +447,7 @@ def criar_composicao(pedido: ComposicaoRequest) -> WorkflowJSON:
             # que a antecedeu.
             gerado_em=datetime.now(UTC),
             blocos=tuple(blocos),
+            entrega=tuple(pedido.entrega),
         )
         definicao = construir_composicao(composicao)
     except ValueError as erro:

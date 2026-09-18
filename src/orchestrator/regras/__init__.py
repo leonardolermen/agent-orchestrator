@@ -26,6 +26,7 @@ from orchestrator.regras.filtro import Filtro
 from orchestrator.regras.igualdade import Igualdade
 from orchestrator.regras.pares import Par
 from orchestrator.regras.predicado import Comparacao, ComparacaoImpossivel, Predicado
+from orchestrator.regras.tabela import Tabela
 from orchestrator.regras.tolerancia import Tolerancia
 from orchestrator.regras.validacao import Validacao
 
@@ -39,6 +40,7 @@ __all__ = [
     "Predicado",
     "Comparacao",
     "ComparacaoImpossivel",
+    "Tabela",
     "Tolerancia",
     "Validacao",
     "valor_do_campo",

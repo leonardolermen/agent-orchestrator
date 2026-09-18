@@ -339,6 +339,17 @@ def _agrupamento(p: dict[str, ValorDeParametro]) -> Any:
     )
 
 
+def _tabela(p: dict[str, ValorDeParametro]) -> Any:
+    from orchestrator.regras import Tabela
+
+    _exige("tabela", p, ("kind", "campo", "de_para"))
+    return Tabela(
+        kind=str(p.get("kind", "")),
+        campo=str(p.get("campo", "")),
+        de_para=_lista(p.get("de_para")),
+    )
+
+
 def _tolerancia(p: dict[str, ValorDeParametro]) -> Any:
     from orchestrator.regras import Tolerancia
 
@@ -431,6 +442,23 @@ CATALOGO = Catalogo(
                 ),
             ),
             construir=lambda p: _agrupamento(p),
+        ),
+        RegraDisponivel(
+            nome="tabela",
+            cost_class=CostClass.REGRA,
+            resumo="o valor do campo escolhe o ramo",
+            parametros=(
+                ParametroDeRegra("kind", "", "o kind que entra neste bloco", obrigatorio=True),
+                ParametroDeRegra("campo", "", "o campo cujo valor decide", obrigatorio=True),
+                ParametroDeRegra(
+                    "de_para",
+                    (),
+                    "uma rota por valor: PJ=empresa, PF=pessoa. valor fora da "
+                    "tabela não é tocado",
+                    obrigatorio=True,
+                ),
+            ),
+            construir=lambda p: _tabela(p),
         ),
         # Os TRÊS DESTINOS de um item que passa num teste. O que muda entre eles
         # não é a pergunta — é o que acontece com o item, e são três verbos
