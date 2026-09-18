@@ -21,42 +21,26 @@ caso particular em que todos os blocos já existem por nome.
    tem, agora no formato persistido.
 2. **Valida construindo.** Se `construir_composicao` retorna, a cascata roda.
 
-**A terceira garantia era "um domínio só", e hoje ela NÃO TEM DONO aqui.
-Dito em voz alta porque a meia-verdade é pior que a lacuna.**
+**A terceira garantia — cada bloco é alimentado pela fonte — mora na BORDA,
+não aqui.** Ela dizia: blocos cujos `WorkItem.kind` não conversam produzem
+uma cascata vazia de sentido. A guarda antiga comparava o `kind` do agente
+com os `kinds` de um domínio declarado, e saiu porque recusava cascata válida
+depois que a tela perdeu o seletor.
 
-Ela dizia: blocos cujos `WorkItem.kind` não conversam produzem uma cascata vazia
-de sentido, porque o segundo roda sobre um pool que o primeiro nem enxerga. A
-guarda antiga a fazia comparando o `kind` do agente com os `kinds` do domínio
-declarado na composição — e ela PRECISAVA sair. Com a tela sem seletor, toda
-composição chegava com o domínio default, e a checagem passou a recusar qualquer
-agente cujo kind não fosse `"lancamento"`: guarda certa aplicada ao pedido
-errado, recusando cascata válida.
+O lugar certo é o grafo que VAI RODAR contra a fonte que VAI RODAR — e isso
+só existe junto na borda do `/runs`. Esta função faz a metade dela: deriva
+`Stage.consome` dos blocos (`consome_de`), então o degrau reserva o que não
+consome e a borda tem o que ler. A outra metade, `api/app.py::_conferir_kinds`,
+recusa com 422 — por resolver, nomeando o bloco — qualquer `consome` que não
+cruze os kinds do pool carregado.
 
-O lugar certo é o grafo — `Stage.consome`/`Stage.produz` declara a fiação POR
-DEGRAU, e o que se valida é o grafo que VAI RODAR, não uma partição de catálogo.
-Só que, para uma composição construída AQUI, essa guarda está **inerte**, por
-dois motivos que se somam:
+Uma composição continua sendo ACEITA aqui com qualquer `kind`: ela não conhece
+a fonte, e "valida construindo" é a garantia desta função. Um `kind` digitado
+errado é pego na execução, antes de gastar — não mais "aceito, e em execução
+nunca pega item nenhum".
 
-1. `construir_composicao` devolve UM stage com `consome`/`produz` nos defaults,
-   e `WorkflowDefinition.__post_init__` desliga a checagem de beco sem saída no
-   grafo inteiro assim que um único stage usa o default — o custo está dito em
-   voz alta em `kernel/definition.py`, e vale aqui;
-2. mesmo se rodasse, não acharia nada: esta função não POPULA `consome`/`produz`
-   a partir dos blocos, e a checagem de lá procura `produz` órfão — ela nunca
-   compara o `kind` de um agente com coisa nenhuma.
-
-Logo: um agente com `kind` digitado errado é aceito, e em execução simplesmente
-nunca pega item nenhum. Religar isso precisa das DUAS pontas — o X7/X8 (ensinar
-`AgenteDeclarado` a declarar o que PRODUZ) e a fiação aqui, derivando
-`consome`/`produz` dos blocos. Enquanto as duas não existirem, quem escreve um
-agente na tela é quem garante o `kind`.
-
-**Estado desta fatia, dito em voz alta.** A metade de `consome` acima já não é
-verdade: `construir_composicao` passou a popular `Stage.consome` a partir dos
-blocos (`consome_de`, no `return` abaixo), e o motor reserva o que o degrau não
-consome. A OUTRA metade — a recusa, na borda do `/runs`, de uma fonte que não
-alimenta um bloco — ainda não existe neste commit. Este cabeçalho é reescrito
-por inteiro quando ela existir; até lá, o que vale é este parágrafo.
+O que ainda não existe: `produz` derivado (X8), desnecessário enquanto um
+`AgenteDeclarado` só emite propostas; e mais de um stage por composição.
 """
 
 import hashlib
@@ -246,12 +230,10 @@ def construir_composicao(
             else:
                 resolvers.append(regra.construir(dict(bloco.parametros)))
         else:
-            # Sem checagem de `kind`: a antiga comparava com os `kinds` do
-            # domínio e recusava cascata válida depois que a tela perdeu o
-            # seletor. O lugar certo é o grafo, e agora o grafo desta
-            # composição não está mais inerte: `consome` abaixo é derivado dos
-            # blocos, então um `kind` errado deixa de casar item na execução
-            # em vez de passar em silêncio.
+            # Sem checagem de `kind` AQUI, de propósito: a composição não
+            # conhece a fonte. `Stage.consome` sai de `consome_de` no `return`
+            # abaixo, e é a borda do `/runs` (`_conferir_kinds`) que recusa um
+            # kind que a fonte não entrega — por resolver, antes de gastar.
             resolvers.append(construir_agente(bloco.declaracao, cliente, ferramentas))
 
     return WorkflowDefinition(
@@ -269,9 +251,9 @@ def construir_composicao(
             Stage(
                 name=c.nome,
                 cascade=tuple(resolvers),
-                # A fiação DESTE degrau, derivada dos blocos — a ponta X7 que
-                # o cabeçalho deste módulo dizia faltar. `produz` continua no
-                # default: nenhum bloco do catálogo produz item.
+                # A fiação DESTE degrau, derivada dos blocos — a metade X7 da
+                # lacuna de `kind` (ver cabeçalho do módulo). `produz`
+                # continua no default: nenhum bloco do catálogo produz item.
                 consome=consome_de(resolvers),
             ),
         ),

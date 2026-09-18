@@ -204,9 +204,9 @@ Não saber é resposta válida: responda NAO_SEI com confiança BAIXA."""
 # `RegraDisponivel` sabem descrever isso — os dois descrevem um resolver que
 # decide sobre UM item e devolve `Proposal`/`Resolution` a respeito DELE.
 # Catalogá-lo hoje exigiria mentir sobre o que ele faz. Ensinar
-# `AgenteDeclarado` a declarar `produz` é o X7/X8 que o plano de
-# execução-como-grafo reserva para depois — ver a nota de fricção em
-# `tests/domains/test_generalidade.py` e a entrada em
+# `AgenteDeclarado` a declarar `produz` é a metade X8 da lacuna de `kind` —
+# ainda reservada. A metade X7 (`consome` declarado, derivado por
+# `consome_de` e conferido na borda do `/runs`) fechou; ver P9.1 em
 # `docs/superpowers/DECISOES.md`.
 # ---------------------------------------------------------------------------
 

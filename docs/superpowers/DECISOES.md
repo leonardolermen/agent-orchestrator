@@ -3111,3 +3111,47 @@ Custo se errado: alguém lê um 0% como medição e conclui que a cascata não
 serve, quando o que não serve é a entrada. É o custo de uma lacuna escrita em
 vez de fechada, e a mitigação é que ela está escrita nos dois lugares onde se
 procura.
+
+### P9.1. A guarda de `kind` mora na BORDA, por resolver — não no kernel, não por degrau
+
+**Decisão.** Todo resolver DECLARA o que consome (`ResolverDescription.consome`,
+`AgentSpec.consome`); cada construtor deriva `Stage.consome` com `consome_de`;
+e `POST /runs` recusa com 422 qualquer resolver cujo `consome` não cruze os
+kinds do pool carregado — nomeando o bloco. Pool vazio também é 422.
+
+**Por que declarado e não derivado de `payloads`.** `payloads` responde "que
+TIPO exijo deste kind"; `consome` responde "que KINDS pego do pool". O
+`investigador` em Python lê objetos tipados; o `triador` lê dicionário e não
+exige tipo — ambos consomem um kind só. Amarrar as duas obrigaria um agente a
+declarar tipo para dizer o que consome, e a borda de `payloads` recusaria
+fonte válida.
+
+**Por que na borda e não no motor.** `runtime/engine.py` reserva os kinds que
+um degrau não consome e pula o degrau sem trabalho — semântica certa para um
+grafo de vários degraus, e que devolveria `concluido` com lacuna de 100% para
+um run inteiro sobre kind errado: "não achei nada" indistinguível de "não
+procurei". Só a borda tem, juntos, a fonte e o workflow.
+
+**Por que por resolver e não pela união do degrau.** A união deixaria passar
+um agente cego dentro de um degrau vivo: `L1` alimentado por `banco`
+satisfaz a união, e o agente que consome outro kind roda sem ver item. Era o
+`investigador` do catálogo — `kind="lancamento"`, que nenhuma fonte produz, e
+um prompt sobre `{descricao}`, campo que `BankEntry` não tem — cego desde o
+rename do domínio, dentro de `pago.json`. A guarda o teria pego; ele foi
+consertado antes de a guarda existir, para que ela nascesse sem quebrar nada
+por acidente.
+
+**Por que `consome_de` está no kernel e não em `workflows.py`.** `workflows.py`
+importa `authoring/composicao.py` (a fábrica `_de_composicao`), e
+`construir_composicao` chama `consome_de` — em `workflows.py` seria um ciclo.
+E é uma função chamada por cada construtor, não `Stage.__post_init__`: derivar
+no kernel trocaria em silêncio o significado do default vazio para toda
+definição escrita em Python.
+
+**O que fica fora.** `produz` derivado (X8) — desnecessário enquanto agentes
+declarados só emitem propostas; vários stages por composição; a lacuna do
+produtor, contida pelo `xfail(strict)` e pelo estopim da fatia anterior. A
+guarda confia no `produz` declarado sem conferir: um resolver que declara
+`produz={"banco"}` e não emite nada passa pela borda sem erro — reabre "200
+sobre um pool que ninguém leu", contida hoje só pelo tripwire
+`test_a_lacuna_do_produtor_nao_e_alcancavel_pelo_CATALOGO`.
