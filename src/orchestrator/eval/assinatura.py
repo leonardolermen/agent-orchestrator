@@ -26,7 +26,13 @@ from orchestrator.agent.investigator import (
     descrever_divergencia,
     interpretar_proposta,
 )
-from orchestrator.conciliacao.ferramentas import TOOL_SCHEMAS, ToolContext
+from orchestrator.agent.tools.registry import ToolSpec
+from orchestrator.conciliacao.ferramentas import (
+    FERRAMENTAS,
+    TOOL_SCHEMAS,
+    ToolContext,
+    registry_de,
+)
 from orchestrator.kernel.cost import Cost, CostClass
 from orchestrator.kernel.resolution import Proposal, TraceEvent, TraceKind
 from orchestrator.kernel.resolver import ResolverDescription, ResolverOutput
@@ -49,33 +55,37 @@ def _qualificado(nome: str) -> str:
 def _montar_servidor(context: ToolContext) -> Any:
     """Expõe as MESMAS cinco ferramentas, com os MESMOS schemas.
 
-    `TOOL_SCHEMAS` é reusado verbatim — o decorador aceita JSON Schema
+    Cada `ToolSpec` é reusado verbatim — o decorador aceita JSON Schema
     completo. Se os dois caminhos declarassem contratos diferentes, comparar o
     agente pago com o agente por assinatura não mediria o agente, mediria a
     diferença entre as duas declarações.
+
+    E quem despacha é o MESMO `ToolRegistry` do caminho pago. Era
+    `getattr(context, nome)`: uma segunda religação, escrita aqui porque este
+    caminho não tinha um registro em mãos. Ela quebrou em silêncio quando as
+    ferramentas deixaram de ser métodos de `ToolContext` — o servidor MCP
+    levantava ao ser montado, a falha virava abstenção, e a avaliação relatava
+    12/12 falhas de API sem que API nenhuma tivesse sido chamada.
     """
     from claude_agent_sdk import create_sdk_mcp_server, tool
 
-    def _adaptar(esquema: dict[str, Any]):
-        nome = esquema["name"]
-        metodo = getattr(context, nome)
+    registry = registry_de(context)
 
-        @tool(nome, esquema["description"], esquema["input_schema"])
+    def _adaptar(spec: ToolSpec):
+        @tool(spec.name, spec.description, dict(spec.input_schema))
         async def _handler(args: dict[str, Any]) -> dict[str, Any]:
             # Mesma regra do laço pago: erro de ferramenta volta ao modelo como
             # texto, nunca como exceção — o modelo se corrige, o processo não.
-            try:
-                argumentos = {k: v for k, v in args.items() if v is not None}
-                resultado = metodo(**argumentos)
-            except Exception as erro:  # noqa: BLE001
-                resultado = {"erro": str(erro)}
+            # Aqui isso não é "a mesma regra", é o mesmo código: `call` nunca
+            # levanta, e `para_modelo` é o que o laço pago também devolve.
+            resultado = registry.call(spec.name, args).para_modelo()
             texto = json.dumps(resultado, ensure_ascii=False, default=str)
             return {"content": [{"type": "text", "text": texto}]}
 
         return _handler
 
     return create_sdk_mcp_server(
-        name=_SERVIDOR, version="1.0.0", tools=[_adaptar(e) for e in TOOL_SCHEMAS]
+        name=_SERVIDOR, version="1.0.0", tools=[_adaptar(s) for s in FERRAMENTAS]
     )
 
 

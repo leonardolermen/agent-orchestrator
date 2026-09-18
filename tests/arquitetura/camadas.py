@@ -113,7 +113,17 @@ DESTINO: dict[str, str] = {
     # `ToolRegistry` precisava. As duas coisas se resolvem com o mesmo mover.
     "conciliacao": "domains",
     "conciliacao.workflow": "domains",
+    # `ferramentas` virou PACOTE: uma ferramenta por arquivo, com a função e o
+    # `ToolSpec` que o modelo vê lado a lado. Antes eram duas metades distantes
+    # (método de `ToolContext` aqui, schema numa lista cem linhas abaixo)
+    # costuradas por `getattr` no despacho.
     "conciliacao.ferramentas": "domains",
+    "conciliacao.ferramentas.contexto": "domains",
+    "conciliacao.ferramentas.buscar_lancamentos": "domains",
+    "conciliacao.ferramentas.buscar_documento_fiscal": "domains",
+    "conciliacao.ferramentas.historico_fornecedor": "domains",
+    "conciliacao.ferramentas.calcular_retencao": "domains",
+    "conciliacao.ferramentas.calendario_bancario": "domains",
     "conciliacao.politica": "domains",
     "matching.exact": "domains",
     "matching.tolerance": "domains",

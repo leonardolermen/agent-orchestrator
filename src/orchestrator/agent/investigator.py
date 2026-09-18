@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 
 from orchestrator.agent.agent import Agent, AgentSpec, AgentTask
 from orchestrator.agent.llm import LLMClient
-from orchestrator.conciliacao.ferramentas import ToolContext, registry_de
+from orchestrator.conciliacao.ferramentas import ToolContext, ledger_dict, registry_de
 from orchestrator.kernel.cost import Cost, CostClass
 from orchestrator.kernel.resolution import (
     Confidence,
@@ -271,7 +271,7 @@ def descrever_divergencia(context: ToolContext, d: Divergence) -> str:
                 }
                 for e in banco
             ],
-            "lancamentos_contabeis": [ToolContext.ledger_dict(le) for le in contabil],
+            "lancamentos_contabeis": [ledger_dict(le) for le in contabil],
         },
         ensure_ascii=False,
     )
