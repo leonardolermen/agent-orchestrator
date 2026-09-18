@@ -442,19 +442,41 @@ def _blocos_para_json(blocos: tuple[Bloco, ...]) -> list[dict[str, Any]]:
 
 
 def para_json(c: Composicao) -> dict[str, Any]:
+    """O que vai para o disco.
+
+    **`etapas` e `entrega` PRECISAM estar aqui**, e a ausência dos dois foi um
+    defeito de verdade: a composição era gravada só com os blocos achatados, e
+    recarregá-la devolvia um workflow de uma etapa só, sem a declaração de
+    saída. Silencioso e sobre estrutura — a pessoa montava dois degraus, salvava,
+    e o que voltava era outro workflow com a mesma cara.
+
+    **Só `etapas`, nunca os dois.** A primeira versão gravava `blocos` junto,
+    "para um arquivo novo ser legível por quem só conhece o formato antigo".
+    Isso são duas fontes de verdade no mesmo arquivo, e o preço apareceu no
+    mesmo dia: `test_tipo_de_bloco_desconhecido_LEVANTA_em_vez_de_sumir`
+    corrompe um bloco e exige a recusa — com os dois campos, a leitura preferia
+    `etapas` e a corrupção em `blocos` passava batido. A guarda deixava de
+    valer para metade do arquivo.
+
+    Quem lê ainda aceita `blocos`: é o formato dos arquivos que já estão no
+    disco, e eles são de UMA etapa por construção.
+    """
     return {
         "id": c.id,
         "nome": c.nome,
         "justificativa": c.justificativa,
         "gerado_em": c.gerado_em.isoformat(),
         "version": c.version,
-        "blocos": _blocos_para_json(c.blocos),
+        "etapas": [
+            {"nome": e.nome, "blocos": _blocos_para_json(e.blocos)} for e in c.etapas
+        ],
+        "entrega": sorted(c.entrega),
     }
 
 
-def de_json(d: dict[str, Any]) -> Composicao:
+def _blocos_de_json(crus: list[dict[str, Any]]) -> tuple[Bloco, ...]:
     blocos: list[Bloco] = []
-    for b in d["blocos"]:
+    for b in crus:
         if b["tipo"] == "regra":
             blocos.append(BlocoRegra(nome=b["nome"], parametros=dict(b.get("parametros", {}))))
         elif b["tipo"] == "agente":
@@ -465,6 +487,18 @@ def de_json(d: dict[str, Any]) -> Composicao:
             raise ValueError(
                 f"tipo de bloco desconhecido: {b['tipo']!r}. use 'regra' ou 'agente'"
             )
+    return tuple(blocos)
+
+
+def de_json(d: dict[str, Any]) -> Composicao:
+    # `etapas` quando o arquivo tem; `blocos` quando é de antes delas existirem.
+    # Os arquivos antigos são de UMA etapa por construção, então cair no açúcar
+    # reproduz exatamente o que eles significavam.
+    etapas = tuple(
+        Etapa(nome=e["nome"], blocos=_blocos_de_json(e["blocos"]))
+        for e in d.get("etapas", [])
+    )
+    blocos = () if etapas else _blocos_de_json(d["blocos"])
     gerado = datetime.fromisoformat(d["gerado_em"])
     if gerado.tzinfo is None:
         raise ValueError(
@@ -476,7 +510,9 @@ def de_json(d: dict[str, Any]) -> Composicao:
         nome=d["nome"],
         justificativa=d.get("justificativa", ""),
         gerado_em=gerado,
-        blocos=tuple(blocos),
+        blocos=blocos,
+        etapas=etapas,
+        entrega=tuple(d.get("entrega", ())),
     )
 
 

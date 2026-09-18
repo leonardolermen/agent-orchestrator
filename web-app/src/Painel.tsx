@@ -33,6 +33,11 @@ interface Props {
   onMudarParametro: (id: string, param: string, valor: ValorParametro) => void;
   onMudarAgente: (id: string, patch: Partial<AgenteDeclarado>) => void;
   onCompor: (id: string, nome: string, entrega: string[]) => void;
+  // Quantas etapas existem, como se chamam, e como mover um bloco entre elas.
+  quantasEtapas: number;
+  nomeDaEtapa: (i: number) => string;
+  onRenomearEtapa: (i: number, nome: string) => void;
+  onMudarEtapa: (id: string, etapa: number) => void;
   onMudarAmbiente: (a: Ambiente) => void;
 }
 
@@ -119,6 +124,52 @@ function CampoDeParametro({
   );
 }
 
+/** Em qual degrau este bloco roda, e o botao que abre o proximo.
+ *
+ *  "+ etapa" move o bloco para um degrau NOVO — ele nao cria etapa vazia,
+ *  porque o numero de etapas e derivado do que os blocos dizem. Sem isso
+ *  haveria um estado "etapa vazia" na tela que o servidor recusa, e a pessoa
+ *  veria um degrau que a composicao nao tem. */
+function SeletorDeEtapa({
+  atual,
+  quantas,
+  nomeDaEtapa,
+  onEscolher,
+}: {
+  atual: number;
+  quantas: number;
+  nomeDaEtapa: (i: number) => string;
+  onEscolher: (i: number) => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {Array.from({ length: quantas }, (_, i) => (
+        <button
+          key={i}
+          type="button"
+          onClick={() => onEscolher(i)}
+          className={[
+            "rounded border px-2 py-1 text-[11.5px] transition",
+            i === atual
+              ? "border-tinta bg-tinta text-white dark:border-noite-tinta dark:bg-noite-cartao dark:text-noite-tinta"
+              : "border-borda hover:bg-neutral-50 dark:border-noite-borda dark:hover:bg-noite-cartao",
+          ].join(" ")}
+        >
+          {nomeDaEtapa(i)}
+        </button>
+      ))}
+      <button
+        type="button"
+        onClick={() => onEscolher(quantas)}
+        title="move este bloco para um degrau novo"
+        className="rounded border border-dashed border-borda px-2 py-1 text-[11.5px] text-neutral-500 transition hover:bg-neutral-50 dark:border-noite-borda dark:text-noite-fraca dark:hover:bg-noite-cartao"
+      >
+        + etapa
+      </button>
+    </div>
+  );
+}
+
 export function Painel(p: Props) {
   const [id, setId] = useState("");
   const [nome, setNome] = useState("");
@@ -139,6 +190,29 @@ export function Painel(p: Props) {
         onAcrescentarAgente={p.onAcrescentarAgente}
         onNovoAgente={p.onNovoAgente}
       />
+
+      {/* A ETAPA do bloco selecionado. Vale para regra E para agente, entao
+          mora fora dos dois blocos de edicao abaixo. */}
+      {p.selecionado && (
+        <Secao titulo="Etapa" ajuda="Dentro de uma etapa a ordem e por CUSTO; entre etapas, por DADO.">
+          <SeletorDeEtapa
+            atual={p.selecionado.data.etapa}
+            quantas={p.quantasEtapas}
+            nomeDaEtapa={p.nomeDaEtapa}
+            onEscolher={(i) => p.onMudarEtapa(p.selecionado!.id, i)}
+          />
+          <label className="mt-2 block">
+            <span className="text-[11px] text-neutral-500 dark:text-noite-fraca">
+              nome desta etapa
+            </span>
+            <input
+              value={p.nomeDaEtapa(p.selecionado.data.etapa)}
+              onChange={(e) => p.onRenomearEtapa(p.selecionado!.data.etapa, e.target.value)}
+              className={`mt-1 ${CAMPO}`}
+            />
+          </label>
+        </Secao>
+      )}
 
       {p.selecionado?.data.tipo === "regra" && (
         <Secao

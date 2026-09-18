@@ -199,3 +199,45 @@ def test_duas_etapas_ROLDAM_de_verdade_e_o_item_atravessa():
     assert "p1" in resolvidos
     assert "p1+suspeito" in resolvidos
     assert [i.id for i in run.unresolved.items] == ["p2"]
+
+
+# --- ida e volta pelo disco -------------------------------------------------
+
+
+def test_o_disco_PRESERVA_as_etapas_e_a_entrega():
+    """O defeito que quase passou: a composição era gravada só com os blocos
+    achatados, e recarregá-la devolvia um workflow de UMA etapa, sem a
+    declaração de saída. Silencioso e sobre estrutura — a pessoa montava dois
+    degraus, salvava, e o que voltava era outro workflow com a mesma cara.
+    """
+    from orchestrator.authoring.composicao import de_json, para_json
+
+    c = _composicao(
+        etapas=(
+            Etapa(nome="triagem", blocos=(_condicao("suspeito"),)),
+            Etapa(nome="revisão", blocos=(_filtro("suspeito"),)),
+        ),
+        entrega=("relatorio",),
+    )
+
+    voltou = de_json(para_json(c))
+
+    assert [e.nome for e in voltou.etapas] == ["triagem", "revisão"]
+    assert voltou.entrega == ("relatorio",)
+    # A VERSÃO sobrevive: ela é digerida do conteúdo, e um run antigo aponta
+    # para a composição por ela.
+    assert voltou.version == c.version
+
+
+def test_arquivo_ANTIGO_sem_etapas_continua_carregando():
+    """Os arquivos que já estão no disco têm só `blocos`, e são de uma etapa
+    por construção — cair no açúcar reproduz exatamente o que significavam."""
+    from orchestrator.authoring.composicao import de_json, para_json
+
+    antigo = para_json(_composicao(blocos=(BlocoRegra(nome="L1", parametros={}),)))
+    antigo["blocos"] = antigo.pop("etapas")[0]["blocos"]
+
+    voltou = de_json(antigo)
+
+    assert len(voltou.etapas) == 1
+    assert voltou.nomes == ("L1",)

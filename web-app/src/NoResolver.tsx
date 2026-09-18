@@ -26,11 +26,19 @@ export interface DadosRegra extends Record<string, unknown> {
   tipo: "regra";
   regra: Regra;
   parametros: Record<string, ValorParametro>;
+  // Em qual ETAPA este bloco roda. Indice, nao nome: renomear uma etapa nao
+  // pode mover bloco nenhum.
+  //
+  // Mora no no e nao numa tabela `Map<noId, etapa>` ao lado porque a segunda
+  // ficaria dessincronizada no dia em que um no fosse removido — e o sintoma
+  // seria um bloco numa etapa que nao existe mais.
+  etapa: number;
 }
 
 export interface DadosAgente extends Record<string, unknown> {
   tipo: "agente";
   declaracao: AgenteDeclarado;
+  etapa: number;
 }
 
 export type DadosDoNo = DadosRegra | DadosAgente;

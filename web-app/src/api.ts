@@ -220,7 +220,12 @@ export const api = {
     id: string;
     nome: string;
     justificativa: string;
-    blocos: BlocoPedido[];
+    // ETAPAS, nao uma lista plana. A ordem DENTRO de cada uma e ignorada pelo
+    // servidor (ele ordena por custo); a ordem ENTRE elas e significativa.
+    //
+    // `blocos` continua aceito pelo servidor como o acucar de uma etapa so — a
+    // tela nao usa mais, e o grill usa.
+    etapas: { nome: string; blocos: BlocoPedido[] }[];
     // Os kinds que SAO a saida do workflow. Declaracao, nao degrau.
     entrega: string[];
   }) =>
