@@ -30,9 +30,15 @@ export interface Ferramenta {
 }
 
 export interface Regra {
+  // A IDENTIDADE: e o que a composicao manda e o que o catalogo indexa.
   nome: string;
   cost_class: CostClass;
   resumo: string;
+  // Como a paleta chama o bloco e em que secao o poe. Vem do CATALOGO — um
+  // de-para aqui seria a segunda fonte de verdade, e um bloco novo entraria sem
+  // categoria ou com um rotulo velho.
+  rotulo: string;
+  categoria: string;
   parametros: Parametro[];
 }
 

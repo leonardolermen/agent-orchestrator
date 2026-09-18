@@ -239,6 +239,10 @@ def _regra_json(r: RegraDisponivel) -> RegraJSON:
         nome=r.nome,
         cost_class=r.cost_class.name,
         resumo=r.resumo,
+        # `or r.nome`: bloco sem rótulo aparece com o nome de identidade em vez
+        # de aparecer vazio. A tela nunca mostra um botão em branco.
+        rotulo=r.rotulo or r.nome,
+        categoria=r.categoria,
         parametros=[
             ParametroJSON(
                 nome=p.nome,

@@ -382,6 +382,8 @@ CATALOGO = Catalogo(
         # em silêncio — que é pior do que recusar dizendo o que falta.
         RegraDisponivel(
             nome="igualdade",
+            rotulo="Exact match",
+            categoria="MATCHING",
             cost_class=CostClass.REGRA,
             resumo="os campos escolhidos coincidem exatamente nos dois lados",
             parametros=(
@@ -405,6 +407,8 @@ CATALOGO = Catalogo(
         ),
         RegraDisponivel(
             nome="tolerancia",
+            rotulo="Tolerance",
+            categoria="MATCHING",
             cost_class=CostClass.REGRA,
             resumo="chave exata, com folga de valor e de dias corridos",
             parametros=(
@@ -424,6 +428,8 @@ CATALOGO = Catalogo(
         ),
         RegraDisponivel(
             nome="agrupamento",
+            rotulo="Grouping",
+            categoria="MATCHING",
             cost_class=CostClass.REGRA,
             resumo="um item de um lado cobrindo N do outro, pela soma",
             parametros=(
@@ -445,6 +451,8 @@ CATALOGO = Catalogo(
         ),
         RegraDisponivel(
             nome="tabela",
+            rotulo="Switch",
+            categoria="CONTROL",
             cost_class=CostClass.REGRA,
             resumo="o valor do campo escolhe o ramo",
             parametros=(
@@ -472,6 +480,8 @@ CATALOGO = Catalogo(
         # aconteceu — e os três mexem no pool de maneiras que não se confundem.
         RegraDisponivel(
             nome="filtro",
+            rotulo="Filter",
+            categoria="COMPUTE",
             cost_class=CostClass.REGRA,
             resumo="descarta do pool o item que passa no teste",
             parametros=(
@@ -482,6 +492,8 @@ CATALOGO = Catalogo(
         ),
         RegraDisponivel(
             nome="validacao",
+            rotulo="Validate",
+            categoria="COMPUTE",
             cost_class=CostClass.REGRA,
             resumo="quem falha o teste vira proposta para revisão humana",
             parametros=(
@@ -494,6 +506,8 @@ CATALOGO = Catalogo(
         ),
         RegraDisponivel(
             nome="condicao",
+            rotulo="Condition",
+            categoria="CONTROL",
             cost_class=CostClass.REGRA,
             resumo="quem passa no teste segue por outro ramo",
             parametros=(
@@ -510,6 +524,8 @@ CATALOGO = Catalogo(
         # -- conciliação: a implementação de referência (§1.3) --------------
         RegraDisponivel(
             nome="L1",
+            rotulo="Exact (L1)",
+            categoria="DOMAIN",
             cost_class=CostClass.REGRA,
             resumo="documento, valor e data coincidem exatamente",
             # `l1_exato()` e não `ExactMatcher()`: o L1 executado É a regra
@@ -521,6 +537,8 @@ CATALOGO = Catalogo(
         ),
         RegraDisponivel(
             nome="L2",
+            rotulo="Tolerance (L2)",
+            categoria="DOMAIN",
             cost_class=CostClass.REGRA,
             resumo="mesmo documento, com folga de valor e dias úteis",
             parametros=(
@@ -535,6 +553,8 @@ CATALOGO = Catalogo(
         ),
         RegraDisponivel(
             nome="L3",
+            rotulo="Grouping (L3)",
+            categoria="DOMAIN",
             cost_class=CostClass.REGRA,
             resumo="um lançamento bancário cobrindo N contábeis do mesmo fornecedor",
             parametros=(
@@ -547,6 +567,8 @@ CATALOGO = Catalogo(
         # -- compras --------------------------------------------------------
         RegraDisponivel(
             nome="preferido",
+            rotulo="Preferred supplier",
+            categoria="DOMAIN",
             cost_class=CostClass.REGRA,
             # Igual a `FornecedorPreferido.describe().summary`, verbatim — ver
             # `test_resumo_da_REGRA_bate_com_o_describe_do_resolver`. Achado
@@ -557,6 +579,8 @@ CATALOGO = Catalogo(
         ),
         RegraDisponivel(
             nome="anteriores",
+            rotulo="Past purchases",
+            categoria="DOMAIN",
             cost_class=CostClass.REGRA,
             # Igual a `ComprasAnteriores.describe().summary`, verbatim —
             # mesmo motivo da entrada acima.
@@ -566,6 +590,8 @@ CATALOGO = Catalogo(
         # -- o degrau HUMANO que FECHA a cascata. Ver o docstring de `Catalogo`.
         RegraDisponivel(
             nome="revisor",
+            rotulo="Approval",
+            categoria="HUMAN",
             cost_class=CostClass.HUMANO,
             # Igual a `RevisorHumano.describe().summary`, verbatim — ver
             # `test_resumo_da_REGRA_bate_com_o_describe_do_resolver`. Mesma

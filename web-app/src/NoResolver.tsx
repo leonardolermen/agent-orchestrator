@@ -35,6 +35,18 @@ export interface DadosAgente extends Record<string, unknown> {
 
 export type DadosDoNo = DadosRegra | DadosAgente;
 
+/** O que se LE no no. Diferente de `nomeDo`, que e IDENTIDADE.
+ *
+ *  A paleta chama o bloco de "Condition" e o no do canvas o chamava de
+ *  "condicao" — o mesmo bloco com dois nomes na mesma tela. Duas funcoes
+ *  separadas porque as duas perguntas sao diferentes: `usados` precisa saber se
+ *  este bloco JA ESTA no workflow (identidade), e o no precisa saber como
+ *  escreve-lo (rotulo). Uma funcao so, usada nos dois lugares, faria o
+ *  `usados` comparar rotulos e deixaria passar o mesmo bloco duas vezes. */
+export function rotuloDo(d: DadosDoNo): string {
+  return d.tipo === "regra" ? d.regra.rotulo || d.regra.nome : d.declaracao.name;
+}
+
 export function nomeDo(d: DadosDoNo): string {
   return d.tipo === "regra" ? d.regra.nome : d.declaracao.name;
 }
@@ -82,7 +94,7 @@ export function NoResolver({ data, selected }: NodeProps) {
       <div className="px-3 pt-2.5 pb-2">
         <div className="flex items-baseline gap-2">
           <span className="text-[13px] font-semibold text-tinta dark:text-noite-tinta">
-            {nomeDo(d)}
+            {rotuloDo(d)}
           </span>
           <span className={`ml-auto text-[10px] font-medium tracking-wider ${cor.texto}`}>
             {classe}

@@ -484,6 +484,11 @@ class RegraJSON(BaseModel):
     cost_class: str
     resumo: str
     parametros: list[ParametroJSON]
+    # Como a paleta chama o bloco e em que seção o põe. Vem do catálogo, não de
+    # uma tabela no front: um de-para lá seria a segunda fonte de verdade, e um
+    # bloco novo entraria sem categoria ou com um rótulo velho.
+    rotulo: str = ""
+    categoria: str = "OTHER"
 
 
 # ---------------------------------------------------------------------------

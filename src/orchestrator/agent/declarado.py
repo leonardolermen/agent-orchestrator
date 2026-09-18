@@ -322,6 +322,16 @@ class RegraDisponivel:
     (Tipos de regra genéricos — igualdade, tolerância, agrupamento, tabela,
     padrão, limiar — são o G3 do spec da plataforma geral. Quando existirem,
     entram aqui como mais entradas, sem mudar este contrato.)
+
+    **`rotulo` e `categoria` são para a PALETA, e moram aqui de propósito.** A
+    tela agrupa os blocos em seções e os chama por um nome curto em inglês; uma
+    tabela de-para no front seria a segunda fonte de verdade de sempre, e o
+    sintoma dela é conhecido — um bloco novo entraria na paleta sem categoria,
+    ou com um rótulo que envelheceu. Quem declara o bloco declara como ele
+    aparece.
+
+    `nome` continua sendo a IDENTIDADE — é o que a composição manda e o que o
+    catálogo indexa. `rotulo` é só o que se lê.
     """
 
     nome: str
@@ -334,6 +344,11 @@ class RegraDisponivel:
     # do parâmetro da fábrica.
     construir: Callable[[dict[str, ValorDeParametro]], Any]
     parametros: tuple[ParametroDeRegra, ...] = ()
+    # Como a paleta chama e onde o coloca. Vazio cai no `nome` e em "OTHER" —
+    # um bloco sem categoria aparece, e aparecer num balde chamado "outros" é
+    # sintoma visível, diferente de sumir da tela.
+    rotulo: str = ""
+    categoria: str = "OTHER"
 
     @property
     def obrigatorios(self) -> tuple[str, ...]:

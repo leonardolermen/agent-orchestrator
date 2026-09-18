@@ -10,6 +10,7 @@ import {
   type WorkflowConstruido,
 } from "./api";
 import { classeDo, nomeDo, type DadosAgente, type DadosDoNo } from "./NoResolver";
+import { Paleta } from "./Paleta";
 
 /** Um nó, do ponto de vista do painel. Estrutural, para não importar o React
  *  Flow aqui só por causa de um tipo. */
@@ -128,67 +129,16 @@ export function Painel(p: Props) {
 
   return (
     <aside className="overflow-y-auto border-l border-borda bg-white px-4 py-4 dark:border-noite-borda dark:bg-noite-painel">
-      {/* A PALETA, e a assimetria que a plataforma tem por dentro aparece aqui:
+      {/* A PALETA. A assimetria que a plataforma tem por dentro continua aqui:
           regra é código com parâmetros expostos — você escolhe QUAL entra;
-          agente é dado — você CRIA um. */}
-      <Secao
-        titulo="Regras"
-        ajuda={
-          p.catalogo?.regras.length
-            ? "Determinísticas e grátis. Rodam antes de qualquer modelo."
-            : undefined
-        }
-      >
-        {p.catalogo && p.catalogo.regras.length === 0 ? (
-          // A lacuna DECLARADA. Um catálogo sem regra é uma cascata que começa
-          // direto no modelo — caro por construção, e é exatamente onde há
-          // mais a ganhar promovendo trabalho para baixo.
-          <p className="rounded-md bg-lacuna-fundo px-2.5 py-2 text-[11px] leading-snug text-lacuna dark:bg-noite-lacuna-fundo dark:text-noite-crew">
-            O catálogo não declara regra nenhuma: 100% do trabalho passa pelo modelo.
-          </p>
-        ) : (
-          <ul className="grid gap-1.5">
-            {p.catalogo?.regras.map((r) => (
-              <li key={r.nome}>
-                <BotaoDePaleta
-                  nome={r.nome}
-                  resumo={r.resumo}
-                  classe={r.cost_class}
-                  usado={usados.has(r.nome)}
-                  onClick={() => p.onAcrescentarRegra(r)}
-                />
-              </li>
-            ))}
-          </ul>
-        )}
-      </Secao>
-
-      <Secao
-        titulo="Agentes"
-        ajuda="Um agente é DADO: prompt, vocabulário e ferramentas são campos. Crie um."
-      >
-        <ul className="mb-2 grid gap-1.5">
-          {p.catalogo?.agentes.map((a) => (
-            <li key={a.name}>
-              <BotaoDePaleta
-                nome={a.name}
-                resumo={`${a.tipos.join(", ")} · ${a.ferramentas.length} ferramenta(s)`}
-                classe="AGENTE"
-                usado={usados.has(a.name)}
-                onClick={() => p.onAcrescentarAgente(a)}
-              />
-            </li>
-          ))}
-        </ul>
-        <button
-          type="button"
-          disabled={!p.catalogo}
-          onClick={p.onNovoAgente}
-          className="w-full rounded-md border border-dashed border-borda px-2.5 py-2 text-[12px] text-neutral-500 transition hover:bg-neutral-50 disabled:opacity-40 dark:border-noite-borda dark:text-noite-fraca dark:hover:bg-noite-cartao"
-        >
-          + agente em branco
-        </button>
-      </Secao>
+          agente é dado — você CRIA um, e por isso "New agent" fica em AI. */}
+      <Paleta
+        catalogo={p.catalogo}
+        usados={usados}
+        onAcrescentarRegra={p.onAcrescentarRegra}
+        onAcrescentarAgente={p.onAcrescentarAgente}
+        onNovoAgente={p.onNovoAgente}
+      />
 
       {p.selecionado?.data.tipo === "regra" && (
         <Secao
@@ -405,51 +355,6 @@ export function Painel(p: Props) {
 
 // ---------------------------------------------------------------------------
 
-function BotaoDePaleta({
-  nome,
-  resumo,
-  classe,
-  usado,
-  onClick,
-}: {
-  nome: string;
-  resumo: string;
-  classe: keyof typeof CORES;
-  usado: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      disabled={usado}
-      onClick={onClick}
-      // O motivo de estar desabilitado fica no próprio botão:
-      // `construir_composicao` recusa bloco repetido porque o segundo rodaria
-      // sobre o pool que o primeiro esvaziou.
-      title={
-        usado
-          ? "já está no workflow; o segundo rodaria sobre o pool que o primeiro esvaziou"
-          : `acrescentar ${nome}`
-      }
-      className={[
-        "w-full rounded-md border border-borda border-l-[3px] px-2.5 py-1.5 text-left transition",
-        "dark:border-noite-borda",
-        CORES[classe].bordaEsq,
-        usado ? "cursor-not-allowed opacity-40" : "hover:bg-neutral-50 dark:hover:bg-noite-cartao",
-      ].join(" ")}
-    >
-      <span className="flex items-baseline gap-2">
-        <span className="text-[12.5px] font-medium">{nome}</span>
-        <span className={`ml-auto text-[9.5px] tracking-wider ${CORES[classe].texto}`}>
-          {classe}
-        </span>
-      </span>
-      <span className="mt-0.5 block text-[11px] leading-snug text-neutral-500 dark:text-noite-fraca">
-        {resumo}
-      </span>
-    </button>
-  );
-}
 
 /**
  * O editor do agente. É esta caixa que tira a tela de cardápio.
