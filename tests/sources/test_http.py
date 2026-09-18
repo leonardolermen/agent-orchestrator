@@ -205,42 +205,146 @@ def test_o_ref_tambem_e_recusado_para_url_com_segredo(monkeypatch):
     assert pedidos == []
 
 
-def _corpo_grande(tamanho):
-    """Um corpo maior que o teto, servido em pedaços pelo transporte falso."""
-    return lambda pedido: httpx.Response(200, content=b"x" * tamanho)
+SEGREDO_NA_QUERY = "SENHA-NA-QUERY-9F31"
+_URL_COM_QUERY = f"https://api.exemplo/x?api_key={SEGREDO_NA_QUERY}"
+
+
+def test_um_token_na_QUERY_nao_entra_no_ref(monkeypatch):
+    """A outra metade do buraco do userinfo, e a que NÃO pode ser fechada
+    recusando: `?since=2026-01-01` é comum e legítimo.
+
+    A url é executada normalmente — o parceiro recebe a query inteira, que é o
+    que faz a fonte funcionar —, mas o `ref` leva a url sem query mais o digest
+    dela. O `ref` volta no corpo da resposta e é persistido em
+    `data/runs/*.jsonl`: era de lá que o segredo saía.
+    """
+    fonte, pedidos = _fonte(monkeypatch, _lista([{"id": 1}]), url=_URL_COM_QUERY)
+    ref = fonte.ref
+    assert SEGREDO_NA_QUERY not in ref
+    assert "api_key" not in ref
+    assert ref.startswith("http:https://api.exemplo/x?")
+    # E a requisição SAIU com a query inteira: redigir o `ref` não pode virar
+    # mandar meia url para o parceiro.
+    assert str(pedidos[0].url) == _URL_COM_QUERY
+
+
+def test_querys_DIFERENTES_continuam_dando_refs_diferentes(monkeypatch):
+    """Redigir não pode custar a identidade: `?pagina=1` e `?pagina=2` são dois
+    conjuntos, e um `ref` que os confundisse casaria decisões de um com itens do
+    outro — a mesma falha do ETag fraco."""
+    a, _ = _fonte(monkeypatch, _lista([{"id": 1}]), url="https://api.exemplo/x?pagina=1")
+    b, _ = _fonte(monkeypatch, _lista([{"id": 1}]), url="https://api.exemplo/x?pagina=2")
+    c, _ = _fonte(monkeypatch, _lista([{"id": 1}]), url="https://api.exemplo/x?pagina=1")
+    sem, _ = _fonte(monkeypatch, _lista([{"id": 1}]), url="https://api.exemplo/x")
+    assert a.ref == c.ref
+    assert len({a.ref, b.ref, sem.ref}) == 3
+
+
+def test_um_token_na_QUERY_nao_entra_no_LOG_nem_na_mensagem_de_erro(monkeypatch, caplog):
+    """Duas portas, as duas fechadas: a mensagem que volta ao cliente e a linha
+    que fica no log do servidor, que é persistente."""
+
+    def falha(pedido):
+        raise httpx.ConnectError("boom")
+
+    fonte, _ = _fonte(monkeypatch, falha, url=_URL_COM_QUERY)
+    with caplog.at_level(logging.ERROR, logger="orchestrator.sources"):
+        with pytest.raises(FonteFalhou) as erro:
+            fonte.load()
+    assert SEGREDO_NA_QUERY not in str(erro.value)
+    assert all(SEGREDO_NA_QUERY not in r.getMessage() for r in caplog.records)
+    # E a url redigida CONTINUA no log: redigir não é apagar o rastro de quem
+    # opera o servidor.
+    assert any("https://api.exemplo/x" in r.getMessage() for r in caplog.records)
+
+
+def test_um_token_na_QUERY_nao_entra_na_recusa_por_STATUS(monkeypatch):
+    fonte, _ = _fonte(monkeypatch, lambda p: httpx.Response(404), url=_URL_COM_QUERY)
+    with pytest.raises(FonteFalhou) as erro:
+        fonte.load()
+    assert "404" in str(erro.value)
+    assert SEGREDO_NA_QUERY not in str(erro.value)
+
+
+@pytest.mark.parametrize("url", ["https://[::1/x", "https://[fe80::1/x"])
+def test_url_inanalisavel_levanta_ErroDeFonte_e_nao_ValueError_cru(monkeypatch, url):
+    """`urlsplit("https://[::1/x")` levanta `ValueError: Invalid IPv6 URL` — um
+    `ValueError` de fora de `sources/erros.py`. Pela borda ele virava 422 por
+    SORTE (`ErroDeFonte` é subclasse de `ValueError`); por qualquer outro
+    chamador rompia o contrato do `Source`. A mensagem não ecoa a url."""
+    fonte, pedidos = _fonte(monkeypatch, _lista([{"id": 1}]), url=url)
+    with pytest.raises(FonteFalhou, match="não é analisável"):
+        fonte.load()
+    with pytest.raises(FonteFalhou):
+        _ = fonte.ref
+    assert pedidos == []
+
+
+def _corpo_em_pedacos(pedaco=100, quantos=50):
+    """Um corpo grande que chega em MUITOS pedaços, contando quantos saíram.
+
+    O contador é o teste. Um corpo servido num pedaço só não distingue "parou no
+    teto" de "bufferizou tudo e conferiu depois" — as duas levantam —, e o
+    estrago do corpo grande é justamente ter cabido inteiro na memória. Com a
+    contagem, uma implementação que acumule tudo antes de conferir consome os
+    `quantos` pedaços e o teste falha.
+    """
+    saidos = []
+
+    def gerar():
+        for _ in range(quantos):
+            saidos.append(1)
+            yield b"x" * pedaco
+
+    def responder(pedido):
+        return httpx.Response(200, content=gerar())
+
+    return responder, saidos
+
+
+def _com_teto(fonte, max_bytes):
+    return HttpSource(
+        url=fonte.url, token_env=fonte.token_env, kind=fonte.kind, campo_id=fonte.campo_id,
+        max_bytes=max_bytes, transporte=fonte.transporte,
+    )
 
 
 def test_o_teto_de_BYTES_recusa_antes_de_ler_o_corpo_inteiro(monkeypatch):
-    fonte, _ = _fonte(monkeypatch, _corpo_grande(5000))
-    pequena = HttpSource(
-        url=fonte.url, token_env=fonte.token_env, kind=fonte.kind, campo_id=fonte.campo_id,
-        max_bytes=100, transporte=fonte.transporte,
-    )
+    """"Antes de ler o corpo inteiro" é a asserção, e ela precisa de números:
+    50 pedaços de 100 bytes com teto de 250 tem que parar por volta do terceiro,
+    não no quinquagésimo."""
+    responder, saidos = _corpo_em_pedacos(pedaco=100, quantos=50)
+    fonte, _ = _fonte(monkeypatch, responder)
     with pytest.raises(FonteFalhou, match="teto"):
-        pequena.load()
+        _com_teto(fonte, 250).load()
+    assert len(saidos) < 10, "o corpo inteiro foi lido antes de o teto falar"
 
 
 def test_o_teto_de_BYTES_protege_o_REF_tambem(monkeypatch):
     """O teto mora no `_buscar`, não no `load()` — é a razão escrita no
     `ArquivoSource._bytes()`: `ref` não passa por `load()`, e um teto conferido
     só lá deixaria `fonte.ref` baixar o corpo inteiro em silêncio."""
-    fonte, _ = _fonte(monkeypatch, _corpo_grande(5000))
-    pequena = HttpSource(
-        url=fonte.url, token_env=fonte.token_env, kind=fonte.kind, campo_id=fonte.campo_id,
-        max_bytes=100, transporte=fonte.transporte,
-    )
+    responder, saidos = _corpo_em_pedacos(pedaco=100, quantos=50)
+    fonte, _ = _fonte(monkeypatch, responder)
     with pytest.raises(FonteFalhou, match="teto"):
-        _ = pequena.ref
+        _ = _com_teto(fonte, 250).ref
+    assert len(saidos) < 10, "o corpo inteiro foi lido antes de o teto falar"
 
 
 def test_um_corpo_ABAIXO_do_teto_continua_passando(monkeypatch):
     """Guarda contra over-refusal: o teto não pode recusar o caso normal."""
     fonte, _ = _fonte(monkeypatch, _lista([{"id": 1}]))
-    pequena = HttpSource(
-        url=fonte.url, token_env=fonte.token_env, kind=fonte.kind, campo_id=fonte.campo_id,
-        max_bytes=1024, transporte=fonte.transporte,
-    )
-    assert [i.id for i in pequena.load().items] == ["1"]
+    assert [i.id for i in _com_teto(fonte, 1024).load().items] == ["1"]
+
+
+def test_um_corpo_em_muitos_pedacos_ABAIXO_do_teto_chega_INTEIRO(monkeypatch):
+    """A outra metade do streaming: parar no teto não pode virar parar cedo. O
+    corpo remontado tem que ser byte a byte o que o servidor mandou."""
+    responder, saidos = _corpo_em_pedacos(pedaco=100, quantos=50)
+    fonte, _ = _fonte(monkeypatch, responder)
+    with pytest.raises(FonteFalhou, match="não é JSON"):
+        _com_teto(fonte, 1_000_000).load()
+    assert len(saidos) == 50
 
 
 def test_sem_o_extra_a_falha_e_ALTA(monkeypatch):

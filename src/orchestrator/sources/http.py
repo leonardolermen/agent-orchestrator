@@ -1,8 +1,18 @@
 """Uma API HTTP como pool de trabalho — uma página, com token por nome.
 
-Fecha o R7 que o spec de agentes-rodando adiou: `ref` = `http:<url>@<sha256 do
-corpo>`, SEMPRE. Paginação e cursor ficam FORA (o `ref` de várias páginas é
-desenho próprio) e estão escritos como fora no spec.
+Fecha o R7 que o spec de agentes-rodando adiou: `ref` = `http:<url pública>@
+<sha256 do corpo>`, SEMPRE. Paginação e cursor ficam FORA (o `ref` de várias
+páginas é desenho próprio) e estão escritos como fora no spec.
+
+**A url pode carregar segredo; o que ela NÃO pode é levá-lo consigo.** Duas
+formas, e cada uma com o tratamento que merece: userinfo (`user:senha@`) é
+sempre credencial e é RECUSADO; a query (`?api_key=…`) às vezes é credencial e
+às vezes é `?since=2026-01-01`, então ela é REDIGIDA — o que entra no `ref`, no
+log e nas mensagens é a url sem query mais o digest dela (`_url_publica`). A
+promessa desta fatia é sobre o que a plataforma faz, não sobre o que a pessoa
+consegue digitar: **um segredo escrito na url não chega ao `ref`, ao run
+persistido, à resposta nem ao log** — e o que sobra de fora está dito no
+docstring de `_url_publica` (um segredo em segmento de CAMINHO não é coberto).
 
 **O ETag NÃO entra no `ref`, e isto contraria a linha do spec que o mandava
 entrar.** O ETag é escolhido pelo servidor do parceiro e não tem relação
@@ -40,7 +50,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 from orchestrator.kernel.work import WorkItem, WorkSet
 from orchestrator.sources.erros import ErroDeFonte, ExtraAusente, FonteFalhou, VariavelAusente
@@ -67,19 +77,71 @@ def _ip_perigoso(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     return mapeado is not None and _ip_perigoso(mapeado)
 
 
+def _partes(url: str) -> Any:
+    """`urlsplit`, com o `ValueError` dele dentro da hierarquia desta camada.
+
+    `urlsplit("https://[::1/x")` levanta `ValueError("Invalid IPv6 URL")` — um
+    `ValueError` PURO, de fora de `sources/erros.py`. Pela borda ele virava 422
+    por sorte (`ErroDeFonte` é subclasse de `ValueError`, e `_ler` captura os
+    dois); por qualquer outro chamador da biblioteca ele rompia o contrato do
+    `Source`, que promete erro desta hierarquia. A mensagem não ecoa a url: ela
+    pode carregar segredo, e aqui ainda não sabemos o que há dentro.
+    """
+    try:
+        return urlsplit(url)
+    except ValueError as erro:
+        raise FonteFalhou(f"a url não é analisável: {type(erro).__name__}") from erro
+
+
+def _url_publica(url: str) -> str:
+    """A url sem o que pode ser segredo — a forma que PODE viajar.
+
+    **O que sai: a query e o fragmento.** A query é o outro lugar onde uma API
+    pede credencial (`?api_key=…`, `?token=…`), e o campo `url` da tela é texto
+    livre: quem tem uma API assim vai escrever exatamente isso. Recusar a query
+    inteira seria caro e errado — `?since=2026-01-01` é comum e legítimo —,
+    então em vez de proibir que o segredo seja ESCRITO, esta função impede que
+    ele VIAJE: o que entra no `ref`, no log e nas mensagens é a url sem query,
+    mais o digest dela. Duas urls que diferem só na query continuam com `ref`
+    diferentes, que é a propriedade que a query estava ali para dar. O fragmento
+    nem chega ao servidor, então some sem custo.
+
+    O userinfo também é removido, e não por defesa em profundidade: esta função
+    é chamada DENTRO do `_guarda_url`, para a mensagem da primeira recusa, antes
+    de a guarda de userinfo ter rodado.
+
+    O caminho continua inteiro. Um segredo em path (`/v1/<token>/itens`) não é
+    coberto — dito aqui em voz alta em vez de fingido: não há como distinguir um
+    segmento de caminho secreto de um id, e apagar o caminho apagaria a
+    identidade do recurso, que é a razão de a url entrar no `ref`.
+    """
+    partes = _partes(url)
+    try:
+        porta = partes.port
+    except ValueError:
+        porta = None
+    autoridade = (partes.hostname or "") + (f":{porta}" if porta else "")
+    base = urlunsplit((partes.scheme, autoridade, partes.path, "", ""))
+    if not partes.query:
+        return base
+    return f"{base}?{hashlib.sha256(partes.query.encode('utf-8')).hexdigest()[:12]}"
+
+
 def _guarda_url(url: str) -> None:
-    partes = urlsplit(url)
+    partes = _partes(url)
     if partes.scheme not in ("http", "https") or not partes.hostname:
-        raise FonteFalhou(f"a url precisa ser http(s) com host: {url!r}")
+        raise FonteFalhou(f"a url precisa ser http(s) com host: {_url_publica(url)!r}")
     if partes.username or partes.password:
         # `https://usuario:senha@host/x` FUNCIONA como autenticação — httpx
         # transforma o userinfo em `Authorization: Basic …` —, e é por isso que
         # alguém com uma API de Basic Auth escreveria exatamente isto no campo
-        # `url` da tela. Só que a url inteira vai para o `ref`, e o `ref` volta
-        # no corpo da resposta e é persistido em `data/runs/*.jsonl`: a senha
-        # viajaria por todos os lugares que esta fatia existe para manter
-        # limpos. Recusar, e não limpar: uma url "saneada" ainda seria a url que
-        # a pessoa acha que está usando, e o `ref` deixaria de nomear o pedido.
+        # `url` da tela.
+        #
+        # RECUSAR aqui, e não só redigir como se faz com a query, porque as duas
+        # não são o mesmo caso: uma query legítima é comum (`?since=…`) e recusá-la
+        # custaria caro, enquanto userinfo numa url de fonte é sempre uma credencial
+        # — não existe `user:senha@` inocente. Recusar diz à pessoa que existe
+        # `token_env`; redigir em silêncio a deixaria achando que autenticou.
         #
         # A mensagem NÃO ecoa a url — ela contém o segredo que estamos recusando.
         raise FonteFalhou(
@@ -178,9 +240,11 @@ class HttpSource:
                 # chegaria tarde demais para servir de teto.
                 with cliente.stream("GET", self.url, headers=cabecalhos) as resposta:
                     if not 200 <= resposta.status_code < 300:
-                        # Só status e URL. O corpo pode ecoar o token; a
-                        # mensagem, nunca — e aqui ele nem chega a ser lido.
-                        raise FonteFalhou(f"GET {self.url} devolveu {resposta.status_code}")
+                        # Só status e a url PÚBLICA. O corpo pode ecoar o token;
+                        # a mensagem, nunca — e aqui ele nem chega a ser lido.
+                        raise FonteFalhou(
+                            f"GET {_url_publica(self.url)} devolveu {resposta.status_code}"
+                        )
                     corpo = _ler_com_teto(resposta, self.max_bytes)
         except ErroDeFonte:
             # As recusas desta fonte já estão escritas para o cliente. Sem esta
@@ -188,17 +252,27 @@ class HttpSource:
             # "requisição falhou: FonteFalhou", perdendo o motivo.
             raise
         except Exception as erro:
-            # A url já passou por `_guarda_url`, que recusa userinfo: não há
-            # segredo nela para o log carregar.
-            _log.error("fonte http:%s — requisição falhou: %s", self.url, erro)
+            # A url PÚBLICA, nunca `self.url`: o userinfo é recusado pela guarda,
+            # mas a query não é — ela pode ser `?api_key=…`, e o log do servidor
+            # é persistente.
+            #
+            # `erro` vai INTEIRO, e é a mesma regra do gêmeo de Postgres, que
+            # manda o DSN com senha para cá: o log é o lugar DESIGNADO para o
+            # texto do driver, e reduzi-lo aqui seria perder a única cópia que
+            # quem opera tem. O que esta linha promete é não ACRESCENTAR segredo
+            # nosso ao que o driver já disser.
+            _log.error("fonte http:%s — requisição falhou: %s", _url_publica(self.url), erro)
             raise FonteFalhou(f"requisição falhou: {type(erro).__name__}") from erro
         object.__setattr__(self, "_corpo", corpo)
         return corpo
 
     @property
     def ref(self) -> str:
-        # SEMPRE o hash do corpo — ver o cabeçalho do módulo sobre o ETag.
-        return f"http:{self.url}@{hashlib.sha256(self._buscar()).hexdigest()}"
+        # A url PÚBLICA (query redigida a digest — ver `_url_publica`) e SEMPRE
+        # o hash do corpo — ver o cabeçalho do módulo sobre o ETag. Este `ref`
+        # volta no corpo da resposta e é persistido em `data/runs/*.jsonl`: é a
+        # razão de a redação morar aqui e não numa camada acima.
+        return f"http:{_url_publica(self.url)}@{hashlib.sha256(self._buscar()).hexdigest()}"
 
     def load(self) -> WorkSet:
         import json
