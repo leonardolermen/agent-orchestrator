@@ -69,31 +69,72 @@ def _guarda_select(query: str) -> str:
     return sem_final
 
 
-def _com_tipo(valor: Any) -> dict[str, str]:
-    """A forma canônica de um valor que o JSON não conhece — COM o tipo junto.
+def _canonico(valor: Any) -> list:
+    """A forma canônica de um valor, TIPO junto, recursivamente.
 
-    `default=str` (o que estava aqui) colapsava conteúdos diferentes no mesmo
-    digest: `Decimal("1")` e a string `"1"` viravam ambos `"1"`, e
-    `date(2026, 9, 20)` e `"2026-09-20"` viravam ambos `"2026-09-20"`. Duas
-    tabelas genuinamente diferentes — `numeric` numa e `text` na outra — davam o
-    MESMO `ref`, que é a falha do achado 4 do outro lado do espelho: dois pools
-    distintos compartilhando o `dataset` de `data/fila/**`, e uma decisão humana
-    tomada sobre um deles casada com os itens do outro.
+    **A propriedade, dita inteira: dois valores diferentes nunca produzem a
+    mesma forma canônica.** É ela que o `ref` precisa; sem ela, duas tabelas
+    diferentes dividem o `dataset` de `data/fila/**` e uma decisão humana tomada
+    sobre uma é casada com os itens da outra — a falha do ETag fraco na fonte
+    HTTP, deste lado do espelho.
 
-    O tipo vai numa CHAVE prefixada por `\\x00`, e o `\\x00` é o que torna a
-    marca inforjável: nenhum nome de coluna do Postgres pode conter um byte
-    nulo (o protocolo usa strings C) e o `jsonb` recusa `\\u0000` dentro de
-    strings, então nenhum dado que venha do banco produz esta forma por
-    acidente. Sem o prefixo, uma coluna `jsonb` com um objeto `{"Decimal": "1"}`
-    dentro colidiria com a marca de um `Decimal("1")`.
+    Duas tentativas anteriores, e por que as duas falharam:
 
-    O que ele NÃO resolve, dito em voz alta: um tipo cujo texto não é estável
-    (um objeto sem `__str__` próprio, cujo texto embute o endereço de memória)
-    produz um `ref` instável. Nenhum tipo que `psycopg` devolve é assim, e a
-    alternativa — recusar o que não sabemos serializar — trocaria um `ref`
-    errado por uma fonte que não roda.
+    1. `json.dumps(..., default=str)` colapsava `Decimal("1")` com a string
+       `"1"`, e `date(2026, 9, 20)` com `"2026-09-20"`.
+    2. marcar só o valor NÃO-nativo, com uma chave prefixada por `\\x00`.
+       Fechava o `jsonb` (que recusa `\\u0000` dentro de strings) e **não**
+       fechava o tipo `json`, que guarda o texto verbatim: o loader do psycopg
+       roda `json.loads`, o escape vira um `\\x00` de verdade, e uma coluna
+       `json` com `{"\\u0000Decimal": "1"}` dentro forjava a marca de um
+       `Decimal("1")`. Fechava por PROBABILIDADE, que é exatamente o que eu
+       tinha dito que não queria. E deixava de fora, de qualquer forma, os tipos
+       nativos entre si: `default=` nunca é chamado para eles, então uma `tuple`
+       (um composto `ROW(1,2)`) e uma `list` (um `int[]`) caíam no mesmo texto.
+
+    O que fecha de verdade é não deixar dado NENHUM aparecer sem marca. Aqui
+    **todo** valor vira `[<nome do tipo>, <conteúdo já canônico>]`, inclusive
+    `str`, `int`, `list` e `dict`. Um objeto vindo de uma coluna `json` é emitido
+    como `["dict", …]` e não tem como se passar por uma marca, porque marca não é
+    uma forma que dado possa ter: é a POSIÇÃO no par, e a posição é nossa. A
+    recursão é o que estende isso a qualquer profundidade.
+
+    Detalhes que não são detalhe:
+
+    - `dict` é ordenado por `(tipo da chave, texto da chave)`, não por `<`: duas
+      chaves de tipos diferentes não são comparáveis em Python 3, e o digest não
+      pode depender da ordem de iteração.
+    - `bytes`/`bytearray`/`memoryview` viram hex, e não `str(...)`: o texto de um
+      `memoryview` embute o ENDEREÇO de memória, e isso seria um `ref` que muda
+      entre duas leituras idênticas.
+    - o resto dos não-nativos usa `str(valor)`. **O limite que sobra**, dito em
+      voz alta: dois valores DO MESMO tipo cujo `str()` coincide ainda colapsam,
+      e um tipo cujo texto embute endereço dá `ref` instável. Nenhum tipo que
+      `psycopg` devolve é assim; a alternativa — recusar o que não sabemos
+      serializar — trocaria um `ref` errado por uma fonte que não roda.
     """
-    return {f"\x00{type(valor).__name__}": str(valor)}
+    tipo = type(valor).__name__
+    if isinstance(valor, dict):
+        return [
+            tipo,
+            [
+                [_canonico(chave), _canonico(v)]
+                for chave, v in sorted(
+                    valor.items(), key=lambda par: (type(par[0]).__name__, str(par[0]))
+                )
+            ],
+        ]
+    if isinstance(valor, (list, tuple, set, frozenset)):
+        itens = [_canonico(v) for v in valor]
+        # Um conjunto não tem ordem; a lista e a tupla têm, e ela é conteúdo.
+        if isinstance(valor, (set, frozenset)):
+            itens = sorted(itens, key=json.dumps)
+        return [tipo, itens]
+    if isinstance(valor, (bytes, bytearray, memoryview)):
+        return [tipo, bytes(valor).hex()]
+    if valor is None or isinstance(valor, (str, bool, int, float)):
+        return [tipo, valor]
+    return [tipo, str(valor)]
 
 
 def _conectar_padrao(dsn: str) -> Any:
@@ -160,11 +201,24 @@ class PostgresSource:
         try:
             cursor = conexao.cursor()
             cursor.execute(query)
-            # `fetchmany(teto + 1)` e não `fetchall()`: o `fetchall` é
-            # bufferizado no CLIENTE, então uma tabela de 50 M de linhas vira
-            # 50 M de dicts na memória do servidor ANTES de o teto ter chance
-            # de falar. O `+ 1` é o que permite distinguir "encheu" de
-            # "estourou" sem trazer a linha 50-milionésima.
+            # `fetchmany(teto + 1)` e não `fetchall()`, e é importante ser
+            # honesto sobre o QUE isto limita.
+            #
+            # O que ele limita: quantos dicts Python são construídos. Com
+            # `fetchall()` uma tabela de 50 M de linhas viram 50 M de dicts —
+            # o custo mais caro do caminho, e o `+ 1` é o mínimo para distinguir
+            # "encheu" de "estourou" sem materializar a linha seguinte.
+            #
+            # **O que ele NÃO limita, dito em voz alta: a transferência.** O
+            # cursor padrão do psycopg3 é do lado do CLIENTE, então quando
+            # `execute()` retorna o resultado INTEIRO já veio pela rede e está
+            # no buffer da libpq. Contra uma tabela de 40 GB, o que segura o
+            # processo hoje é o `statement_timeout` de `_conectar_padrao` — não
+            # este teto. O conserto de verdade é um cursor NOMEADO (server-side,
+            # `conexao.cursor(name=…)`), que traz por lotes; ele não entrou aqui
+            # porque `psycopg` não está instalado neste venv e uma mudança não
+            # testável no caminho de conexão, no fim da branch, é um trade pior
+            # do que um limite conhecido e escrito.
             brutas = cursor.fetchmany(self.max_linhas + 1)
         except Exception as erro:
             _log.error("fonte pg:%s — consulta falhou: %s", self.dsn_env, erro)
@@ -203,12 +257,14 @@ class PostgresSource:
         # de depender da ordem de chegada. A ordem do POOL não é tocada —
         # `load()` continua entregando as linhas como vieram.
         #
-        # `default=_com_tipo` e não `default=str`: ver o docstring de lá. Em uma
-        # frase, `Decimal("1")` e `"1"` são conteúdos diferentes e precisam de
-        # `ref` diferentes.
+        # `_canonico` e não `json.dumps(linha, default=…)`: ver o docstring de
+        # lá. Em uma frase, `Decimal("1")` e `"1"` são conteúdos diferentes e
+        # precisam de `ref` diferentes, e nenhum valor que uma linha possa
+        # carregar pode imitar a marca de outro. `sort_keys` não é mais preciso:
+        # `_canonico` já ordena as chaves de todo dicionário, em qualquer
+        # profundidade.
         serializadas = sorted(
-            json.dumps(linha, sort_keys=True, default=_com_tipo, ensure_ascii=False)
-            for linha in linhas
+            json.dumps(_canonico(linha), ensure_ascii=False) for linha in linhas
         )
         d = hashlib.sha256("\n".join(serializadas).encode("utf-8")).hexdigest()
         return f"pg:{self.dsn_env}/{q}@{d}"

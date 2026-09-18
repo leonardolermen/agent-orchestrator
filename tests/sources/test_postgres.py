@@ -208,16 +208,74 @@ def test_mas_o_MESMO_valor_nao_nativo_continua_dando_o_MESMO_ref(monkeypatch):
     assert a.ref != c.ref
 
 
-def test_uma_coluna_jsonb_nao_consegue_FORJAR_a_marca_de_tipo(monkeypatch):
-    """A marca de tipo é uma chave prefixada por `\\x00`. Sem o prefixo, um
-    objeto `{"Decimal": "1"}` dentro de uma coluna `jsonb` seria indistinguível
-    de um `Decimal("1")` de verdade — conteúdo diferente, `ref` igual, que é o
-    defeito que este conserto existe para fechar."""
+@pytest.mark.parametrize(
+    "forjado",
+    [
+        {"Decimal": "1"},
+        # A forja que REALMENTE funcionava. O tipo `json` (ao contrário do
+        # `jsonb`) guarda o texto verbatim e aceita o escape de byte nulo; o
+        # loader do psycopg roda `json.loads`, e o escape vira um byte nulo de
+        # verdade dentro da chave. A marca prefixada por byte nulo fechava o
+        # `jsonb` e não fechava este — `chr(0)` aqui é exatamente o que uma
+        # coluna `json` entrega.
+        {chr(0) + "Decimal": "1"},
+    ],
+    ids=["sem-prefixo", "com-o-prefixo-vindo-de-uma-coluna-json"],
+)
+def test_uma_coluna_json_nao_consegue_FORJAR_a_marca_de_tipo(monkeypatch, forjado):
+    """Marca não pode ser uma FORMA que o dado consiga ter.
+
+    Enquanto a marca era uma chave especial, bastava o dado conter aquela chave
+    — e o tipo `json` deixa. A propriedade só vale porque hoje TODO valor é
+    marcado: o objeto de uma coluna `json` sai como `["dict", …]` e a marca é a
+    posição no par, que é nossa, não uma chave que alguém possa escrever.
+    """
     from decimal import Decimal
 
     de_verdade, _ = _fonte(monkeypatch, [{"id": 1, "v": Decimal("1")}])
-    forjado, _ = _fonte(monkeypatch, [{"id": 1, "v": {"Decimal": "1"}}])
-    assert de_verdade.ref != forjado.ref
+    imitacao, _ = _fonte(monkeypatch, [{"id": 1, "v": forjado}])
+    assert de_verdade.ref != imitacao.ref
+
+
+def test_tipos_NATIVOS_diferentes_tambem_nao_colapsam(monkeypatch):
+    """O outro lado da mesma falha: `default=` nunca é chamado para tipo nativo,
+    então nenhuma marca chegava a eles. Um composto `ROW(1,2)` vira `tuple` e um
+    `int[]` vira `list`; `1` e `1.0` são `integer` e `double precision`; `"1"` e
+    `1` são `text` e `integer`. Todos davam o mesmo texto JSON."""
+    lista, _ = _fonte(monkeypatch, [{"id": 1, "v": [1, 2]}])
+    tupla, _ = _fonte(monkeypatch, [{"id": 1, "v": (1, 2)}])
+    inteiro, _ = _fonte(monkeypatch, [{"id": 1, "v": 1}])
+    flutuante, _ = _fonte(monkeypatch, [{"id": 1, "v": 1.0}])
+    booleano, _ = _fonte(monkeypatch, [{"id": 1, "v": True}])
+    texto, _ = _fonte(monkeypatch, [{"id": 1, "v": "1"}])
+    assert len({lista.ref, tupla.ref, inteiro.ref, flutuante.ref, booleano.ref, texto.ref}) == 6
+
+
+def test_a_marca_sobrevive_a_PROFUNDIDADE(monkeypatch):
+    """A recursão é o que estende a propriedade a um `json` aninhado — sem ela,
+    a marca valeria no primeiro nível e o colapso voltaria no segundo."""
+    from decimal import Decimal
+
+    fundo_decimal, _ = _fonte(monkeypatch, [{"id": 1, "v": {"a": {"b": [Decimal("1")]}}}])
+    fundo_texto, _ = _fonte(monkeypatch, [{"id": 1, "v": {"a": {"b": ["1"]}}}])
+    assert fundo_decimal.ref != fundo_texto.ref
+
+
+def test_bytea_nao_traz_ENDERECO_de_memoria_para_o_ref(monkeypatch):
+    """`str(memoryview(b"ab"))` é `<memory at 0x…>`: o endereço mudaria o `ref`
+    entre duas leituras idênticas. Bytes viram hex, que é conteúdo."""
+    a, _ = _fonte(monkeypatch, [{"id": 1, "v": memoryview(b"ab")}])
+    b, _ = _fonte(monkeypatch, [{"id": 1, "v": memoryview(b"ab")}])
+    c, _ = _fonte(monkeypatch, [{"id": 1, "v": memoryview(b"ac")}])
+    assert a.ref == b.ref and a.ref != c.ref
+    assert "0x" not in a.ref.split("@")[1]
+
+
+def test_chaves_de_TIPOS_diferentes_no_mesmo_dicionario_nao_quebram_o_ref(monkeypatch):
+    """Guarda contra um `sorted` ingênuo: `1 < "a"` levanta `TypeError` em
+    Python 3, e o digest não pode depender da ordem de iteração do dict."""
+    fonte, _ = _fonte(monkeypatch, [{"id": 1, "v": {1: "a", "1": "b", None: "c"}}])
+    assert fonte.ref.startswith("pg:ERP_DSN/")
 
 
 def test_o_ref_muda_quando_a_QUERY_muda(monkeypatch):
@@ -350,6 +408,56 @@ def test_um_resultado_EXATAMENTE_no_teto_passa(monkeypatch):
     """Guarda contra over-refusal, e contra um erro de um a mais no `+ 1`."""
     fonte, _ = _com_teto(monkeypatch, [{"id": i} for i in range(5)])
     assert len(fonte.load().items) == 5
+
+
+def _psycopg_falso(monkeypatch):
+    """Um `psycopg` de mentira em `sys.modules`, para que `_conectar_padrao` — o
+    ÚNICO caminho que fala com o driver de verdade — possa ser exercitado sem
+    driver e sem socket. É a mesma técnica de
+    `test_sem_o_extra_a_falha_e_ALTA_e_nomeia_o_extra`, com um módulo no lugar
+    de `None`. Devolve o dicionário com o que `connect` recebeu.
+    """
+    import sys
+    import types
+
+    capturado: dict = {}
+    psycopg = types.ModuleType("psycopg")
+    rows = types.ModuleType("psycopg.rows")
+    rows.dict_row = object()
+    psycopg.rows = rows
+
+    def connect(dsn, **kwargs):
+        capturado["dsn"] = dsn
+        capturado.update(kwargs)
+        return object()
+
+    psycopg.connect = connect
+    monkeypatch.setitem(sys.modules, "psycopg", psycopg)
+    monkeypatch.setitem(sys.modules, "psycopg.rows", rows)
+    return capturado
+
+
+def test_a_conexao_de_verdade_leva_o_relogio_de_CONEXAO(monkeypatch):
+    """Sem `connect_timeout`, um banco que não responde prende a requisição
+    (e uma conexão do parceiro) por quanto o SO quiser."""
+    from orchestrator.sources import postgres as mod
+
+    capturado = _psycopg_falso(monkeypatch)
+    mod._conectar_padrao("postgresql://u:s@h/db")
+    assert capturado["connect_timeout"] == mod.CONEXAO_TIMEOUT_S
+
+
+def test_a_conexao_de_verdade_leva_o_relogio_do_SERVIDOR(monkeypatch):
+    """`statement_timeout` é o único dos dois que interrompe um `pg_sleep(60)`
+    que já começou — quem o cancela é o Postgres. `_guarda_select` deixa
+    `SELECT pg_sleep(60)` passar, e a query vem de um campo de texto na tela."""
+    from orchestrator.sources import postgres as mod
+
+    capturado = _psycopg_falso(monkeypatch)
+    mod._conectar_padrao("postgresql://u:s@h/db")
+    assert capturado["options"] == f"-c statement_timeout={mod.STATEMENT_TIMEOUT_MS}"
+    # E o DSN continua chegando inteiro: o relógio não pode ter comido nada.
+    assert capturado["dsn"] == "postgresql://u:s@h/db"
 
 
 def test_sem_o_extra_a_falha_e_ALTA_e_nomeia_o_extra(monkeypatch):
