@@ -23,7 +23,7 @@ RAIZ = Path(__file__).resolve().parents[2] / "src" / "orchestrator"
 _BORDA = frozenset(
     {
         "kernel", "runtime", "storage", "observability", "agent", "human",
-        "crew", "evaluation", "domains", "authoring", "sources",
+        "crew", "evaluation", "domains", "authoring", "sources", "regras",
     }
 )
 
@@ -37,10 +37,17 @@ PERMITIDO: dict[str, frozenset[str]] = {
     "crew": frozenset({"kernel", "agent"}),
     "evaluation": frozenset({"kernel", "storage", "observability"}),
     "sources": frozenset({"kernel"}),
+    # Regras determinísticas SEM domínio: casam por nome de campo, não por tipo.
+    # Só `kernel`, igual a `sources` — se ela precisasse de `domains`, seria o
+    # defeito que ela existe para corrigir.
+    "regras": frozenset({"kernel"}),
     "domains": frozenset(
-        {"kernel", "runtime", "agent", "human", "crew", "evaluation", "storage"}
+        {"kernel", "runtime", "agent", "human", "crew", "evaluation", "storage",
+         "regras"}
     ),
-    "authoring": frozenset({"kernel", "runtime", "domains", "agent", "human"}),
+    "authoring": frozenset(
+        {"kernel", "runtime", "domains", "agent", "human", "regras"}
+    ),
     # Bordas: podem importar tudo. São elas que compõem o produto final.
     "api": _BORDA,
     "cli": _BORDA,

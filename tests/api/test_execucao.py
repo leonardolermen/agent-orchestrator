@@ -705,13 +705,21 @@ def test_o_run_de_um_CSV_e_PERSISTIDO_com_o_ref_do_arquivo(tmp_path, monkeypatch
 def test_payload_de_dict_contra_resolver_TIPADO_e_422_e_nao_500(tmp_path, monkeypatch):
     """A combinação que estourava.
 
-    `ArquivoSource` entrega dicionário; `ExactMatcher` lê `be.document`. Com
+    `ArquivoSource` entrega dicionário; um resolver TIPADO lê `be.document`. Com
     `kind="banco"` o CSV cai direto no `banco()` da conciliação e o resultado
     era um 500 de `AttributeError`, vindo de três camadas abaixo de quem
     escolheu as duas pontas.
 
     A recusa nomeia o RESOLVER e o KIND, porque é a combinação que está errada
     e não nenhuma das duas escolhas sozinha.
+
+    **Quem é nomeado mudou, e a mudança é o ganho.** Era o `L1`, e hoje é o
+    `L2`: o L1 virou `regras.Igualdade` configurada com nomes de campo, então
+    ele não exige tipo nenhum e passa a rodar sobre o dicionário do CSV. Quem
+    ainda recusa é o L2, que continua tipado porque conta dias úteis. A
+    asserção abaixo cobra as duas metades — o L2 recusando E o L1 não
+    aparecendo —, porque só a primeira deixaria passar uma regressão que
+    retipasse o L1.
     """
     import orchestrator.api.app as api_app
 
@@ -728,7 +736,8 @@ def test_payload_de_dict_contra_resolver_TIPADO_e_422_e_nao_500(tmp_path, monkey
 
     assert r.status_code == 422, r.text
     detalhe = r.json()["detail"]
-    assert "L1" in detalhe
+    assert "L2" in detalhe
+    assert "L1" not in detalhe
     assert "banco" in detalhe
     assert "BankEntry" in detalhe
     assert "dict" in detalhe

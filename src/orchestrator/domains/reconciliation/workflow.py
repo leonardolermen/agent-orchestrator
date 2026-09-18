@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from orchestrator.domains.reconciliation.models import (
+    BANCO,
+    CONTABIL,
     BankEntry,
     Divergence,
     LedgerEntry,
@@ -26,7 +28,6 @@ from orchestrator.domains.reconciliation.models import (
     pool,
 )
 from orchestrator.domains.reconciliation.politica import POLITICA_ATUAL, contexto
-from orchestrator.domains.reconciliation.resolvers.exact import ExactMatcher
 from orchestrator.domains.reconciliation.resolvers.grouping import GroupingMatcher
 from orchestrator.domains.reconciliation.resolvers.tolerance import ToleranceMatcher
 from orchestrator.kernel.cost import Cost, CostClass
@@ -36,6 +37,7 @@ from orchestrator.kernel.policy import ExecutionPolicy, PolicyContext
 from orchestrator.kernel.resolution import Proposal, Resolution
 from orchestrator.kernel.resolver import Resolver
 from orchestrator.kernel.run import Run
+from orchestrator.regras import Igualdade
 from orchestrator.runtime.engine import execute
 
 if TYPE_CHECKING:
@@ -66,9 +68,45 @@ class ReconcileResult:
     run: "Run | None" = None
 
 
+def l1_exato() -> Resolver:
+    """O L1, montado com a regra GENÉRICA de igualdade.
+
+    Era `ExactMatcher`, uma classe própria que lia `be.document` e
+    `le.net_amount` porque conhecia os dois tipos. Não havia nada de conciliação
+    na lógica dela — indexar um lado pela chave, varrer o outro, primeiro livre
+    ganha —, só nos nomes dos campos. Agora os nomes vêm daqui, que é o lugar
+    que sabe como os dois lados chamam as coisas, e a lógica vem de `regras/`.
+
+    `modulo=("amount",)` é a única sutileza, e ela é de DADO e não de regra: o
+    banco registra saída como negativa e o contábil registra o mesmo valor como
+    positivo, então os dois coincidem em magnitude. Era um `abs()` escondido no
+    meio da chave do `ExactMatcher` — e era também a razão de ele não poder ser
+    genérico.
+
+    O nome continua `"L1"`: `matches_by_layer` entra no golden de 12 sementes, e
+    o relatório da CLI é lido por gente que aprendeu a chamar assim.
+    """
+    return Igualdade(
+        esquerda=BANCO,
+        direita=CONTABIL,
+        campos=("document", "amount=net_amount", "date=cash_date"),
+        modulo=("amount",),
+        name="L1",
+        resumo="documento, valor e data coincidem exatamente",
+    )
+
+
 def default_resolvers() -> list[Resolver]:
-    """As três regras, da mais barata para a mais cara dentro da classe."""
-    return [ExactMatcher(), ToleranceMatcher(), GroupingMatcher()]
+    """As três regras, da mais barata para a mais cara dentro da classe.
+
+    Só o L1 é genérico hoje, e a assimetria é informação, não pendência
+    esquecida. O L2 mede prazo em DIAS ÚTEIS do calendário bancário brasileiro
+    e o L3 trata "crédito é recebimento" como verdade sobre o sinal do valor:
+    nenhum dos dois é configuração de campo, os dois são conhecimento sobre o
+    negócio. `regras/tolerancia.py` generaliza a FORMA do L2 (chave exata mais
+    folga) sem conseguir substituí-lo, e o docstring de lá diz por quê.
+    """
+    return [l1_exato(), ToleranceMatcher(), GroupingMatcher()]
 
 
 def default_definition(
