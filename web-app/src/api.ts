@@ -74,14 +74,39 @@ export interface LinhaDeRun {
   microcents: number;
 }
 
-export interface Run {
+// O que só existe quando a fonte carrega gabarito. Espelha `MedidoJSON`.
+export interface Medido {
   seed: number;
   n: number;
   bank_total: number;
   deterministic_rate: number;
-  by_resolver: LinhaDeRun[];
-  gap: { items: number; rate: number };
 }
+
+// Espelha `RunJSON`. Os quatro últimos campos (estado, propostas_por_tipo,
+// falhas, teto_atingido) existem para que "não achei nada", "parei no teto" e
+// "a API falhou" deixem de ser respostas byte a byte idênticas — a tela que os
+// ignorasse recolapsaria os três estados que a Task 4 separou.
+export interface Run {
+  input_ref: string;
+  itens: number;
+  resolvidos: number;
+  por_resolver: LinhaDeRun[];
+  gap: { items: number; rate: number };
+  custo_microcents: number;
+  estado: string;
+  propostas_por_tipo: Record<string, number>;
+  falhas: number;
+  teto_atingido: boolean;
+  // `null` quando a fonte não tem gabarito. A tela DIZ isso — não desenha uma
+  // barra vazia nem um zero.
+  contra_gabarito: Medido | null;
+}
+
+// A fonte de um pedido de execução. Espelha `FonteSintetica`/`FonteArquivo`
+// em `schemas.py` — união discriminada por `tipo`, como `BlocoPedido`.
+export type FontePedido =
+  | { tipo: "sintetica"; seed: number; n: number; taxa_divergencia: number }
+  | { tipo: "arquivo"; caminho: string; kind: string; campo_id: string };
 
 export interface Receita {
   id: string;
@@ -186,15 +211,14 @@ export const api = {
       body: JSON.stringify(corpo),
     }),
 
-  rodar: (workflowId: string, ambiente: Pick<Ambiente, "seed" | "n" | "taxa_divergencia">) =>
+  // `tetoMicrocents` é `null` quando a pessoa não digitou nada — NUNCA um
+  // default inventado no cliente. Para workflow pago o servidor recusa com
+  // 422 dizendo por quê; é essa mensagem que a tela mostra, não uma própria.
+  rodar: (workflowId: string, fonte: FontePedido, tetoMicrocents: number | null) =>
     pedir<Run>(`/api/workflows/${encodeURIComponent(workflowId)}/runs`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        seed: ambiente.seed,
-        n: ambiente.n,
-        taxa_divergencia: ambiente.taxa_divergencia,
-      }),
+      body: JSON.stringify({ fonte, teto_microcents: tetoMicrocents }),
     }),
 
   // Os workflows JÁ SALVOS. É o que a vista de execução navega, e é o que a

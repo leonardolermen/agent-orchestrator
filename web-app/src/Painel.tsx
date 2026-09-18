@@ -324,18 +324,24 @@ export function Painel(p: Props) {
       {p.run && (
         <Secao
           titulo="Execução"
-          ajuda={`benchmark sintético, semente ${p.run.seed}, ${p.run.n} lançamentos.`}
+          ajuda={
+            p.run.contra_gabarito
+              ? `benchmark sintético, semente ${p.run.contra_gabarito.seed}, ${p.run.contra_gabarito.n} lançamentos.`
+              : "sem gabarito: não há com o que comparar."
+          }
         >
-          <p className="mb-2 flex items-baseline gap-2">
-            <strong className="text-2xl font-semibold text-regra dark:text-noite-regra">
-              {(100 * p.run.deterministic_rate).toFixed(1)}%
-            </strong>
-            <span className="text-[11px] text-neutral-500 dark:text-noite-fraca">
-              resolvido sem gastar nada
-            </span>
-          </p>
+          {p.run.contra_gabarito && (
+            <p className="mb-2 flex items-baseline gap-2">
+              <strong className="text-2xl font-semibold text-regra dark:text-noite-regra">
+                {(100 * p.run.contra_gabarito.deterministic_rate).toFixed(1)}%
+              </strong>
+              <span className="text-[11px] text-neutral-500 dark:text-noite-fraca">
+                resolvido sem gastar nada
+              </span>
+            </p>
+          )}
           <ul className="mb-2">
-            {p.run.by_resolver.map((l) => (
+            {p.run.por_resolver.map((l) => (
               <li
                 key={l.name}
                 className="flex items-baseline gap-2 border-b border-neutral-100 py-1 text-[11.5px] dark:border-noite-borda"

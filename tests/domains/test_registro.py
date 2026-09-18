@@ -269,3 +269,102 @@ def test_resumo_da_REGRA_bate_com_o_describe_do_resolver():
         else:
             resolver = r.construir({})
         assert resolver.describe().summary == r.resumo, r.nome
+
+
+# ---------------------------------------------------------------------------
+# O que cada bloco do catálogo EXIGE do `WorkItem.payload`.
+#
+# Tabela escrita à mão DE PROPÓSITO, e é o ponto do teste abaixo. A borda de
+# execução (`api/app.py::_conferir_payload`) só é tão boa quanto as declarações
+# atrás dela: um bloco que lê `be.document` e esquece de declarar não é
+# recusado — ele devolve `200` com `rate: 0.0` e lacuna de 100% sobre dados que
+# ninguém leu, que é a violação de "AUSENTE, não zero" pela porta dos fundos.
+#
+# Um bloco NOVO que não apareça aqui derruba o teste. Isso é deliberado: quem
+# acrescentar um bloco precisa DECIDIR se ele lê campos tipados, em vez de
+# herdar o default vazio sem pensar.
+# ---------------------------------------------------------------------------
+
+_SEM_EXIGENCIA: dict[str, type] = {}
+
+
+def _exigencias_esperadas() -> dict[str, dict[str, type]]:
+    from orchestrator.domains.procurement.workflow import PAYLOADS as COMPRAS
+    from orchestrator.models import PAYLOADS as CONCILIACAO
+
+    return {
+        # -- conciliação: leem `banco()`/`contabil()`, que devolvem tipado ----
+        "L1": CONCILIACAO,
+        "L2": CONCILIACAO,
+        "L3": CONCILIACAO,
+        # `revisor` chama `divergencias(work)`, que lê `e.date`/`e.amount`.
+        "revisor": CONCILIACAO,
+        # -- compras: leem `r.payload.item` e `f.payload.preferido` -----------
+        "preferido": COMPRAS,
+        "anteriores": COMPRAS,
+        # -- agentes declarados: montam o prompt a partir dos CAMPOS do item, e
+        # `agent/declarado.py::_campos` aceita dataclass OU dict. Exigir tipo
+        # aqui quebraria o caminho principal desta fatia — um CSV do usuário
+        # com um agente do catálogo por cima.
+        "investigador": _SEM_EXIGENCIA,
+        "triador": _SEM_EXIGENCIA,
+        "buscador": _SEM_EXIGENCIA,
+    }
+
+
+def _construir(bloco):
+    """O resolver de verdade, montado como quem compõe monta."""
+    from orchestrator.agent.declarado import ClienteDeValidacao
+    from orchestrator.review.fila import Fila
+    from orchestrator.review.revisor import RevisorHumano
+
+    if isinstance(bloco, AgenteDeclarado):
+        return construir_agente(bloco, ClienteDeValidacao(), CATALOGO.ferramentas)
+    if bloco.cost_class is CostClass.HUMANO:
+        # `revisor` não constrói por `bloco.construir` — ver
+        # `_revisor_precisa_da_fila`. A fila de verdade não muda `describe()`.
+        return RevisorHumano(fila=Fila.vazia())
+    return bloco.construir({p.nome: p.default for p in bloco.parametros})
+
+
+def _blocos():
+    return [(r.nome, r) for r in CATALOGO.regras] + [(a.name, a) for a in CATALOGO.agentes]
+
+
+def test_TODO_bloco_do_catalogo_declara_o_payload_que_exige():
+    """A tabela acima contra o `describe()` de cada bloco, construído.
+
+    Apagar `payloads=PAYLOADS` de um resolver derruba esta linha. Sem ela, a
+    remoção deixava a suíte inteira verde e o workflow de compras sobre um CSV
+    passava a devolver 200 com taxa zero.
+    """
+    esperado = _exigencias_esperadas()
+
+    for nome, bloco in _blocos():
+        assert nome in esperado, (
+            f"bloco {nome!r} não está na tabela de exigências de payload. "
+            f"Decida: ele lê CAMPOS do payload (declare `payloads=` no "
+            f"`describe()` e registre aqui) ou trata o payload como mapa "
+            f"(registre `_SEM_EXIGENCIA`)? Herdar o default vazio sem decidir "
+            f"é como o 500 de `kind=banco` chegou até a borda."
+        )
+        assert _construir(bloco).describe().payloads == esperado[nome], nome
+
+
+def test_a_tabela_de_exigencias_nao_tem_bloco_FANTASMA():
+    """O outro lado: um nome que saiu do catálogo e ficou na tabela faria a
+    tabela parecer completa enquanto protege um bloco que não existe mais."""
+    assert set(_exigencias_esperadas()) == {nome for nome, _ in _blocos()}
+
+
+def test_quem_exige_tipo_exige_o_TIPO_certo_e_nao_so_um_kind_qualquer():
+    """A tabela compara dicionários inteiros, então um mapeamento trocado
+    (`banco -> LedgerEntry`) também morre. Esta asserção explicita isso, porque
+    é a metade da declaração que um leitor distraído ignoraria."""
+    from orchestrator.models import BANCO, CONTABIL, BankEntry, LedgerEntry
+
+    (_, l1) = next(b for b in _blocos() if b[0] == "L1")
+    payloads = _construir(l1).describe().payloads
+
+    assert payloads[BANCO] is BankEntry
+    assert payloads[CONTABIL] is LedgerEntry

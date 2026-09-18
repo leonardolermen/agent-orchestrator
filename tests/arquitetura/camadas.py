@@ -23,7 +23,7 @@ RAIZ = Path(__file__).resolve().parents[2] / "src" / "orchestrator"
 _BORDA = frozenset(
     {
         "kernel", "runtime", "storage", "observability", "agent", "human",
-        "crew", "evaluation", "domains", "authoring",
+        "crew", "evaluation", "domains", "authoring", "sources",
     }
 )
 
@@ -36,6 +36,7 @@ PERMITIDO: dict[str, frozenset[str]] = {
     "human": frozenset({"kernel", "storage"}),
     "crew": frozenset({"kernel", "agent"}),
     "evaluation": frozenset({"kernel", "storage", "observability"}),
+    "sources": frozenset({"kernel"}),
     "domains": frozenset(
         {"kernel", "runtime", "agent", "human", "crew", "evaluation", "storage"}
     ),

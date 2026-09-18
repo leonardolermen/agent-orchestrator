@@ -219,7 +219,13 @@ def construir_agente(
     esse recorte, acrescentar uma ferramenta ao catálogo mudaria o custo e o
     comportamento de todo agente composto sobre ele, sem ninguém pedir.
     """
-    registro = ferramentas or ToolRegistry([])
+    # `is None`, não `or`, e aqui a diferença é a que o parágrafo abaixo já
+    # descreve custando caro: um registro LIGADO a dados mas sem ferramenta
+    # nenhuma, se algum dia `ToolRegistry` ganhar `__len__`, seria trocado por
+    # um registro NÃO LIGADO — e como `call` nunca levanta, toda ferramenta
+    # voltaria como erro, o laço continuaria e a conta cresceria. Mesma
+    # disciplina de `grill.receita.construir`.
+    registro = ToolRegistry([]) if ferramentas is None else ferramentas
     desconhecidas = sorted(set(decl.ferramentas) - set(registro.names()))
     if desconhecidas:
         raise ValueError(

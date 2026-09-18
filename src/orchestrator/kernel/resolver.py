@@ -48,6 +48,28 @@ class ResolverDescription:
     name: str
     cost_class: CostClass
     summary: str
+    # O que este resolver EXIGE do `WorkItem.payload`, por `kind`. Vazio — o
+    # default — significa "não inspeciono o payload": um resolver que só move
+    # ids, ou que trata o payload como mapa de campos, roda sobre qualquer
+    # fonte.
+    #
+    # **Existe porque `payload: Any` é uma promessa que o kernel não pode
+    # cumprir sozinho.** `ExactMatcher` lê `be.document`; `ArquivoSource`
+    # entrega `dict`. Sem declaração, essa combinação atravessa a borda inteira
+    # e estoura como `AttributeError: 'dict' object has no attribute
+    # 'document'` a três camadas de distância de quem a escolheu — um erro de
+    # servidor sobre uma escolha do cliente.
+    #
+    # DECLARADO e não inferido, pela mesma razão que `Stage.produz`: quem
+    # compõe precisa da recusa ANTES de executar, e uma propriedade que só
+    # existe depois de rodar não previne nada. E declarado no RESOLVER e não
+    # numa lista de nomes na borda, porque uma lista apodrece no dia em que
+    # alguém escreve o próximo resolver tipado.
+    #
+    # O kernel não usa este campo para nada — ele continua sem inspecionar
+    # payload. Quem lê é a borda que junta uma FONTE a um WORKFLOW, e hoje há
+    # uma só: `api/app.py`.
+    payloads: dict[str, type] = field(default_factory=dict)
 
 
 class Resolver(Protocol):

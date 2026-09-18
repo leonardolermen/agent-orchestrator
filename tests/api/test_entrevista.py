@@ -182,21 +182,23 @@ def test_orcamento_estourado_FALHA_com_a_transcricao(com_entrevistador):
 # -- as recusas antes de gastar --------------------------------------------
 
 
-def test_SEM_CHAVE_o_chat_recusa_antes_de_qualquer_chamada():
+def test_SEM_CHAVE_o_chat_recusa_antes_de_qualquer_chamada(monkeypatch):
     """Guarda 3: sem `ANTHROPIC_API_KEY`, fecha com motivo legível em vez de
     deixar o SDK levantar no meio do laço e a transcrição se perder.
 
-    Sem fixture: este é o caminho REAL, com o entrevistador de produção.
-    """
-    import os
+    Sem fixture de entrevistador: este é o caminho REAL, com o entrevistador de
+    produção.
 
-    chave = os.environ.pop("ANTHROPIC_API_KEY", None)
-    try:
-        with cliente.websocket_connect("/api/entrevista") as ws:
-            msg = ws.receive_json()
-    finally:
-        if chave:
-            os.environ["ANTHROPIC_API_KEY"] = chave
+    Substitui `api/app.py::_tem_chave` em vez de mexer em `os.environ` — e é a
+    prova de que a leitura é UMA. Este módulo lia a variável por conta própria;
+    agora ele chama a mesma função que `/runs` e `/api/ambiente`, e patchá-la
+    num lugar só muda os três. Também evita um teste que mutila o ambiente do
+    processo e o restaura no `finally`, o que vaza se algo levantar no meio.
+    """
+    monkeypatch.setattr(app_mod, "_tem_chave", lambda: False)
+
+    with cliente.websocket_connect("/api/entrevista") as ws:
+        msg = ws.receive_json()
 
     assert msg["tipo"] == "indisponivel"
     assert "ANTHROPIC_API_KEY" in msg["motivo"]
@@ -249,8 +251,84 @@ def test_o_ambiente_traz_os_limites_que_a_execucao_APLICA():
     dados = cliente.get("/api/ambiente").json()
 
     assert cliente.post(
-        "/api/workflows/conciliacao/runs", json={"seed": dados["seed"], "n": dados["n"]}
+        "/api/workflows/conciliacao/runs",
+        json={"fonte": {"tipo": "sintetica", "seed": dados["seed"], "n": dados["n"]}},
     ).status_code == 200
     assert cliente.post(
-        "/api/workflows/conciliacao/runs", json={"seed": 1, "n": dados["n_max"] + 1}
+        "/api/workflows/conciliacao/runs",
+        json={"fonte": {"tipo": "sintetica", "seed": 1, "n": dados["n_max"] + 1}},
     ).status_code == 422
+
+
+# -- a thread que morre sem falar -------------------------------------------
+
+
+def test_uma_thread_que_morre_por_BaseException_NAO_PENDURA_a_conexao(
+    monkeypatch, tmp_path
+):
+    """O pior desfecho possivel nao e um erro: e o silencio.
+
+    `rodar()` captura `Exception`. Qualquer coisa que escape disso —
+    `KeyboardInterrupt`, `SystemExit`, ou a tranca de rede da suite, que e
+    `BaseException` de proposito — matava a thread sem por nada em `perguntas`,
+    e `perguntas.get` bloqueava PARA SEMPRE.
+
+    Num servidor de verdade isso e uma conexao pendurada que nunca responde nem
+    fecha. Em CI e um job que queima o timeout inteiro e nao diz nada: medido
+    como `PYTEST_EXIT=124`, saida vazia. Um teste que falha diz onde olhar; um
+    job que trava nao diz nada, e por isso este defeito e pior que o erro que o
+    causou.
+
+    A correcao NAO e alargar a captura para `BaseException` — isso engoliria
+    justamente o que precisa subir, que e o ponto inteiro da tranca de rede. E
+    um `finally` que acorda quem espera: uma thread que nao pode mais falar tem
+    de dizer isso antes de calar.
+
+    O `timeout` deste teste e parte da assercao: sem a correcao ele nao falha,
+    ele PENDURA, e um teste que pendura e exatamente o sintoma sob analise.
+    """
+    import orchestrator.api.entrevista as entrevista_mod
+
+    monkeypatch.setattr(app_mod, "_RAIZ_RECEITAS", tmp_path)
+
+    class _MorteQueEscapaDoExcept(BaseException):
+        """Nao deriva de `Exception`, como `RedeProibida` nao deriva."""
+
+    class _Suicida:
+        client = FakeLLMClient([])
+
+        def entrevistar(self, workflow_id, descricao, responder):
+            raise _MorteQueEscapaDoExcept("a thread morreu sem dizer nada")
+
+    async def rota(ws):
+        await entrevista_mod.conduzir(ws, fabrica_entrevistador=lambda: _Suicida())
+
+    for r in app.routes:
+        if getattr(r, "path", None) == "/api/entrevista":
+            monkeypatch.setattr(r, "app", _wrap(rota))
+
+    with cliente.websocket_connect("/api/entrevista") as ws:
+        ws.send_json({"workflow_id": "do-chat", "descricao": "conciliar"})
+        msg = ws.receive_json()
+
+    # "defeito" e nao "falhou": `falhou` e o entrevistador dizendo que nao deu,
+    # e isto e o servidor dizendo que quebrou. A tela mostra os dois diferente.
+    assert msg["tipo"] == "defeito"
+    assert "interrompida" in msg["motivo"]
+
+
+def test_a_thread_que_termina_NORMALMENTE_nao_muda_de_desfecho(com_entrevistador):
+    """O outro lado do `finally`: a sentinela e posta SEMPRE, inclusive quando
+    ha veredito.
+
+    A fila e FIFO, entao o veredito chega primeiro e o consumidor retorna antes
+    de ve-la. Se a ordem estivesse trocada, TODA entrevista bem-sucedida viraria
+    "defeito" — e este teste e quem pega isso.
+    """
+    com_entrevistador([_propor([{"nome": "L1"}])])
+
+    with cliente.websocket_connect("/api/entrevista") as ws:
+        ws.send_json({"workflow_id": "do-chat", "descricao": "conciliar"})
+        msg = ws.receive_json()
+
+    assert msg["tipo"] == "proposta"

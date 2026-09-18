@@ -213,9 +213,11 @@ def test_a_receita_composta_APARECE_na_listagem_de_workflows():
     assert "composta" in ids
 
 
-def test_cascata_com_AGENTE_e_marcada_como_nao_executavel_pela_API():
-    """A regra que governa o módulo HTTP: nenhum endpoint gasta dinheiro. A
-    tela desabilita o botão em vez de deixar o usuário colher um 409.
+def test_cascata_com_AGENTE_so_e_executavel_onde_HA_CHAVE(monkeypatch):
+    """A regra do módulo HTTP ficou mais precisa: executar pela web GASTA
+    quando a cascata tem agente, com teto, e o teto é dito antes. A tela
+    continua desabilitando o botão em vez de deixar o usuário colher um 409 —
+    mas agora só quando o servidor de fato não conseguiria rodar.
 
     "investigador", não "agente": o catálogo plano (Task 3) nomeia o bloco
     AGENTE da conciliação pelo `Resolver.name` que ele sempre teve — o
@@ -224,9 +226,13 @@ def test_cascata_com_AGENTE_e_marcada_como_nao_executavel_pela_API():
     """
     cliente.post("/api/receitas", json=_corpo([{"nome": "investigador"}], wid="cara"))
 
-    w = next(x for x in cliente.get("/api/workflows").json() if x["id"] == "cara")
+    def _cara():
+        return next(x for x in cliente.get("/api/workflows").json() if x["id"] == "cara")
 
-    assert w["executavel"] is False
+    monkeypatch.setattr(app_mod, "_tem_chave", lambda: False)
+    assert _cara()["executavel"] is False
+    monkeypatch.setattr(app_mod, "_tem_chave", lambda: True)
+    assert _cara()["executavel"] is True
 
 
 # -- a página ---------------------------------------------------------------
@@ -380,25 +386,131 @@ def test_cascata_GRATIS_composta_pela_tela_RODA_de_verdade():
     """O fluxo inteiro: compor, gravar, executar — sem sair da web."""
     cliente.post("/api/receitas", json=_corpo([{"nome": "L1"}], wid="so-regra"))
 
-    r = cliente.post("/api/workflows/so-regra/runs", json={"seed": 1, "n": 120})
+    r = cliente.post(
+        "/api/workflows/so-regra/runs",
+        json={"fonte": {"tipo": "sintetica", "seed": 1, "n": 120}},
+    )
 
     assert r.status_code == 200, r.text
-    assert r.json()["deterministic_rate"] > 0
+    # A fonte é a sintética, que CARREGA gabarito — então a medição contra
+    # verdade existe. Numa fonte de arquivo este bloco seria `null`, e é essa
+    # diferença que o campo separado passou a expressar.
+    assert r.json()["contra_gabarito"]["deterministic_rate"] > 0
     # A LACUNA sempre aparece, mesmo quando é zero: é invariante do §1.5, e
     # esconder a linha faria o leitor não saber se foi medida.
     assert "items" in r.json()["gap"]
 
 
-def test_cascata_PAGA_composta_pela_tela_e_recusada_pelo_SERVIDOR():
+def test_cascata_PAGA_composta_pela_tela_e_recusada_SEM_CHAVE(monkeypatch):
     """A tela desabilita o botão, mas quem garante é o servidor. Testado
     forçando o POST — que é exatamente o que fiz no navegador.
 
+    O que a recusa DIZ mudou junto com o motivo dela: não é mais "isto nunca
+    roda por aqui", é "falta uma chave neste servidor", e o texto nomeia a
+    variável e as duas saídas. Uma recusa que não diz o que fazer manda a
+    pessoa adivinhar.
+
+    `_tem_chave` é substituído em vez de lido do ambiente: caso contrário este
+    teste passaria ou falharia conforme a máquina que o roda.
+
     "investigador", não "agente" — ver o comentário em
-    `test_cascata_com_AGENTE_e_marcada_como_nao_executavel_pela_API`.
+    `test_cascata_com_AGENTE_so_e_executavel_onde_HA_CHAVE`.
     """
+    monkeypatch.setattr(app_mod, "_tem_chave", lambda: False)
     cliente.post("/api/receitas", json=_corpo([{"nome": "investigador"}], wid="com-agente"))
 
-    r = cliente.post("/api/workflows/com-agente/runs", json={"seed": 1, "n": 60})
+    r = cliente.post(
+        "/api/workflows/com-agente/runs",
+        # COM teto: ele e exigencia do PEDIDO e e conferida antes, entao um
+        # pedido sem ele levaria 422 e este teste nao veria o 409.
+        json={"fonte": {"tipo": "sintetica", "seed": 1, "n": 60},
+              "teto_microcents": 1_000_000},
+    )
 
     assert r.status_code == 409
     assert "etapa paga" in r.json()["detail"]
+    assert "ANTHROPIC_API_KEY" in r.json()["detail"]
+
+
+# -- a tela de execução: `estado`, `teto_atingido`, `falhas`, sem gabarito --
+#
+# `teto_atingido: true` e `falhas > 0` só saem de uma execução que GASTA de
+# verdade — o gate do navegador (Task 5, §4) não pode produzi-los sem chave,
+# sob pena de queimar dinheiro do dono da máquina. A prova de que a tela os
+# RENDERIZA é sobre o bundle, no mesmo padrão que
+# `test_a_pagina_DIZ_que_as_SETAS_nao_sao_do_autor` já usa acima: não há
+# runner de componente neste repo (`web-app/package.json` não tem
+# vitest/jest), e não é desta fatia instalar um.
+
+
+def _bundle():
+    from pathlib import Path
+
+    import orchestrator.api.app as mod
+
+    bundles = list((Path(mod.__file__).parents[3] / "web" / "assets").glob("*.js"))
+    assert bundles, "o app não foi buildado (npm --prefix web-app run build)"
+    return "\n".join(b.read_text(encoding="utf-8") for b in bundles)
+
+
+def test_a_tela_de_execucao_renderiza_teto_atingido_e_falhas():
+    """Os dois campos que a Task 4 acrescentou para não recolapsar 'não achei
+    nada', 'parei no teto' e 'a API falhou' num único desfecho. Se o bundle
+    não citar `teto_atingido`/`falhas`, a tela nunca leu esses campos da
+    resposta — e os três desfechos voltam a ser indistinguíveis na tela,
+    mesmo a API já dizendo a diferença."""
+    fonte = _bundle()
+
+    assert "teto_atingido" in fonte
+    assert "falhas" in fonte
+    # O texto que aparece perto do custo quando o teto parou o trabalho —
+    # não pode ficar indistinguível de um `concluido` vazio.
+    assert "teto desta execução atingido" in fonte
+    assert "falharam" in fonte
+
+
+def test_a_tela_de_execucao_trata_estado_NAO_CONCLUIDO_como_nao_terminado():
+    """`limite_de_custo` (e os outros estados que não são `concluido`) saem com
+    a MESMA proeminência de um run que não terminou — nunca um `concluido`
+    com nota de rodapé. A tela lê o string cru do enum do servidor; não
+    inventa estados no cliente.
+
+    O marcador `run-nao-terminou` é o que torna este teste capaz de pegar a
+    tela DECORANDO em vez de DESENHANDO: `limite_de_custo` e "parou no teto"
+    moram em `textoDoEstado`, uma função só chamada de DENTRO do ramo
+    `{naoConcluido && (...)}` em `Execucao.tsx` — então se esse ramo virasse
+    morto (por exemplo `naoConcluido` sendo trocado por um `false` fixo), a
+    função inteira, com os dois literais, seria eliminada do bundle pelo
+    tree-shaking, e checar só os literais não pegaria a regressão. O atributo
+    `data-nao-concluido="run-nao-terminou"` nasce no MESMO ramo, então ele
+    desaparece exatamente quando o ramo desaparece — é o marcador que só
+    sobrevive ao build quando o caminho de renderização está de fato vivo.
+    """
+    fonte = _bundle()
+
+    assert 'run-nao-terminou' in fonte
+    assert "limite_de_custo" in fonte
+    assert "parou no teto" in fonte
+    # O estado bruto continua acessível: um valor que a tela não conhece cai
+    # no texto cru do próprio `estado`, nunca num default silencioso tipo
+    # "ok".
+    assert "run.estado" in fonte or "estado" in fonte
+
+
+def test_a_tela_de_execucao_diz_SEM_GABARITO_em_vez_de_desenhar_zero():
+    """A frase exata do §1 da task: fonte sem gabarito não vira barra vazia
+    nem `0%` — vira texto dizendo por quê."""
+    fonte = _bundle()
+
+    assert "sem gabarito: não há com o que comparar" in fonte
+
+
+def test_a_tela_de_execucao_pede_o_teto_ANTES_do_botao_de_rodar():
+    """'Gasta com teto, e o teto é dito antes' — a guarda do próprio servidor
+    (`api/app.py::_executar`). A tela não inventa um default: manda `null`
+    quando o campo está vazio e deixa o 422 do servidor falar."""
+    fonte = _bundle()
+
+    assert "teto_microcents" in fonte
+    # A rotulagem que evita a tela sugerir um teto agregado que não existe.
+    assert "teto desta execução" in fonte

@@ -110,21 +110,30 @@ def test_ler_a_fila_nao_chama_o_modelo(monkeypatch):
 def test_execucao_so_serve_classes_que_nao_gastam():
     corpo = cliente.post(
         "/api/workflows/conciliacao/runs",
-        json={"seed": 1, "n": 30, "taxa_divergencia": 0.15},
+        json={"fonte": {"tipo": "sintetica", "seed": 1, "n": 30, "taxa_divergencia": 0.15}},
     ).json()
 
-    assert all(r["cost_class"] != "AGENTE" for r in corpo["by_resolver"])
-    assert "revisor" in [r["name"] for r in corpo["by_resolver"]]
+    assert all(r["cost_class"] != "AGENTE" for r in corpo["por_resolver"])
+    assert "revisor" in [r["name"] for r in corpo["por_resolver"]]
 
 
 def test_a_soma_das_taxas_mais_a_lacuna_continua_um():
+    """E ela agora VERIFICA o que antes assumia.
+
+    A soma valia por uma suposição — "todo match carrega exatamente um id
+    bancário" — que o tipo não garantia. Agora as duas pontas são itens: a
+    lacuna é CONTADA (`run.unresolved`) e cada taxa é AFIRMADA pelo resolver
+    (`Resolution.item_ids`). Dois resolvers citando o mesmo item fazem a soma
+    passar de 1.0, e é isso que este teste passa a pegar.
+    """
     corpo = cliente.post(
         "/api/workflows/conciliacao/runs",
-        json={"seed": 1, "n": 300, "taxa_divergencia": 0.15},
+        json={"fonte": {"tipo": "sintetica", "seed": 1, "n": 300, "taxa_divergencia": 0.15}},
     ).json()
 
-    soma = sum(r["rate"] for r in corpo["by_resolver"]) + corpo["gap"]["rate"]
+    soma = sum(r["rate"] for r in corpo["por_resolver"]) + corpo["gap"]["rate"]
     assert abs(soma - 1.0) < 1e-9
+    assert corpo["gap"]["items"] > 0
 
 
 def test_aceitar_acao_malformada_da_422():
@@ -170,14 +179,19 @@ def test_decisao_aceitar_atualiza_a_execucao_apos_invalidar_cache():
     Na semente 1/n=30/taxa=0.15 sobram exatamente duas divergências sem
     resolução determinística: `d-b-b00003` e `d-l-l00003` (o mesmo par —
     verificado rodando `reconcile` direto sobre o benchmark). Antes de
-    qualquer decisão a lacuna do canvas tem 1 item bancário aberto. Aceitar a
+    qualquer decisão a lacuna do canvas tem os DOIS itens abertos. Aceitar a
     proposta que concilia os dois deve fechar essa lacuna na PRÓXIMA leitura
     do endpoint de execução — o que só acontece se o POST limpar o cache.
+
+    Eram `1` antes desta fatia, e o `2` não é regressão: a lacuna passou a
+    contar ITENS DO POOL, os dois lados, em vez de só o lado bancário. É o
+    mesmo par de lançamentos, contado na unidade que vale para uma fonte que
+    não tem "lado bancário" nenhum.
     """
-    corpo_execucao = {"seed": 1, "n": 30, "taxa_divergencia": 0.15}
+    corpo_execucao = {"fonte": {"tipo": "sintetica", "seed": 1, "n": 30, "taxa_divergencia": 0.15}}
 
     antes = cliente.post("/api/workflows/conciliacao/runs", json=corpo_execucao).json()
-    assert antes["gap"]["items"] == 1
+    assert antes["gap"]["items"] == 2
 
     _grava_proposta("d-b-b00003", acao_sugerida="conciliar_com(l00003)")
 
@@ -190,7 +204,7 @@ def test_decisao_aceitar_atualiza_a_execucao_apos_invalidar_cache():
 
     depois = cliente.post("/api/workflows/conciliacao/runs", json=corpo_execucao).json()
     assert depois["gap"]["items"] == 0
-    revisor = next(r2 for r2 in depois["by_resolver"] if r2["name"] == "revisor")
+    revisor = next(r2 for r2 in depois["por_resolver"] if r2["name"] == "revisor")
     assert revisor["matches"] == 1
 
 
@@ -329,3 +343,73 @@ def test_resposta_da_decisao_aceita_reflete_veredito_e_lancamentos_por_lado():
     assert por_lado["banco"]["contraparte"] == banco.counterparty
     assert por_lado["contabil"]["descricao"] == contabil.account
     assert por_lado["contabil"]["contraparte"] == contabil.supplier
+
+
+def test_uma_fila_JA_EM_DISCO_continua_sendo_encontrada():
+    """A compatibilidade que importa, no nível do HTTP.
+
+    A chave de `data/fila/**` deixou de sair de `dataset_id(seed, n, taxa)` e
+    passou a sair do `ref` da fonte — uma fonte de arquivo não tem os três. Se
+    as duas chaves divergissem, nada erraria: a fila simplesmente ficaria
+    INVISÍVEL, e toda decisão humana já tomada sumiria da tela sem uma linha
+    de log.
+
+    O arquivo aqui é escrito pela chave ANTIGA, calculada por `dataset_id` sem
+    passar por código novo nenhum. Quem o encontra é a rota, pela chave nova.
+    """
+    import orchestrator.api.app as modulo
+
+    caminho = caminho_da_fila("conciliacao", dataset_id(1, 30, 0.15), raiz=modulo._RAIZ_FILA)
+    assert not caminho.exists()
+    _grava_proposta("d-b-b00003")
+    assert caminho.exists(), "a proposta precisa estar na chave ANTIGA para o teste valer"
+
+    corpo = cliente.get("/api/fila/conciliacao", params=PARAMS).json()
+
+    assert [i["divergence_id"] for i in corpo["itens"]] == ["d-b-b00003"]
+    assert corpo["dataset"] == dataset_id(1, 30, 0.15)
+
+
+@pytest.mark.parametrize(
+    "taxa",
+    [
+        0.15,
+        # `repr(1e-05)` é `'1e-05'`: notação científica. A chave da fila passa
+        # por `dataset_id`, que interpola esse `repr`, e um ramo de
+        # compatibilidade que tentasse reconhecer "a forma que `dataset_id`
+        # produz" não casaria — a fila em disco some e a rota devolve 200 com
+        # lista vazia. Foi o que aconteceu, e é por isso que este valor está
+        # aqui em vez de num comentário.
+        0.00001,
+        1e-10,
+    ],
+)
+def test_uma_fila_EM_DISCO_e_encontrada_mesmo_com_taxa_em_notacao_cientifica(taxa):
+    """A compatibilidade da chave, no nível do HTTP, sobre o valor que quebrou.
+
+    O `.jsonl` é escrito pela chave que `dataset_id` produz, sem passar por
+    código novo nenhum. Quem o encontra é a rota, pela chave derivada do `ref`.
+    Uma divergência entre as duas não levanta nada: devolve `200` com
+    `itens: []` sobre um arquivo que está ali.
+    """
+    import orchestrator.api.app as modulo
+
+    params = {"seed": 1, "n": 30, "taxa_divergencia": taxa}
+    caminho = caminho_da_fila("conciliacao", dataset_id(1, 30, taxa), raiz=modulo._RAIZ_FILA)
+    caminho.parent.mkdir(parents=True, exist_ok=True)
+    Fila(caminho).gravar_proposta(
+        Proposal(
+            item_id="d-b-b00003",
+            tipo=DivergenceType.DEFASAGEM_TEMPORAL,
+            explicacao="x",
+            evidencia=["e"],
+            confianca=Confidence.MEDIA,
+            acao_sugerida="conciliar_com(l00003)",
+        )
+    )
+    assert caminho.exists()
+
+    corpo = cliente.get("/api/fila/conciliacao", params=params).json()
+
+    assert [i["divergence_id"] for i in corpo["itens"]] == ["d-b-b00003"]
+    assert corpo["dataset"] == dataset_id(1, 30, taxa)

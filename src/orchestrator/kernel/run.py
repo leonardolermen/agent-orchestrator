@@ -38,6 +38,22 @@ class RunState(StrEnum):
     # o trabalho não acabou, o teto é que chegou. Mesmo espírito de
     # `AGUARDANDO_HUMANO` — a lacuna é declarada, nunca escondida.
     LIMITE_DE_RONDAS = "limite_de_rondas"
+    # Bateu o teto de GASTO da execução, e itens ficaram sem sequer ser
+    # tentados. Irmão do de cima, e separado dele de propósito: os dois são
+    # "parou por um teto", mas dizer `LIMITE_DE_RONDAS` sobre um teto de
+    # dinheiro mandaria quem opera mexer em `max_rondas` para resolver um
+    # problema de orçamento.
+    #
+    # E é a distinção com `CONCLUIDO` que importa mais. Um run que o pedido
+    # PROIBIU de trabalhar não terminou: ele parou antes. `CONCLUIDO` com
+    # lacuna cheia e custo zero é a mesma mentira tranquila que
+    # `LIMITE_DE_RONDAS` existe para não contar — só que sobre dinheiro, onde
+    # ela é mais cara.
+    #
+    # Quem o atribui NÃO é o motor: o teto por requisição vive no cliente
+    # (`agent/teto.py`), que `execute()` por desenho não inspeciona. Quem sabe
+    # é a borda que o construiu — ver `api/app.py::_executar`.
+    LIMITE_DE_CUSTO = "limite_de_custo"
     CONCLUIDO = "concluido"
     FALHOU = "falhou"
     CANCELADO = "cancelado"
@@ -74,7 +90,22 @@ class Run:
     proposals: tuple[Proposal, ...] = ()
     unresolved: WorkSet = field(default_factory=WorkSet)
     cost_by_resolver: dict[str, Cost] = field(default_factory=dict)
+    # Quantas RESOLUÇÕES cada resolver produziu.
     resolved_by_resolver: dict[str, int] = field(default_factory=dict)
+    # Quantos ITENS as resoluções de cada resolver consumiram. Campo separado
+    # do de cima, e os dois nomes dizem a unidade porque ela não é a mesma:
+    # uma resolução de pagamento agregado consome um bancário e três
+    # contábeis. Quem quer "que fração do pool esta regra resolveu" precisa
+    # DESTE — dividir a contagem de resoluções pelo tamanho do pool dá metade
+    # do número na conciliação, e o número certo num domínio de um item por
+    # resolução. Uma métrica que muda de significado com o domínio é erro de
+    # unidade, e este repositório já pagou por um (ver
+    # `MICROCENTS_POR_CENTAVO_BRL`).
+    #
+    # É a soma de `len(Resolution.item_ids)`, ou seja o que o resolver AFIRMA
+    # ter consumido — ver o comentário em `runtime/engine.py`. A lacuna
+    # continua saindo de `unresolved`, que é contado.
+    resolved_items_by_resolver: dict[str, int] = field(default_factory=dict)
     resolutions_by_class: dict[CostClass, list[Resolution]] = field(default_factory=dict)
     # POR QUE o runtime fez o que fez. Sem isto, uma execução em que a
     # política pulou o agente é indistinguível de uma em que o agente não achou

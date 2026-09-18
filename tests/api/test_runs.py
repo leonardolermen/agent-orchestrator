@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from orchestrator.api.app import app  # noqa: E402
 
 cliente = TestClient(app)
-PEDIDO = {"seed": 1, "n": 30, "taxa_divergencia": 0.15}
+PEDIDO = {"fonte": {"tipo": "sintetica", "seed": 1, "n": 30, "taxa_divergencia": 0.15}}
 
 
 def test_executar_persiste_o_run_e_ele_aparece_no_historico():
@@ -47,7 +47,10 @@ def test_cada_execucao_e_um_run_novo_sem_cache_no_meio():
 
 def test_historico_vem_mais_recente_primeiro():
     for n in (30, 40):
-        cliente.post("/api/workflows/conciliacao/runs", json={**PEDIDO, "n": n})
+        cliente.post(
+            "/api/workflows/conciliacao/runs",
+            json={"fonte": {**PEDIDO["fonte"], "n": n}},
+        )
 
     runs = cliente.get("/api/runs").json()
 

@@ -1,0 +1,11 @@
+A raiz das fontes de arquivo de `/runs` (`api/app.py::_RAIZ_ENTRADAS`).
+
+Versionada VAZIA, e o diretório é a metade visível de uma cerca: o
+`ArquivoSource` recusa qualquer caminho que não esteja sob ela. Sem o
+diretório no repositório, um clone novo teria a cerca apontando para o nada e
+todo pedido de fonte de arquivo responderia "arquivo não encontrado" — uma
+falha de instalação com cara de erro do usuário.
+
+Nada de CONTEÚDO entra aqui: arquivos do usuário são dado de terceiro, que o
+spec pai proíbe versionar. É por isso que `.gitignore` abre exceção para o
+diretório e para este arquivo, e para mais nada.

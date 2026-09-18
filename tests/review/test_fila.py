@@ -189,3 +189,151 @@ def test_registro_truncado_aponta_arquivo_e_linha(tmp_path):
     # coincidência mesmo se o número de linha estiver errado.
     assert "linha 2" in mensagem
     assert excinfo.value.__cause__ is not None
+
+
+def test_a_chave_da_fila_sintetica_nao_mudou():
+    """Se esta quebrar, toda fila em `data/fila/**` virou invisível.
+
+    A chave da fila passou a sair do `ref` da fonte — uniformemente, para toda
+    fonte — porque com um arquivo não existe `(seed, n, taxa)`. Isso só é
+    seguro porque `SyntheticSource.ref` sempre foi `dataset_id` com o esquema
+    na frente: a mesma string. Esta igualdade é o que garante que nenhuma
+    decisão humana já gravada em disco deixa de ser encontrada.
+    """
+    from orchestrator.review.fila import dataset_de_ref
+    from orchestrator.synth.benchmark import SyntheticSource
+
+    assert dataset_de_ref("synth:s1-n300-t0.15") == dataset_id(1, 300, 0.15)
+    # E o `ref` de VERDADE, não só a string escrita à mão acima: sem isto, um
+    # dia em que `SyntheticSource.ref` mudasse de formato o teste continuaria
+    # verde comparando duas coisas que ninguém produz.
+    #
+    # A grade de `taxa` inclui de propósito os valores cujo `repr` sai em
+    # NOTAÇÃO CIENTÍFICA. Uma versão anterior deste ramo casava o resto contra
+    # `s\d+-n\d+-t[\d.]+` — "a forma que `dataset_id` produz" — e `1e-05`
+    # não tem essa forma: a chave mudava e a fila em disco sumia sem erro
+    # nenhum. A grade antiga (0.0, 0.15, 1.0) passava, que é por que o defeito
+    # entrou. Cada valor abaixo é um formato de `repr` diferente.
+    taxas = (
+        0.0,        # 0.0
+        0.15,       # 0.15
+        1.0,        # 1.0
+        1e-05,      # 1e-05   — expoente negativo
+        1e-10,      # 1e-10
+        1e25,       # 1e+25   — expoente POSITIVO, com `+`
+        1 / 3,      # 0.3333333333333333 — 16 dígitos
+        0.1 + 0.2,  # 0.30000000000000004
+        5e-324,     # 5e-324  — o menor subnormal
+        1.5e300,
+    )
+    for seed in (0, 1, 7, 12345):
+        for n in (1, 30, 300, 5000):
+            for taxa in taxas:
+                fonte = SyntheticSource(seed=seed, n=n, taxa_divergencia=taxa)
+                assert dataset_de_ref(fonte.ref) == dataset_id(seed, n, taxa), (
+                    seed, n, taxa
+                )
+
+
+def test_a_chave_de_um_ref_de_arquivo_e_um_NOME_DE_ARQUIVO_valido(tmp_path):
+    """`caminho_da_fila` interpola a chave em `{dataset}.jsonl`.
+
+    Um ref `file:` carrega `/`, `@` e o `:` do esquema — diretório acidental no
+    Linux, nome ilegal no Windows. Por isso vira hash. O teste escreve DE FATO
+    no caminho produzido: uma chave ilegal falha aqui, não em produção.
+    """
+    from orchestrator.review.fila import dataset_de_ref
+
+    ref = "file:sub/itens.csv@" + "a" * 64
+    chave = dataset_de_ref(ref)
+
+    assert not (set(chave) & set(r'/\:@*?"<>|'))
+    caminho = caminho_da_fila("w", chave, raiz=tmp_path)
+    caminho.parent.mkdir(parents=True, exist_ok=True)
+    caminho.write_text("", encoding="utf-8")
+    assert caminho.is_file()
+    # O caminho relativo entra na identidade: dois arquivos diferentes com o
+    # MESMO conteúdo não compartilham fila.
+    assert chave != dataset_de_ref("file:outro.csv@" + "a" * 64)
+
+
+def test_conteudo_diferente_no_mesmo_caminho_troca_a_fila():
+    """O `ref` de arquivo carrega o sha256 do CONTEÚDO, então editar o arquivo
+    troca a chave. É o mesmo argumento do docstring de `dataset_id`: uma
+    decisão tomada olhando um conjunto não vale para outro."""
+    from orchestrator.review.fila import dataset_de_ref
+
+    assert dataset_de_ref("file:x.csv@" + "a" * 64) != dataset_de_ref(
+        "file:x.csv@" + "b" * 64
+    )
+
+
+def test_o_ramo_legado_NAO_olha_a_forma_do_resto():
+    """A regressão, pinada pela causa e não pelo sintoma.
+
+    `_FORMA_LEGADA` não existe mais. Ela era uma segunda expressão sobre o
+    formato de `dataset_id`, e duas expressões que precisam concordar sobre o
+    mesmo formato são o join frágil de sempre — só que aqui o sintoma da
+    divergência é a fila humana sumir em silêncio, não um erro.
+
+    A condição do ramo é o ESQUEMA. Este teste afirma isso direto: qualquer
+    resto, por mais estranho que seja, sai inteiro sob `synth:` — desde que
+    caiba num componente de caminho, que é uma questão de sistema de arquivos e
+    não de formato de ref.
+    """
+    import orchestrator.review.fila as modulo
+    from orchestrator.review.fila import dataset_de_ref
+
+    assert not hasattr(modulo, "_FORMA_LEGADA")
+
+    for resto in ("s1-n30-t1e-05", "s1-n30-t1e+25", "s0-n0-tinf", "qualquer coisa",
+                  "NADA-a-ver-com-dataset_id", "t0.30000000000000004"):
+        assert dataset_de_ref(f"synth:{resto}") == resto, resto
+
+
+def test_uma_chave_legada_que_nao_cabe_num_CAMINHO_ainda_vira_hash():
+    """O único desvio que sobra no ramo legado, e ele não é sobre formato.
+
+    Uma chave com barra não é uma chave: é um diretório. `SyntheticSource.ref`
+    não consegue produzir uma (seed e n são `int`, taxa é `float`), então isto
+    é defesa de profundidade sobre uma entrada que o sistema não gera.
+    """
+    from orchestrator.review.fila import dataset_de_ref
+
+    for ruim in ("../fuga", "a/b", "", "."):
+        chave = dataset_de_ref(f"synth:{ruim}")
+        assert chave != ruim
+        assert not (set(chave) & set(r'/\:@*?"<>|'))
+
+
+def test_o_ESQUEMA_faz_parte_da_chave_fora_do_caso_legado():
+    """`synth:X` e `db:X` não podem cair na mesma fila.
+
+    Descartar o esquema sempre que o resto fosse seguro colidiria dois
+    conjuntos diferentes numa trilha de decisões só. Inalcançável hoje — há um
+    `Source` com esquema `synth:` e outro com `file:` — e uma armadilha
+    armada para o terceiro.
+    """
+    from orchestrator.review.fila import dataset_de_ref
+
+    assert dataset_de_ref("synth:abc") != dataset_de_ref("db:abc")
+    assert dataset_de_ref("db:abc") == "db-abc"
+    # E o caso legado continua sendo o único que perde o esquema.
+    assert dataset_de_ref("synth:s1-n300-t0.15") == "s1-n300-t0.15"
+    assert dataset_de_ref("outro:s1-n300-t0.15") == "outro-s1-n300-t0.15"
+
+
+def test_um_esquema_INSEGURO_nao_vira_prefixo():
+    """A peneira do prefixo, que o caso do hash usa.
+
+    `partition(':')` num ref SEM `:` devolve o ref inteiro como esquema. Sem a
+    peneira, um ref `a/b` produziria a chave `a/b-<hash>` e
+    `caminho_da_fila` criaria um DIRETÓRIO `a/` — a fila escrita num lugar que
+    ninguém procura, sem erro nenhum.
+    """
+    from orchestrator.review.fila import dataset_de_ref
+
+    for ref in ("a/b", "..", "c:\\temp\\x", "sem-dois-pontos/../fuga"):
+        chave = dataset_de_ref(ref)
+        assert not (set(chave) & set(r'/\:@*?"<>|')), ref
+        assert chave not in (".", "..")

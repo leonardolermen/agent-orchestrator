@@ -41,22 +41,38 @@ def _gravar_pago(tmp_path) -> None:
     )
 
 
-def test_executar_workflow_com_agente_responde_409(tmp_path):
+def test_executar_workflow_com_agente_SEM_CHAVE_responde_409(tmp_path, monkeypatch):
+    """Guarda 3. O 409 deixou de ser "isto nunca roda por aqui" e passou a ser
+    "falta uma chave NESTE servidor" — e a recusa diz as duas saídas.
+
+    `_tem_chave` é substituído em vez de lido do ambiente. Sem isso, este teste
+    afirmaria uma coisa na máquina sem a variável e outra na máquina com ela, e
+    a segunda é onde o dinheiro está.
+    """
+    monkeypatch.setattr(app_mod, "_tem_chave", lambda: False)
     _gravar_pago(tmp_path)
     cliente = TestClient(app_mod.app)
 
     resposta = cliente.post(
-        "/api/workflows/pago/runs", json={"seed": 1, "n": 60, "taxa_divergencia": 0.15}
+        "/api/workflows/pago/runs",
+        # COM teto: ele e exigencia do PEDIDO e e conferida antes do 409.
+        json={"fonte": {"tipo": "sintetica", "seed": 1, "n": 60, "taxa_divergencia": 0.15},
+              "teto_microcents": 1_000_000},
     )
 
     assert resposta.status_code == 409
     assert "CLI" in resposta.json()["detail"]
+    assert "ANTHROPIC_API_KEY" in resposta.json()["detail"]
 
 
-def test_o_modelo_nunca_e_chamado_por_um_endpoint(tmp_path, monkeypatch):
+def test_sem_chave_o_modelo_nunca_e_chamado_por_um_endpoint(tmp_path, monkeypatch):
     # A outra metade: só o 409 passaria com a tranca quebrada. Espiona
     # `ClienteAusente.complete` e exige ZERO chamadas — se alguém um dia
-    # trocar o sentinela por um cliente real, este teste é quem pega.
+    # trocar o sentinela por um cliente real NESTE caminho, este teste é quem
+    # pega. A tranca continua sendo `ClienteAusente`; o que mudou é que existe
+    # UM ponto onde ela é desarmada de propósito (`_cliente_de_execucao`), e
+    # ele exige chave.
+    monkeypatch.setattr(app_mod, "_tem_chave", lambda: False)
     _gravar_pago(tmp_path)
     chamadas = []
     original = cat_mod.ClienteAusente.complete
@@ -68,11 +84,45 @@ def test_o_modelo_nunca_e_chamado_por_um_endpoint(tmp_path, monkeypatch):
     monkeypatch.setattr(cat_mod.ClienteAusente, "complete", espiao)
     cliente = TestClient(app_mod.app)
 
-    cliente.post("/api/workflows/pago/runs", json={"seed": 1, "n": 60, "taxa_divergencia": 0.15})
+    cliente.post(
+        "/api/workflows/pago/runs",
+        json={"fonte": {"tipo": "sintetica", "seed": 1, "n": 60, "taxa_divergencia": 0.15}},
+    )
     cliente.get("/api/workflows/pago")
     cliente.get("/api/workflows")
 
     assert chamadas == []
+
+
+def test_COM_chave_o_workflow_com_agente_deixa_de_ser_recusado(tmp_path, monkeypatch):
+    """O outro lado da mesma regra, e a razão de esta fatia existir.
+
+    Com chave, a cascata paga roda — e o 409 que a barrava some. O cliente de
+    rede é substituído por um dublê: o que se prova aqui é o ROTEAMENTO da
+    guarda, e provar roteamento indo à API paga seria pagar para saber o que um
+    dublê responde de graça. Quanto ela gasta e onde o teto morde estão em
+    `tests/api/test_execucao.py`.
+    """
+    from orchestrator.agent.llm import FakeLLMClient
+    from orchestrator.agent.teto import ClienteComTeto
+
+    monkeypatch.setattr(app_mod, "_tem_chave", lambda: True)
+    monkeypatch.setattr(
+        app_mod,
+        "_cliente_de_execucao",
+        lambda teto: ClienteComTeto(FakeLLMClient([]), teto_microcents=teto),
+    )
+    _gravar_pago(tmp_path)
+    cliente = TestClient(app_mod.app)
+
+    resposta = cliente.post(
+        "/api/workflows/pago/runs",
+        json={"fonte": {"tipo": "sintetica", "seed": 1, "n": 60, "taxa_divergencia": 0.15},
+              "teto_microcents": 1_000_000},
+    )
+
+    assert resposta.status_code == 200, resposta.text
+    assert "AGENTE" in [r["cost_class"] for r in resposta.json()["por_resolver"]]
 
 
 def test_workflow_sem_agente_continua_executando(tmp_path):
@@ -92,7 +142,8 @@ def test_workflow_sem_agente_continua_executando(tmp_path):
 
     assert (
         cliente.post(
-            "/api/workflows/gratis/runs", json={"seed": 1, "n": 60, "taxa_divergencia": 0.15}
+            "/api/workflows/gratis/runs",
+            json={"fonte": {"tipo": "sintetica", "seed": 1, "n": 60, "taxa_divergencia": 0.15}},
         ).status_code
         == 200
     )
@@ -103,7 +154,7 @@ def test_a_embutida_continua_executando(tmp_path):
     assert (
         cliente.post(
             "/api/workflows/conciliacao/runs",
-            json={"seed": 1, "n": 60, "taxa_divergencia": 0.15},
+            json={"fonte": {"tipo": "sintetica", "seed": 1, "n": 60, "taxa_divergencia": 0.15}},
         ).status_code
         == 200
     )

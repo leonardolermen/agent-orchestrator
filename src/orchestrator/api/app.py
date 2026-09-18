@@ -1,25 +1,59 @@
 """O app HTTP do canvas.
 
-**A regra que governa este módulo ficou MAIS PRECISA, não mais frouxa.**
+**A regra que governa este módulo ficou MAIS PRECISA outra vez, e desta vez ela
+deixou de ser uma proibição.**
 
-Ela era: *"nenhum endpoint daqui pode gastar dinheiro"*. O que ela protegia é o
-caminho de EXECUÇÃO — rodar um workflow pela web nunca pode virar uma conta —, e
-isso continua valendo e continua testado (`tests/api/test_execucao.py`): uma
-cascata com classe `AGENTE` é recusada com 409, e não existe caminho de código
-daqui até o modelo por `/runs`.
+Ela nasceu como *"nenhum endpoint daqui pode gastar dinheiro"*. Depois virou
+*"EXECUTAR não gasta; COMPOR por conversa gasta, com teto"* — a entrevista
+(`api/entrevista.py`) é a exceção que compõe sem executar. Agora:
 
-A entrevista (`api/entrevista.py`) não executa nada: ela COMPÕE, conversando. E
-não há como compor conversando sem falar com um modelo. Então:
-
-    EXECUTAR um workflow pela web nunca gasta dinheiro.
+    EXECUTAR pela web GASTA quando a cascata tem agente, com teto, e o teto é
+    dito antes.
     COMPOR por conversa gasta, com teto, e o teto é dito antes.
 
-A exceção é UMA, mora em outro arquivo, e carrega as três guardas que a tornam
-aceitável — teto por entrevista, custo devolvido em cada desfecho, e recusa
-explícita sem chave. Ver o cabeçalho de `api/entrevista.py`.
+**O que a proibição protegia, e por que ela não servia mais.** Ela impedia que
+rodar um workflow pela web virasse uma conta. O preço era que uma cascata com
+agente simplesmente não rodava por aqui: quem compôs na tela tinha de abrir um
+terminal. E o preço era pago por INTEIRO — até aqui nenhum bloco do catálogo
+executável por `/runs` consumia um CSV, porque as regras exigem payload tipado
+e os três agentes, os únicos que leem dicionário, eram os barrados. A tela
+compunha o que ela mesma não conseguia rodar.
+
+**Este é o caminho pelo qual quem alcança o servidor gasta o crédito de quem o
+hospeda.** As três guardas abaixo são o que torna isso aceitável, são as mesmas
+de `api/entrevista.py`, e nenhuma é opcional:
+
+**Guarda 1 — teto por REQUISIÇÃO, e ele é OBRIGATÓRIO aqui.**
+`RunRequest.teto_microcents` vira um `ClienteComTeto` (`agent/teto.py`) que toda
+chamada paga da execução atravessa. Pela web, com agente, omiti-lo é 422: a
+guarda inteira é *"gasta com teto, e o teto é dito ANTES"*, e um pedido que o
+omite não disse teto nenhum — ele herda o do agente, que são US$ 4,00 por
+requisição, numa rota sem autenticação e sem cache que qualquer F5 dispara de
+novo. Herdar em silêncio é o fallback que a primeira regra do projeto proíbe.
+(No schema `None` continua válido, para a CLI e para quem chama a biblioteca, e
+lá ele significa o teto do próprio agente — nunca ilimitado.)
+
+**Guarda 2 — o custo volta em CADA desfecho, e o DESFECHO também.** No caminho
+feliz, `RunJSON` leva `custo_microcents`, `estado`, `propostas_por_tipo`,
+`falhas` e `teto_atingido`, e o run vai para o `RunStore`. No caminho de erro, o
+custo vai no corpo do 500. Gasto que não aparece na tela é gasto que ninguém
+revisa — e "não achamos nada", "paramos no teto" e "a API falhou" precisam ser
+três respostas diferentes, porque `agent/conversa.py` as faz virar a mesma
+abstenção.
+
+**Guarda 3 — sem chave, recusa legível.** Sem `ANTHROPIC_API_KEY` a cascata com
+agente é recusada com 409 ANTES de executar, em vez de o SDK levantar no meio
+do laço com metade do trabalho feito.
+
+**A tranca continua sendo `ClienteAusente`**, o default de
+`grill.receita.construir`. `_cliente_de_execucao` — o único caminho de código
+daqui até o modelo por `/runs` — só é construído quando a cascata tem agente E
+há chave. Desarmar a tranca é ato explícito, e só acontece nesse ponto.
 """
 
 import os
+from collections import Counter
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
@@ -28,6 +62,7 @@ from fastapi import FastAPI, HTTPException, Query, WebSocket
 from fastapi.staticfiles import StaticFiles
 
 from orchestrator.agent.declarado import AgenteDeclarado, RegraDisponivel
+from orchestrator.agent.teto import ClienteComTeto
 from orchestrator.agent.tools.registry import ToolRegistry
 from orchestrator.api.entrevista import conduzir
 from orchestrator.api.schemas import (
@@ -42,6 +77,7 @@ from orchestrator.api.schemas import (
     GapJSON,
     ItemFilaJSON,
     LancamentoJSON,
+    MedidoJSON,
     ParametroJSON,
     ReceitaRequest,
     RegraJSON,
@@ -62,21 +98,27 @@ from orchestrator.authoring.composicao import (
     gravar,
     listar,
 )
-from orchestrator.conciliacao import reconcile
+from orchestrator.conciliacao import ReconcileResult
 from orchestrator.domains.registro import CATALOGO
 from orchestrator.grill.catalogo import MODELO_INERTE
 from orchestrator.grill.receita import Receita, ResolverReceita, construir
 from orchestrator.grill.registro import gravar_receita, listar_receitas
 from orchestrator.kernel.cost import Cost, CostClass
+from orchestrator.kernel.definition import WorkflowDefinition
 from orchestrator.kernel.event import EventBus
+from orchestrator.kernel.resolution import TraceKind
 from orchestrator.kernel.run import RunState
+from orchestrator.kernel.work import WorkSet
 from orchestrator.metrics import evaluate
 from orchestrator.observability.collector import SpanCollector
 from orchestrator.review.decision import Decision, Veredito, ids_de_conciliar_com
-from orchestrator.review.fila import Fila, caminho_da_fila, dataset_id
+from orchestrator.review.fila import Fila, caminho_da_fila, dataset_de_ref
+from orchestrator.runtime.engine import execute
+from orchestrator.sources.arquivo import ArquivoSource, RaizViolada
 from orchestrator.storage.jsonl.run_store import JsonlRunStore
 from orchestrator.storage.jsonl.trace_store import JsonlTraceStore
 from orchestrator.synth.benchmark import SyntheticSource, build_benchmark
+from orchestrator.synth.dataset import Dataset
 from orchestrator.taxonomy import DivergenceType
 from orchestrator.workflows import (
     WorkflowContext,
@@ -94,9 +136,65 @@ _RAIZ_RECEITAS: Path | None = None
 # Raiz das composições em disco, pelo mesmo motivo — `gravar` escreve.
 _RAIZ_COMPOSICOES: Path | None = None
 
+# A CERCA das fontes de arquivo. `caminho` chega pela rede e vira uma leitura
+# de disco aqui dentro; sem raiz, `/runs` é um leitor de arquivos arbitrários
+# do servidor. O alvo que importa não é `/etc/passwd` — é `data/fila/**`, que
+# devolveria a trilha de decisões humanas de OUTRO workflow.
+#
+# Concreta e não `Path | None` como as duas acima: elas têm um default no
+# consumidor (`Path("data")`), esta é o próprio default. Continua sendo
+# atributo de módulo para o teste trocá-la por um `tmp_path`.
+_RAIZ_ENTRADAS = Path(__file__).resolve().parents[3] / "data" / "entradas"
+
+
+def _tem_chave() -> bool:
+    """O servidor tem credencial para falar com o modelo?
+
+    Função de MÓDULO, e é isso que a torna substituível por `monkeypatch` num
+    teste sem tocar no ambiente de verdade — que é o que impede a suíte de
+    depender de a variável estar ou não posta na máquina de quem roda.
+
+    Uma leitura só, usada por `/api/ambiente` (que anuncia) e pela guarda 3 de
+    `_executar` (que recusa). Duas leituras seriam duas respostas para a mesma
+    pergunta, e a tela acabaria oferecendo o botão que o servidor recusa.
+    """
+    return bool(os.environ.get("ANTHROPIC_API_KEY"))
+
+
+def _cliente_de_execucao(teto_microcents: int | None) -> ClienteComTeto:
+    """O cliente REAL, com o teto DESTA requisição. Um por execução.
+
+    **É o único caminho de código daqui até o modelo pela rota `/runs`**, e por
+    isso ele é chamado num ponto só: depois de saber que a cascata tem agente e
+    que há chave. Fora dali a construção cai no `ClienteAusente`, que levanta se
+    alguém chegar ao modelo por onde não deveria existir caminho.
+
+    Construir NÃO fala com a rede: `AnthropicClient` só instancia o SDK na
+    primeira chamada (ver o docstring de lá), então até aqui nada foi gasto e
+    nada foi contatado.
+
+    `teto_microcents=None` NÃO é "sem teto" — ver `agent/teto.py`.
+    """
+    from orchestrator.agent.anthropic_client import AnthropicClient
+
+    return ClienteComTeto(AnthropicClient(), teto_microcents=teto_microcents)
+
 
 @app.get("/api/workflows", response_model=list[WorkflowResumoJSON])
 def listar_workflows() -> list[WorkflowResumoJSON]:
+    """Os workflows, e se ESTE servidor consegue rodar cada um.
+
+    `executavel` era "a cascata não tem AGENTE", porque `/runs` recusava toda
+    cascata paga. A pergunta que a tela faz nunca foi essa — é "o botão Run vai
+    funcionar?" —, e com o caminho pago aberto a resposta passou a depender da
+    chave. Manter a fórmula antiga faria a API desabilitar um botão para uma
+    execução que ela própria aceitaria: uma tela mentindo sobre o servidor que
+    a serve.
+    """
+    # UMA leitura do ambiente para a listagem inteira. Ler por workflow deixaria
+    # a mesma resposta variar dentro de uma resposta só, se a variável mudasse
+    # no meio.
+    com_chave = _tem_chave()
     resumos = []
     por_id = {r.id: r for r in listar_receitas(_RAIZ_RECEITAS)}
     # `descrever` já isola a receita que parseia e não constrói: um arquivo
@@ -114,7 +212,7 @@ def listar_workflows() -> list[WorkflowResumoJSON]:
                 nome=definicao.name,
                 classes=classes,
                 gerado_em=receita.gerado_em.isoformat() if receita else None,
-                executavel=CostClass.AGENTE.name not in classes,
+                executavel=CostClass.AGENTE.name not in classes or com_chave,
             )
         )
     return resumos
@@ -202,7 +300,10 @@ def ambiente() -> AmbienteJSON:
     """
     return AmbienteJSON(
         modelo_padrao=MODELO_INERTE,
-        tem_chave=bool(os.environ.get("ANTHROPIC_API_KEY")),
+        # A MESMA leitura que a guarda 3 de `_executar` usa para recusar. Duas
+        # leituras divergiriam no dia em que uma das duas mudasse de critério, e
+        # o sintoma seria a tela anunciar que dá para rodar o que a rota recusa.
+        tem_chave=_tem_chave(),
         seed=1,
         n=300,
         n_max=5000,
@@ -371,10 +472,150 @@ def executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
         # entrar em `_executar`, nem para virar um run persistido de um
         # workflow que não existe.
         raise HTTPException(status_code=404, detail=f"workflow desconhecido: {workflow_id}")
-    return _executar(workflow_id, pedido.seed, pedido.n, pedido.taxa_divergencia)
+    return _executar(workflow_id, pedido)
 
 
-def _executar(workflow_id: str, seed: int, n: int, taxa: float) -> RunJSON:
+def _fonte_de(pedido: RunRequest) -> tuple[SyntheticSource | ArquivoSource, Dataset | None]:
+    """A fonte e o gabarito, quando existe.
+
+    Quem sabe se há gabarito é a FONTE — não um `if` sobre o id do workflow.
+    `SyntheticSource` tem `dataset()`; uma fonte de dado real não tem, e é
+    exatamente por isso que `metrics.evaluate` continua exigindo um `Dataset`.
+
+    `Dataset | None` em vez de um método no protocolo: `kernel/source.py` diz
+    que gabarito é insumo de AVALIAÇÃO e o motor não deve recebê-lo. Pôr
+    `gabarito()` no `Source` obrigaria toda fonte de dado real a implementar um
+    método que devolve `None` — e convidaria alguém a chamá-lo no motor.
+    """
+    f = pedido.fonte
+    if f.tipo == "sintetica":
+        fonte = SyntheticSource(seed=f.seed, n=f.n, taxa_divergencia=f.taxa_divergencia)
+        return fonte, fonte.dataset()
+    try:
+        return (
+            # `_RAIZ_ENTRADAS / f.caminho` com um `f.caminho` ABSOLUTO não
+            # concatena: o `Path` da direita vence, e o resultado cai fora da
+            # raiz. É a cerca do `ArquivoSource` que recusa, e é por isso que
+            # não há validação de forma escrita à mão aqui.
+            ArquivoSource(
+                caminho=_RAIZ_ENTRADAS / f.caminho,
+                kind=f.kind,
+                campo_id=f.campo_id,
+                raiz=_RAIZ_ENTRADAS,
+            ),
+            None,
+        )
+    except RaizViolada as erro:
+        # A mensagem do `RaizViolada` cita os dois caminhos ABSOLUTOS, e ela é
+        # a certa para um log do servidor. Aqui ela é reescrita com o que o
+        # CLIENTE pediu e nada mais: devolver a raiz resolvida entregaria a
+        # árvore de diretórios do servidor a quem sondar com nomes errados —
+        # a mesma informação que esta cerca existe para negar, saindo pela
+        # porta dos fundos.
+        raise HTTPException(
+            status_code=422,
+            detail=f"{f.caminho!r} está fora da raiz de entradas",
+        ) from erro
+
+
+def _ler(fonte: SyntheticSource | ArquivoSource, pedido: RunRequest) -> tuple[str, WorkSet]:
+    """O `ref` e o pool, na MESMA leitura.
+
+    Os dois juntos de propósito: `ArquivoSource` memoiza os bytes, então pedir
+    os dois aqui é UMA leitura de disco, e o `ref` nomeia exatamente o
+    conteúdo que virou trabalho.
+
+    E juntos também porque falham juntos. A leitura do `ArquivoSource` é
+    PREGUIÇOSA — `__post_init__` só confere a raiz —, então um arquivo que não
+    existe, que não é UTF-8, que estoura o teto ou que tem uma linha
+    malformada não falha na construção: falha aqui. Sem este `try`, cada um
+    desses vira 500, que diz "o servidor quebrou" sobre um arquivo que o
+    usuário pode consertar.
+    """
+    try:
+        return fonte.ref, fonte.load()
+    except (OSError, ValueError) as erro:
+        if pedido.fonte.tipo != "arquivo":
+            # Uma fonte sintética não lê disco; se ela levantou, é defeito do
+            # servidor e precisa subir como 500 em vez de virar um 422 que
+            # culpa o cliente.
+            raise
+        if isinstance(erro, OSError):
+            # NUNCA `str(erro)` para um erro de SO: a mensagem do errno embute
+            # o caminho ABSOLUTO resolvido. As `ValueError` do `ArquivoSource`
+            # citam só `caminho.name`, por desenho, e podem passar inteiras.
+            motivo = (
+                "arquivo não encontrado"
+                if isinstance(erro, FileNotFoundError)
+                else "não foi possível ler o arquivo"
+            )
+        else:
+            motivo = str(erro)
+        raise HTTPException(
+            status_code=422,
+            detail=f"{pedido.fonte.caminho!r}: {motivo}",
+        ) from erro
+
+
+def _conferir_payload(definicao: WorkflowDefinition, pool: WorkSet) -> None:
+    """A fonte entrega o que os resolvers deste workflow exigem?
+
+    **Esta borda existe porque é a única que junta uma FONTE a um WORKFLOW**, e
+    a combinação errada não falhava: estourava. `ArquivoSource` entrega
+    `dict`; `ExactMatcher` lê `be.document`. Rodar conciliação sobre um CSV com
+    `kind="banco"` devolvia 500 com `AttributeError: 'dict' object has no
+    attribute 'document'`, de três camadas abaixo — um erro de SERVIDOR sobre
+    uma escolha do CLIENTE, sem dizer qual das duas escolhas estava errada.
+
+    **Não é um `except AttributeError` em volta de `execute()`.** Esse `except`
+    engoliria um bug de verdade do motor e o devolveria como um 422 confiante,
+    que é pior do que o 500 que ele substituiria. E não é uma lista de nomes de
+    resolver nesta camada: ela apodreceria no dia em que alguém escrevesse o
+    próximo resolver tipado, em silêncio, exatamente como o `_construir_definicao`
+    por `inspect.signature` que `workflows.py` existe para ter matado.
+
+    A exigência é DECLARADA pelo resolver (`ResolverDescription.payloads`) e
+    lida aqui. Um resolver que não declara nada não é checado — e está certo:
+    `Agent` monta o prompt a partir dos CAMPOS do item e aceita dataclass ou
+    dict (ver `agent/declarado.py::_campos`), então um agente declarado roda
+    sobre um CSV sem nada a exigir.
+
+    **LIMITE, dito em voz alta: só o pool INICIAL é conferido.** Um stage que
+    PRODUZ itens (`ResolverOutput.produced`) os injeta no pool depois daqui, e
+    um produtor genérico alimentando um consumidor tipado traz de volta o 500
+    original. Fechar isso exige uma declaração do lado do PRODUTOR — que tipo
+    ele emite por kind — e o ponto de aplicação seria `runtime/engine.py`, onde
+    o motor por desenho nunca inspeciona payload. Inalcançável por
+    configuração publicada (nenhum bloco do catálogo produz), e com dois
+    testes de plantão em `tests/api/test_execucao.py`: um `xfail(strict)` sobre
+    a lacuna e um que falha no dia em que ela virar alcançável pela tela.
+    """
+    tipos: dict[str, set[type]] = {}
+    for item in pool.items:
+        tipos.setdefault(item.kind, set()).add(type(item.payload))
+    for stage in definicao.stages:
+        for resolver in stage.ordered():
+            for kind, exigido in resolver.describe().payloads.items():
+                entregues = sorted(
+                    (t for t in tipos.get(kind, ()) if not issubclass(t, exigido)),
+                    key=lambda t: t.__name__,
+                )
+                if not entregues:
+                    continue
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"o resolver {resolver.name!r} exige que itens de kind "
+                        f"{kind!r} carreguem {exigido.__name__}, e a fonte "
+                        f"entregou {', '.join(t.__name__ for t in entregues)}. "
+                        f"uma fonte de arquivo entrega dicionários: escolha um "
+                        f"workflow cujos blocos leiam campos genéricos, ou um "
+                        f"`kind` que esta cascata não consuma."
+                    ),
+                )
+
+
+def _executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
     """Executa e PERSISTE o run. Sem cache.
 
     Era `@lru_cache(maxsize=64)`, e o docstring de então já admitia o problema:
@@ -388,94 +629,279 @@ def _executar(workflow_id: str, seed: int, n: int, taxa: float) -> RunJSON:
     cada chamada: para uma cascata só de regras sobre n=300 isso é dezenas de
     milissegundos, e ADR-14 registra o gatilho para revisitar.
 
-    A definição servida aqui não tem agente: a execução não faz rede e não
-    gasta em tokens. É isso que torna seguro um endpoint que qualquer F5
-    dispara.
+    **Esta rota pode GASTAR, e um F5 a dispara de novo.** Era o contrário —
+    nenhuma definição servida aqui tinha agente — e é essa mudança que torna as
+    três guardas do cabeçalho deste módulo carga estrutural e não decoração.
+    Sem cache não há entrada envenenada para reexecutar de graça, mas também
+    não há memoização que segure um segundo clique: o teto por requisição é o
+    que limita o estrago de um F5 nervoso, e ele é por requisição justamente
+    por isso.
+
+    **Um caminho só, com um ramo no fim.** Chamava `conciliacao.reconcile()`, e
+    por isso só sabia executar sobre um extrato e um razão. Agora chama
+    `runtime.execute()` sobre o `WorkSet` que a FONTE entregar — é o mesmo
+    motor para as duas formas, e o único `if` que sobra é o do gabarito.
     """
     # O coletor assina o barramento. O domínio não sabe que está sendo
     # observado — ver `observability/collector.py`.
     bus = EventBus()
     coletor = SpanCollector().subscribe(bus)
-    fonte = SyntheticSource(seed=seed, n=n, taxa_divergencia=taxa)
-    dataset = fonte.dataset()
-    fila, _ = _abrir_fila(workflow_id, seed, n, taxa)
-    definicao = construir_definicao(
-        registry(_RAIZ_RECEITAS)[workflow_id], WorkflowContext(fila=fila)
-    )
-
-    # A regra deste módulo — nenhum endpoint gasta dinheiro — aplicada a
-    # cascatas que a API não escreveu. Levantar aqui é seguro e agora é
-    # trivialmente seguro: sem cache, não há entrada para envenenar.
-    #
-    # Esta é a porta educada. A tranca é `ClienteAusente`, que `construir`
-    # injeta por default e que levanta se alguém chegar ao modelo por aqui.
+    fonte, gabarito = _fonte_de(pedido)
+    # O `ref` vem ANTES da fila porque a fila depende dele: a chave de
+    # `data/fila/**` sai do `ref` da fonte (ver `dataset_de_ref`), e não mais
+    # de `(seed, n, taxa)` — que uma fonte de arquivo não tem.
+    ref, pool = _ler(fonte, pedido)
+    fila, _ = _abrir_fila(workflow_id, ref)
+    fabrica = registry(_RAIZ_RECEITAS)[workflow_id]
+    # A definição com a TRANCA. `cliente=None` é o default de
+    # `WorkflowContext`, e `construir` o traduz em `ClienteAusente` — o
+    # sentinela que levanta se algum caminho chegar ao modelo por onde não
+    # deveria existir caminho nenhum.
+    definicao = construir_definicao(fabrica, WorkflowContext(fila=fila))
     classes = {r.cost_class for s in definicao.stages for r in s.cascade}
-    if CostClass.AGENTE in classes:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"o workflow {workflow_id!r} tem uma etapa paga e não pode ser "
-                f"executado pela web. rode pela CLI."
-            ),
+    tem_agente = CostClass.AGENTE in classes
+
+    # ANTES da guarda de chave, e a ordem inverteu de propósito nesta fatia.
+    #
+    # O 409 de antes dizia "esta cascata é paga e nunca roda por aqui": uma
+    # propriedade permanente da CASCATA, que precedia qualquer coisa sobre o
+    # formato do dado. O 409 de agora diz "falta uma chave NO SERVIDOR" —
+    # estado do hospedeiro, não do pedido, e que quem manda o POST em geral não
+    # pode consertar. Devolvê-lo primeiro mandaria a pessoa atrás de um
+    # administrador para, depois da chave posta, descobrir que o CSV dela seria
+    # recusado do mesmo jeito. Erro do PEDIDO antes de erro do AMBIENTE.
+    _conferir_payload(definicao, pool)
+
+    cliente: ClienteComTeto | None = None
+    if tem_agente:
+        # Guarda 1, a metade que faltava: pela WEB, com agente, o teto é
+        # OBRIGATÓRIO. Antes do 409 porque é erro do PEDIDO, não do ambiente.
+        #
+        # A guarda inteira é "gasta com teto, E O TETO É DITO ANTES". Um pedido
+        # que omite `teto_microcents` não disse teto nenhum: ele HERDA o do
+        # agente, que é 400.000.000 µ¢ — US$ 4,00 por requisição — e herdar em
+        # silêncio é exatamente o fallback que a primeira regra deste projeto
+        # proíbe. Sem isto, `POST /api/workflows/<pago>/runs` com corpo `{}`,
+        # sem autenticação e sem cache, é uma torneira de US$ 4 por F5.
+        #
+        # `None` continua VÁLIDO no schema, e de propósito: para a CLI e para
+        # quem chama a biblioteca, "use o teto do agente" é uma escolha
+        # legítima feita por quem já sabe qual é. O que não é legítimo é um
+        # cliente HTTP anônimo fazer essa escolha sem escrevê-la.
+        if pedido.teto_microcents is None:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"o workflow {workflow_id!r} tem etapa paga: informe "
+                    f"`teto_microcents` (micro-centavos de USD, 1e-8 USD cada) "
+                    f"neste pedido. executar pela web gasta COM TETO, e o teto "
+                    f"é dito antes — omiti-lo herdaria em silêncio o do agente, "
+                    f"que é generoso por ser um default."
+                ),
+            )
+        # Guarda 3. ANTES de executar, e não no meio: sem isto o SDK levantaria
+        # no primeiro turno com o pool já pela metade, e o que a pessoa veria
+        # seria um 500 sobre um problema que tem conserto e nome.
+        if not _tem_chave():
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"o workflow {workflow_id!r} tem etapa paga e não há "
+                    f"ANTHROPIC_API_KEY no ambiente deste servidor. configure a "
+                    f"chave ou rode pela CLI."
+                ),
+            )
+        # Guarda 1: o teto do PEDIDO, não o default do agente — que é generoso
+        # por ser um default. Só aqui a tranca é desarmada.
+        cliente = _cliente_de_execucao(pedido.teto_microcents)
+        # Construída OUTRA VEZ, e é o preço de não construir um cliente pago
+        # antes de saber que ele é necessário: o cliente entra no `Agent` na
+        # CONSTRUÇÃO, então saber se há agente exige uma definição, e ter o
+        # cliente certo exige saber se há agente. As duas chamadas passam por
+        # `construir_definicao` sobre a mesma fábrica e a mesma fila — a forma
+        # é idêntica, e a única diferença é qual cliente mora dentro do agente.
+        # A alternativa seria construir o cliente pago sempre, inclusive para
+        # cascatas que nunca falam com modelo: mais barato em CPU, e mais caro
+        # em tudo que importa aqui.
+        definicao = construir_definicao(
+            fabrica, WorkflowContext(fila=fila, cliente=cliente)
         )
 
-    resultado = reconcile(
-        dataset.bank,
-        dataset.ledger,
-        definition=definicao,
-        # O `ref` vem da FONTE, não montado aqui: duas expressões que precisam
-        # concordar sobre o formato de um id são o join frágil de sempre.
-        input_ref=fonte.ref,
-        bus=bus,
-    )
-    # O run vai para o store ANTES de qualquer projeção para JSON: o que a tela
-    # mostra é derivado, o que o store guarda é o fato.
-    if resultado.run is not None:
-        _run_store().save(resultado.run)
-        _trace_store().save(coletor.trace(resultado.run))
-    m = evaluate(dataset, resultado)
+    # O MESMO modelo que a conversão de custo vai usar, passado explicitamente
+    # em vez de deixado no default de `execute`. As duas strings já eram
+    # iguais; passar fecha a coincidência — converter custo com um nome
+    # diferente do que rodou daria um número que não corresponde a nada.
+    modelo = MODELO_INERTE
+    # Guarda 2, a metade difícil: o custo precisa sobreviver ao caminho de erro.
+    #
+    # `Run.cost_by_resolver` só existe se `execute()` RETORNAR. Uma cascata que
+    # gastou e depois levantou perdia o número junto com a exceção — dinheiro
+    # queimado que nunca aparecia em resposta nenhuma. `ClienteComTeto` é do
+    # chamador e vive fora do motor, então o gasto continua legível aqui
+    # depois de qualquer falha lá dentro.
+    #
+    # A captura cobre `execute` E as duas persistências, que é a região em que
+    # já se gastou e o trabalho ainda está no ar. A projeção para JSON fica de
+    # fora de propósito: quando ela roda, o run já está no store COM o custo, e
+    # uma falha ali é defeito nosso que um 500 com traceback relata melhor do
+    # que um corpo estruturado que finge saber o que houve.
+    try:
+        run = execute(definicao, pool, input_ref=ref, bus=bus, model=modelo)
+        # O teto DESTA requisição recusou alguma chamada? Uma pergunta, um
+        # lugar, uma variável — e é ela que alimenta o `estado` E o campo
+        # `teto_atingido` da resposta. Dois cálculos para a mesma pergunta são
+        # dois cálculos que divergem, e o sintoma seria uma resposta em que os
+        # dois campos se contradizem.
+        parou_no_teto = cliente is not None and cliente.recusas > 0
+        if parou_no_teto:
+            # O MOTOR não tem como saber disto: o teto por requisição vive no
+            # cliente, e `execute()` por desenho não inspeciona cliente nenhum —
+            # da janela dele, todo item foi processado e o run CONCLUIU. Da
+            # janela de quem impôs o teto, o run parou antes de trabalhar.
+            #
+            # A correção é feita no `Run`, ANTES de persistir, e não só na
+            # projeção. Corrigir só a projeção deixaria `/runs` dizendo
+            # `limite_de_custo` e `/api/runs` dizendo `concluido` sobre a MESMA
+            # execução — duas verdades sobre um fato, que é o defeito que este
+            # próprio campo existe para não cometer.
+            #
+            # Vence `AGUARDANDO_HUMANO` quando os dois se aplicam, pela mesma
+            # precedência que o motor já usa para `LIMITE_DE_RONDAS`: o teto é
+            # POR QUE existe lacuna, e mandar o operador para a fila de revisão
+            # esconderia a causa atrás do sintoma.
+            run = replace(run, state=RunState.LIMITE_DE_CUSTO)
+        # O run vai para o store ANTES de qualquer projeção para JSON: o que a
+        # tela mostra é derivado, o que o store guarda é o fato.
+        _run_store().save(run)
+        _trace_store().save(coletor.trace(run))
+    except Exception as erro:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                # O TIPO da exceção, não `str(erro)`: uma mensagem arbitrária
+                # do fundo da pilha pode carregar caminho absoluto do servidor,
+                # e `_ler` já documenta por que isso não sai por esta porta. O
+                # traceback inteiro continua no log — `from erro` o encadeia —,
+                # que é onde ele serve para quem opera.
+                "motivo": f"a execução falhou: {type(erro).__name__}",
+                # O número que a guarda 2 existe para não perder. Sem agente
+                # este zero é MEDIDO e não inventado: sem `_cliente_de_execucao`
+                # não há caminho até o modelo, e `ClienteAusente` levanta se
+                # alguém tentar — nada foi gasto porque nada podia ser.
+                "custo_microcents": cliente.gasto_microcents() if cliente else 0,
+            },
+        ) from erro
 
-    total = m.bank_total
+    # ITENS do pool, não lançamentos bancários. `bank_total` era a unidade de
+    # uma fonte só; num CSV de issues não existe "lado bancário".
+    total = len(pool.items)
+    # A lacuna passa a sair do `Run`: o pool que SOBROU, contado, e não
+    # inferido da soma das contagens por resolver.
+    #
+    # O comentário que estava aqui explicava por que a lacuna usava
+    # `bank_matched_total` em vez daquela soma: ela assumiria que todo match
+    # carrega exatamente um id bancário — verdade hoje, não garantida pelo
+    # tipo — e, no dia em que deixasse de ser, a lacuna iria a negativo em vez
+    # de crescer. Com `run.unresolved` a suposição deixa de existir: o resto é
+    # contado. O defeito que ele registra continua real, e é por isso que ele
+    # sobrevive aqui em vez de ser apagado.
+    #
+    # Todas as classes, não só REGRA: o revisor humano é classe HUMANO, e uma
+    # decisão aprovada precisa fechar a lacuna do canvas em vez de continuar
+    # contada como aberta. `run.unresolved` já é isso por construção — o pool
+    # encolhe a cada resolução, de qualquer classe.
+    resolvidos = total - len(run.unresolved.items)
     por_resolver = [
         ResolverRunJSON(
             name=d.name,
             cost_class=d.cost_class.name,
-            # `resultado.matches_by_resolver`, chaveado por IDENTIDADE do
-            # resolver — não `m.matches_by_layer`, que é chaveado por
-            # PROVENIÊNCIA (`MatchResult.layer`). Os dois coincidem hoje
-            # (P3.2 em DECISOES.md), mas só um deles responde "quanto este
+            # Os dois chaveados por IDENTIDADE do resolver — não por
+            # PROVENIÊNCIA (`Resolution.produced_by`). Os dois coincidem hoje
+            # (P3.2 em DECISOES.md), mas só a identidade responde "quanto este
             # resolver da cascata resolveu" por construção.
-            matches=resultado.matches_by_resolver.get(d.name, 0),
-            rate=resultado.matches_by_resolver.get(d.name, 0) / total if total else 0.0,
-            microcents=m.cost_by_resolver_microcents.get(d.name, 0),
+            #
+            # `matches` conta RESOLUÇÕES; `rate` divide ITENS por ITENS. São
+            # dois campos do `Run` de propósito: dividir a contagem de
+            # resoluções pelo tamanho do pool daria metade do número na
+            # conciliação, onde toda resolução casa ao menos um bancário com um
+            # contábil — e o número certo num domínio de um item por resolução.
+            matches=run.resolved_by_resolver.get(d.name, 0),
+            rate=run.resolved_items_by_resolver.get(d.name, 0) / total if total else 0.0,
+            # A mesma guarda de `metrics.evaluate`: um resolver que não gastou
+            # token nenhum converte para zero em qualquer modelo, e uma cascata
+            # só de regras não deve exigir tabela de preços para ler zero.
+            microcents=(
+                c.microcents(modelo)
+                if (c := run.cost_by_resolver.get(d.name, Cost.zero())) != Cost.zero()
+                else 0
+            ),
         )
         for stage in definicao.stages
         for d in (r.describe() for r in stage.ordered())
     ]
-    # A lacuna usa `bank_matched_total`, não a soma das contagens por
-    # resolver. A soma assumiria que todo MatchResult carrega exatamente um id
-    # bancário — verdade hoje, mas não garantida pelo tipo — e, se algum dia
-    # deixasse de ser, a lacuna iria a negativo em vez de crescer.
-    # `bank_matched_total` já é o conjunto de ids bancários casados
-    # intersectado com o dataset real (ver `evaluate`), então não depende
-    # dessa suposição. Como consequência, a soma
-    # `sum(rate por resolver) + gap.rate == 1.0` deixa de assumir a invariante
-    # "um id bancário por match" e passa a VERIFICÁ-LA.
-    #
-    # `_total` (todas as classes), não `bank_matched` (só REGRA — Task 5): o
-    # revisor humano é classe HUMANO, e uma decisão aprovada precisa fechar a
-    # lacuna do canvas, não continuar contada como aberta.
-    total_resolvido = m.bank_matched_total
+
+    medido = None
+    if gabarito is not None:
+        # `evaluate` exige um `ReconcileResult`, e ele é um invólucro FINO do
+        # `Run`: das seis coisas que carrega, `evaluate` lê exatamente duas —
+        # `matches` e `matches_by_class`. `divergences` fica vazio de propósito
+        # e isso NÃO é uma meia-verdade escondida: traduzir o resto do pool em
+        # `Divergence` é trabalho do domínio, para a CLI, e `evaluate` não o
+        # consulta. Adaptar `metrics.evaluate` para receber um `Run` seria mais
+        # limpo e arrastaria os outros dois chamadores (CLI e grill) para
+        # dentro desta fatia — troca que não vale aqui.
+        m = evaluate(
+            gabarito,
+            ReconcileResult(
+                matches=list(run.resolutions),
+                divergences=[],
+                proposals=list(run.proposals),
+                cost_by_resolver=run.cost_by_resolver,
+                matches_by_resolver=run.resolved_by_resolver,
+                matches_by_class=run.resolutions_by_class,
+            ),
+            model=modelo,
+        )
+        # `fonte.seed`/`fonte.n` e não `pedido.fonte.*`: este ramo só roda para
+        # a fonte que TEM gabarito, e é ela quem carrega os dois. Ler do pedido
+        # daria o mesmo número por um caminho que o tipo não garante.
+        medido = MedidoJSON(
+            seed=fonte.seed,
+            n=fonte.n,
+            bank_total=m.bank_total,
+            deterministic_rate=m.deterministic_rate,
+        )
+
     return RunJSON(
-        seed=seed,
-        n=n,
-        bank_total=total,
-        deterministic_rate=m.deterministic_rate,
-        by_resolver=por_resolver,
+        input_ref=ref,
+        itens=total,
+        resolvidos=resolvidos,
+        por_resolver=por_resolver,
         gap=GapJSON(
-            items=total - total_resolvido,
-            rate=(total - total_resolvido) / total if total else 0.0,
+            items=total - resolvidos,
+            rate=(total - resolvidos) / total if total else 0.0,
         ),
+        custo_microcents=run.custo_total_microcents(modelo),
+        # O DESFECHO, e ele existe porque três coisas diferentes chegavam aqui
+        # com a mesma cara: "o modelo não achou nada", "paramos no teto" e "a
+        # API falhou". As duas últimas viram abstenção pela captura estreita de
+        # `agent/conversa.py` — que é o comportamento certo para o laço, porque
+        # uma queda de rede não pode derrubar um fechamento por causa de um
+        # item — mas o RUN precisa dizer o que de fato aconteceu com ele.
+        #
+        # Os números são CONTADOS, cada um na sua origem, e nenhum é derivado
+        # dos outros: `estado` sai do `Run` PERSISTIDO (o mesmo objeto que
+        # `/api/runs` devolve, então os dois não podem discordar),
+        # `propostas_por_tipo`/`falhas` do que o motor devolveu, e
+        # `teto_atingido` da MESMA variável que corrigiu o estado. Uma subtração
+        # entre eles seria o join frágil de sempre.
+        estado=run.state.value,
+        propostas_por_tipo=Counter(p.tipo for p in run.proposals),
+        falhas=sum(
+            1 for p in run.proposals if any(e.kind is TraceKind.ERRO for e in p.trace)
+        ),
+        teto_atingido=parou_no_teto,
+        contra_gabarito=medido,
     )
 
 
@@ -501,8 +927,16 @@ def _trace_store() -> JsonlTraceStore:
     return JsonlTraceStore(_RAIZ_FILA or Path("data"))
 
 
-def _abrir_fila(workflow_id: str, seed: int, n: int, taxa: float) -> tuple[Fila, str]:
-    dataset = dataset_id(seed, n, taxa)
+def _abrir_fila(workflow_id: str, ref: str) -> tuple[Fila, str]:
+    """A fila de decisões humanas de `(workflow, conjunto)`.
+
+    Recebia `(seed, n, taxa)` e chamava `dataset_id`. Passou a receber o `ref`
+    da FONTE porque uma fonte de arquivo não tem seed, n nem taxa — e porque o
+    `ref` sempre foi a identidade do conjunto. Para a sintética a chave é
+    byte a byte a mesma de antes (ver `dataset_de_ref`), então nenhuma fila já
+    gravada em `data/fila/**` deixa de ser encontrada.
+    """
+    dataset = dataset_de_ref(ref)
     return Fila(caminho_da_fila(workflow_id, dataset, raiz=_RAIZ_FILA)), dataset
 
 
@@ -583,7 +1017,13 @@ def ler_fila(
 ) -> FilaJSON:
     if workflow_id not in registry(_RAIZ_RECEITAS):
         raise HTTPException(status_code=404, detail=f"workflow desconhecido: {workflow_id}")
-    fila, dataset = _abrir_fila(workflow_id, seed, n, taxa_divergencia)
+    # A chave da fila sai do `ref` da fonte, e a fonte desta rota é a
+    # sintética — as duas telas precisam concordar sobre qual arquivo abrir, e
+    # montar a chave aqui à mão seria o join frágil de sempre.
+    fila, dataset = _abrir_fila(
+        workflow_id,
+        SyntheticSource(seed=seed, n=n, taxa_divergencia=taxa_divergencia).ref,
+    )
     ds = build_benchmark(seed=seed, n=n, taxa_divergencia=taxa_divergencia)
     por_id = {e.id: ("banco", e) for e in ds.bank}
     por_id.update({e.id: ("contabil", e) for e in ds.ledger})
@@ -612,7 +1052,10 @@ def decidir(
 ) -> ItemFilaJSON:
     if workflow_id not in registry(_RAIZ_RECEITAS):
         raise HTTPException(status_code=404, detail=f"workflow desconhecido: {workflow_id}")
-    fila, _ = _abrir_fila(workflow_id, seed, n, taxa_divergencia)
+    fila, _ = _abrir_fila(
+        workflow_id,
+        SyntheticSource(seed=seed, n=n, taxa_divergencia=taxa_divergencia).ref,
+    )
 
     # `corrigir` sem `tipo` nunca chega aqui: `DecisaoRequest._corrigir_exige_tipo`
     # (schemas.py) é um `@model_validator`, e o FastAPI devolve 422 antes de o

@@ -15,7 +15,7 @@ def _cache_limpo():
     """`executar()` delega para `_executar`, que é `lru_cache`d.
 
     Duas funções neste arquivo postam o EXATO mesmo corpo
-    (`{"seed": 1, "n": 100, "taxa_divergencia": 0.15}`): o canário
+    (`{"fonte": {"tipo": "sintetica", "seed": 1, "n": 100, "taxa_divergencia": 0.15}}`): o canário
     (`test_execucao_nao_chama_o_modelo_de_jeito_nenhum`) e
     `test_execucao_nao_serve_resolver_que_gasta_dinheiro`. Se uma rodar depois da
     outra com o cache ainda quente, a segunda vira cache hit — o corpo de
@@ -60,7 +60,7 @@ def test_execucao_nao_chama_o_modelo_de_jeito_nenhum(monkeypatch):
 
     resposta = cliente.post(
         "/api/workflows/conciliacao/runs",
-        json={"seed": 1, "n": 100, "taxa_divergencia": 0.15},
+        json={"fonte": {"tipo": "sintetica", "seed": 1, "n": 100, "taxa_divergencia": 0.15}},
     )
 
     assert resposta.status_code == 200
@@ -84,22 +84,25 @@ def test_execucao_nao_serve_resolver_que_gasta_dinheiro():
     """
     corpo = cliente.post(
         "/api/workflows/conciliacao/runs",
-        json={"seed": 1, "n": 100, "taxa_divergencia": 0.15},
+        json={"fonte": {"tipo": "sintetica", "seed": 1, "n": 100, "taxa_divergencia": 0.15}},
     ).json()
 
-    assert "AGENTE" not in [r["cost_class"] for r in corpo["by_resolver"]]
+    assert "AGENTE" not in [r["cost_class"] for r in corpo["por_resolver"]]
 
 
 def test_execucao_reporta_taxa_e_custo_por_resolver():
     corpo = cliente.post(
         "/api/workflows/conciliacao/runs",
-        json={"seed": 1, "n": 300, "taxa_divergencia": 0.15},
+        json={"fonte": {"tipo": "sintetica", "seed": 1, "n": 300, "taxa_divergencia": 0.15}},
     ).json()
 
-    nomes = [r["name"] for r in corpo["by_resolver"]]
+    nomes = [r["name"] for r in corpo["por_resolver"]]
     assert nomes == ["L1", "L2", "L3", "revisor"]
-    assert all(r["microcents"] == 0 for r in corpo["by_resolver"])
-    assert 0.80 < corpo["deterministic_rate"] < 0.95
+    assert all(r["microcents"] == 0 for r in corpo["por_resolver"])
+    # A taxa contra gabarito mudou de lugar, não de valor: ela só existe
+    # quando a fonte carrega verdade, e por isso deixou de morar no topo.
+    assert 0.80 < corpo["contra_gabarito"]["deterministic_rate"] < 0.95
+    assert corpo["custo_microcents"] == 0
 
 
 def test_a_lacuna_e_reportada_explicitamente():
@@ -108,18 +111,27 @@ def test_a_lacuna_e_reportada_explicitamente():
     # composição — o ponto mais valioso da tela.
     corpo = cliente.post(
         "/api/workflows/conciliacao/runs",
-        json={"seed": 1, "n": 300, "taxa_divergencia": 0.15},
+        json={"fonte": {"tipo": "sintetica", "seed": 1, "n": 300, "taxa_divergencia": 0.15}},
     ).json()
 
     assert corpo["gap"]["items"] > 0
-    soma = sum(r["rate"] for r in corpo["by_resolver"]) + corpo["gap"]["rate"]
+    # A soma fecha porque as duas pontas estão na MESMA unidade: `rate` é
+    # itens consumidos sobre itens do pool (`Run.resolved_items_by_resolver`),
+    # e a lacuna é o pool que sobrou. Enquanto `rate` dividia CONTAGEM DE
+    # RESOLUÇÕES pelo pool, esta soma dava 0.575 na conciliação.
+    soma = sum(r["rate"] for r in corpo["por_resolver"]) + corpo["gap"]["rate"]
     assert abs(soma - 1.0) < 1e-9
+    # E a conta em itens absolutos, que é a mesma afirmação sem as divisões.
+    assert corpo["resolvidos"] + corpo["gap"]["items"] == corpo["itens"]
+    # `matches` continua sendo a OUTRA unidade, e aqui ela é estritamente
+    # menor: toda resolução da conciliação consome dois itens ou mais.
+    assert 0 < sum(r["matches"] for r in corpo["por_resolver"]) < corpo["resolvidos"]
 
 
 def test_n_invalido_da_422_em_vez_de_estourar():
     resposta = cliente.post(
         "/api/workflows/conciliacao/runs",
-        json={"seed": 1, "n": 300, "taxa_divergencia": 5.0},
+        json={"fonte": {"tipo": "sintetica", "seed": 1, "n": 300, "taxa_divergencia": 5.0}},
     )
     assert resposta.status_code == 422
 
@@ -182,13 +194,1566 @@ def test_resolver_com_layer_diferente_do_name_e_reportado_pelo_proprio_nome(monk
 
     corpo = cliente.post(
         "/api/workflows/layer_diferente/runs",
-        json={"seed": 1, "n": 100, "taxa_divergencia": 0.15},
+        json={"fonte": {"tipo": "sintetica", "seed": 1, "n": 100, "taxa_divergencia": 0.15}},
     ).json()
 
-    (resolvido,) = corpo["by_resolver"]
+    (resolvido,) = corpo["por_resolver"]
     assert resolvido["name"] == "resolver_x"
     assert resolvido["matches"] == 3
-    assert resolvido["rate"] == pytest.approx(3 / corpo["bank_total"])
+    # Cada uma das três resoluções casa um bancário com um contábil: TRÊS
+    # resoluções, SEIS itens. `rate` é a segunda unidade, nunca a primeira —
+    # `3 / itens` era a fórmula errada, e ela passava porque nada mais a
+    # contradizia.
+    assert corpo["resolvidos"] == 6
+    assert resolvido["rate"] == pytest.approx(6 / corpo["itens"])
+    assert corpo["resolvidos"] + corpo["gap"]["items"] == corpo["itens"]
 
-    soma = sum(r["rate"] for r in corpo["by_resolver"]) + corpo["gap"]["rate"]
+    soma = sum(r["rate"] for r in corpo["por_resolver"]) + corpo["gap"]["rate"]
     assert soma == pytest.approx(1.0)
+
+
+def test_pedido_SEM_fonte_continua_valendo():
+    """A compatibilidade que mantém o canvas, a CLI do grill e os testes de
+    hoje sem edição. O default é a sintética com os mesmos números."""
+    from orchestrator.api.schemas import RunRequest
+
+    r = RunRequest()
+
+    assert r.fonte.tipo == "sintetica"
+    assert (r.fonte.seed, r.fonte.n, r.fonte.taxa_divergencia) == (1, 300, 0.15)
+    assert r.teto_microcents is None
+
+
+def test_a_fonte_e_uma_UNIAO_DISCRIMINADA_por_tipo():
+    """Um objeto com `seed?` ao lado de `caminho?` aceitaria os cruzamentos que
+    não significam nada — uma fonte sintética com caminho, um arquivo com
+    semente. `tipo` é o que torna os quatro cruzamentos dois."""
+    from orchestrator.api.schemas import RunRequest
+
+    r = RunRequest.model_validate(
+        {"fonte": {"tipo": "arquivo", "caminho": "issues.csv",
+                   "kind": "issue", "campo_id": "numero"}}
+    )
+
+    assert r.fonte.tipo == "arquivo"
+    assert r.fonte.caminho == "issues.csv"
+    assert not hasattr(r.fonte, "seed")
+
+
+def test_fonte_de_arquivo_EXIGE_kind_e_campo_id():
+    """Nenhum dos dois é inferível. `kind` é o que liga um degrau ao outro no
+    grafo, e `campo_id` é o que dá identidade ao item — adivinhar qualquer um
+    seria conveniência com cara de defeito."""
+    import pydantic
+
+    from orchestrator.api.schemas import RunRequest
+
+    with pytest.raises(pydantic.ValidationError):
+        RunRequest.model_validate({"fonte": {"tipo": "arquivo", "caminho": "x.csv"}})
+
+
+def test_teto_negativo_e_recusado_pelo_SCHEMA():
+    """Fora do handler, como `taxa_divergencia` já é: o FastAPI devolve 422
+    sozinho em vez de deixar a aritmética de orçamento levantar mais fundo."""
+    import pydantic
+
+    from orchestrator.api.schemas import RunRequest
+
+    with pytest.raises(pydantic.ValidationError):
+        RunRequest(teto_microcents=-1)
+
+
+def test_a_forma_ANTIGA_do_pedido_e_recusada_em_voz_alta():
+    """`seed` no topo era o pedido inteiro até esta fatia. Aceitar e ignorar
+    daria um run com parâmetros diferentes dos pedidos, sem erro — e um número
+    silenciosamente errado é pior que uma recusa."""
+    r = cliente.post("/api/workflows/conciliacao/runs", json={"seed": 2, "n": 60})
+
+    assert r.status_code == 422
+
+
+def _nao_vaza(detalhe: str, raiz) -> None:
+    r"""Nenhum caminho do SERVIDOR pode aparecer num corpo de erro.
+
+    Checa TRÊS grafias, e as três são necessárias. `str(raiz)` sozinho é uma
+    asserção vazia no Windows: `OSError.__str__` interpola o nome do arquivo
+    com `repr()`, então a mensagem do errno carrega `C:\\Users\\...` — com as
+    barras DOBRADAS —, e a comparação contra a grafia simples passa enquanto o
+    caminho inteiro está ali. Medido: trocar o `motivo` seguro do `_ler` por
+    `str(erro)` deixava a suíte verde com a árvore de diretórios no corpo.
+
+    A terceira grafia (`as_posix`) é o mesmo furo no CI, onde não há `\` para
+    dobrar mas o separador da mensagem pode diferir do de `str()`.
+    """
+    for forma in (str(raiz), str(raiz).replace("\\", "\\\\"), raiz.as_posix()):
+        assert forma not in detalhe, f"vazou {forma!r}"
+        assert str(raiz.parent) not in detalhe
+
+
+def test_a_fonte_SINTETICA_continua_medindo_contra_gabarito():
+    """O caminho de hoje, com a forma nova. A conciliação não perde nada."""
+    r = cliente.post("/api/workflows/conciliacao/runs", json={})
+
+    assert r.status_code == 200, r.text
+    corpo = r.json()
+    assert corpo["contra_gabarito"] is not None
+    assert corpo["contra_gabarito"]["bank_total"] > 0
+    assert 0.0 <= corpo["contra_gabarito"]["deterministic_rate"] <= 1.0
+    assert corpo["input_ref"].startswith("synth:")
+
+
+def test_a_fonte_de_ARQUIVO_nao_inventa_taxa_de_acerto(tmp_path, monkeypatch):
+    """O teste que existe por causa de um bug real.
+
+    Antes desta fatia, compor uma cascata de compras e rodar devolvia `200` com
+    `deterministic_rate: 0.0` e lacuna de 100% — um número que parece medido e
+    não é. AUSENTE é a forma de dizer "não medido contra verdade"; `0.0` seria
+    a mesma mentira com outra roupa.
+    """
+    import orchestrator.api.app as api_app
+
+    raiz = tmp_path / "entradas"
+    raiz.mkdir()
+    (raiz / "itens.csv").write_text("id,texto\na,um\nb,dois\n", encoding="utf-8")
+    monkeypatch.setattr(api_app, "_RAIZ_ENTRADAS", raiz)
+
+    r = cliente.post(
+        "/api/workflows/conciliacao/runs",
+        json={"fonte": {"tipo": "arquivo", "caminho": "itens.csv",
+                        "kind": "lancamento", "campo_id": "id"}},
+    )
+
+    assert r.status_code == 200, r.text
+    corpo = r.json()
+    assert corpo["contra_gabarito"] is None
+    assert corpo["itens"] == 2
+    assert corpo["input_ref"].startswith("file:")
+
+
+def test_caminho_fora_da_raiz_vira_422_e_nao_500(tmp_path, monkeypatch):
+    import orchestrator.api.app as api_app
+
+    raiz = tmp_path / "entradas"
+    raiz.mkdir()
+    monkeypatch.setattr(api_app, "_RAIZ_ENTRADAS", raiz)
+
+    r = cliente.post(
+        "/api/workflows/conciliacao/runs",
+        json={"fonte": {"tipo": "arquivo", "caminho": "../segredo.csv",
+                        "kind": "k", "campo_id": "id"}},
+    )
+
+    assert r.status_code == 422
+    assert "raiz" in r.json()["detail"]
+
+
+def test_arquivo_inexistente_vira_422_e_NAO_VAZA_a_raiz(tmp_path, monkeypatch):
+    """Um caminho que passa na cerca mas não existe em disco.
+
+    A leitura do `ArquivoSource` é preguiçosa — o `__post_init__` só confere a
+    raiz —, então este caminho não falha na CONSTRUÇÃO: ele falha no `stat()`
+    de `_bytes()`, e sem tratamento vira 500.
+
+    A mensagem cita só o que o cliente pediu. `_RAIZ_ENTRADAS` é um caminho do
+    SERVIDOR, e devolvê-lo num erro entrega a árvore de diretórios a quem
+    sondar com nomes errados — a mesma informação que a cerca existe para
+    negar, vazando pela porta dos fundos.
+    """
+    import orchestrator.api.app as api_app
+
+    raiz = tmp_path / "entradas"
+    raiz.mkdir()
+    monkeypatch.setattr(api_app, "_RAIZ_ENTRADAS", raiz)
+
+    r = cliente.post(
+        "/api/workflows/conciliacao/runs",
+        json={"fonte": {"tipo": "arquivo", "caminho": "nao-existe.csv",
+                        "kind": "k", "campo_id": "id"}},
+    )
+
+    assert r.status_code == 422, r.text
+    detalhe = r.json()["detail"]
+    assert "nao-existe.csv" in detalhe
+    _nao_vaza(detalhe, raiz)
+
+
+def test_arquivo_malformado_vira_422_com_a_linha_e_NAO_500(tmp_path, monkeypatch):
+    """O `ArquivoSource` recusa alto, com o número da linha. Essa recusa é
+    sobre a ENTRADA do cliente, então ela é 422 — deixá-la subir daria 500, que
+    diz "o servidor quebrou" sobre um arquivo que o usuário pode consertar."""
+    import orchestrator.api.app as api_app
+
+    raiz = tmp_path / "entradas"
+    raiz.mkdir()
+    (raiz / "itens.csv").write_text("id,texto\n,um\n", encoding="utf-8")
+    monkeypatch.setattr(api_app, "_RAIZ_ENTRADAS", raiz)
+
+    r = cliente.post(
+        "/api/workflows/conciliacao/runs",
+        json={"fonte": {"tipo": "arquivo", "caminho": "itens.csv",
+                        "kind": "k", "campo_id": "id"}},
+    )
+
+    assert r.status_code == 422, r.text
+    assert "linha 1" in r.json()["detail"]
+    _nao_vaza(r.json()["detail"], raiz)
+
+
+def test_o_custo_da_execucao_volta_na_resposta():
+    """`Run.cost_by_resolver` já acumula entre rondas. Gasto que não aparece na
+    tela é gasto que ninguém revisa."""
+    corpo = cliente.post("/api/workflows/conciliacao/runs", json={}).json()
+
+    assert "custo_microcents" in corpo
+    assert corpo["custo_microcents"] >= 0
+
+
+def test_a_fila_de_uma_fonte_de_arquivo_e_ESCOPADA_por_conteudo(tmp_path, monkeypatch):
+    """A chave que o ENDPOINT de fato usa, observada — não recalculada.
+
+    A primeira versão deste teste comparava `dataset_de_ref(ref_antes)` com
+    `dataset_de_ref(ref_depois)`: duas funções puras contra elas mesmas. Ela
+    passava com a chave da fila FIXADA em `"synth:s1-n30-t0.15"` dentro de
+    `_executar` — ou seja, provava que o `ref` muda com o conteúdo e nada sobre
+    a fila. Aqui o `caminho_da_fila` do módulo é espionado, então o que a
+    asserção vê é o caminho que o servidor abriu.
+    """
+    import orchestrator.api.app as api_app
+    from orchestrator.review.fila import caminho_da_fila, dataset_de_ref
+
+    raiz = tmp_path / "entradas"
+    raiz.mkdir()
+    alvo = raiz / "itens.csv"
+    alvo.write_text("id,texto\na,um\n", encoding="utf-8")
+    monkeypatch.setattr(api_app, "_RAIZ_ENTRADAS", raiz)
+
+    abertas: list[tuple[str, str]] = []
+
+    def _espiao(workflow_id, dataset, raiz=None):
+        abertas.append((workflow_id, dataset))
+        return caminho_da_fila(workflow_id, dataset, raiz=raiz)
+
+    monkeypatch.setattr(api_app, "caminho_da_fila", _espiao)
+
+    def _rodar() -> str:
+        return cliente.post(
+            "/api/workflows/conciliacao/runs",
+            json={"fonte": {"tipo": "arquivo", "caminho": "itens.csv",
+                            "kind": "k", "campo_id": "id"}},
+        ).json()["input_ref"]
+
+    antes = _rodar()
+    alvo.write_text("id,texto\na,OUTRO\n", encoding="utf-8")
+    depois = _rodar()
+
+    assert antes != depois
+    # O endpoint abriu UMA fila por execução, no workflow certo, com a chave
+    # derivada do `ref` da fonte de ARQUIVO — nunca a de uma sintética.
+    assert [w for w, _ in abertas] == ["conciliacao", "conciliacao"]
+    assert [d for _, d in abertas] == [dataset_de_ref(antes), dataset_de_ref(depois)]
+    assert abertas[0][1] != abertas[1][1]
+    for _, chave in abertas:
+        assert chave.startswith("file-")
+
+
+def _registrar(monkeypatch, workflow_id: str, fabrica) -> None:
+    """Acrescenta um workflow ao registro, preservando os reais.
+
+    `registry()` monta um dict NOVO a cada chamada; envolver a função original
+    é o mesmo padrão de
+    `test_resolver_com_layer_diferente_do_name_e_reportado_pelo_proprio_nome`.
+    """
+    from orchestrator.workflows import registry as _original
+
+    def _com_extra(raiz=None):
+        fabricas = _original(raiz)
+        fabricas[workflow_id] = fabrica
+        return fabricas
+
+    monkeypatch.setattr("orchestrator.api.app.registry", _com_extra)
+
+
+def _triagem():
+    """Uma cascata GENÉRICA: um resolver que lê o payload como MAPA.
+
+    É a forma que uma fonte de arquivo entrega (`ArquivoSource` monta
+    `payload=linha`, um `dict`) e a que `agent/declarado.py::_campos` já
+    aceita — ou seja, o caminho principal de quem compõe no canvas sobre um
+    CSV.
+    """
+    from orchestrator.kernel.cost import CostClass
+    from orchestrator.kernel.definition import Stage, WorkflowDefinition
+    from orchestrator.kernel.resolution import Resolution
+    from orchestrator.kernel.resolver import ResolverDescription, ResolverOutput
+
+    class FechaBaixa:
+        name = "fecha_baixa"
+        cost_class = CostClass.REGRA
+
+        def describe(self) -> ResolverDescription:
+            # SEM `payloads`: este resolver não exige tipo nenhum, e é por isso
+            # que ele roda sobre um CSV.
+            return ResolverDescription(
+                self.name, self.cost_class, "fecha prioridade baixa"
+            )
+
+        def resolve(self, work):
+            return ResolverOutput(
+                resolutions=[
+                    Resolution(
+                        item_ids=frozenset({i.id}),
+                        produced_by=self.name,
+                        rule="prioridade baixa fecha sozinha",
+                    )
+                    for i in work.items
+                    if i.payload.get("prioridade") == "baixa"
+                ]
+            )
+
+    def fabrica(ctx):
+        return WorkflowDefinition(
+            id="triagem",
+            name="triagem de issues",
+            stages=(Stage(name="triar", cascade=(FechaBaixa(),)),),
+        )
+
+    return fabrica
+
+
+def test_um_CSV_de_verdade_e_CONSUMIDO_e_produz_resolucao(tmp_path, monkeypatch):
+    """A evidência que esta fatia existe para produzir.
+
+    Os outros testes de fonte de arquivo usam `kind` que NENHUM resolver
+    consome (`lancamento`, `k`) — então eles provam que o arquivo é lido,
+    hasheado e vira pool, e não provam que alguém o TOCA. Uma suíte verde
+    inteira sobre um CSV que ninguém abre é a forma mais cara de teste que
+    existe, e foi o que escondeu o `AttributeError` do `kind="banco"`.
+
+    Aqui a cascata consome o kind do arquivo e lê um campo dele.
+    """
+    import orchestrator.api.app as api_app
+
+    raiz = tmp_path / "entradas"
+    raiz.mkdir()
+    (raiz / "issues.csv").write_text(
+        "numero,titulo,prioridade\n"
+        "1,quebra no login,baixa\n"
+        "2,vazamento de memoria,alta\n"
+        "3,typo no rodape,baixa\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(api_app, "_RAIZ_ENTRADAS", raiz)
+    _registrar(monkeypatch, "triagem", _triagem())
+
+    r = cliente.post(
+        "/api/workflows/triagem/runs",
+        json={"fonte": {"tipo": "arquivo", "caminho": "issues.csv",
+                        "kind": "issue", "campo_id": "numero"}},
+    )
+
+    assert r.status_code == 200, r.text
+    corpo = r.json()
+    assert corpo["itens"] == 3
+    # As duas de prioridade baixa foram resolvidas LENDO o campo do CSV. Se o
+    # arquivo não fosse tocado, isto seria 0.
+    assert corpo["resolvidos"] == 2
+    assert corpo["gap"]["items"] == 1
+    (linha,) = corpo["por_resolver"]
+    assert (linha["name"], linha["matches"]) == ("fecha_baixa", 2)
+    assert linha["rate"] == pytest.approx(2 / 3)
+    assert corpo["contra_gabarito"] is None
+    assert corpo["input_ref"].startswith("file:issues.csv@")
+    soma = sum(x["rate"] for x in corpo["por_resolver"]) + corpo["gap"]["rate"]
+    assert soma == pytest.approx(1.0)
+
+
+def test_o_run_de_um_CSV_e_PERSISTIDO_com_o_ref_do_arquivo(tmp_path, monkeypatch):
+    """A execução sobre arquivo entra no histórico como qualquer outra."""
+    import orchestrator.api.app as api_app
+
+    raiz = tmp_path / "entradas"
+    raiz.mkdir()
+    (raiz / "issues.csv").write_text("numero,prioridade\n1,baixa\n", encoding="utf-8")
+    monkeypatch.setattr(api_app, "_RAIZ_ENTRADAS", raiz)
+    _registrar(monkeypatch, "triagem", _triagem())
+
+    corpo = cliente.post(
+        "/api/workflows/triagem/runs",
+        json={"fonte": {"tipo": "arquivo", "caminho": "issues.csv",
+                        "kind": "issue", "campo_id": "numero"}},
+    ).json()
+
+    (resumo,) = cliente.get("/api/runs", params={"workflow_id": "triagem"}).json()
+    assert resumo["input_ref"] == corpo["input_ref"]
+    assert resumo["resolved"] == 1
+
+
+def test_payload_de_dict_contra_resolver_TIPADO_e_422_e_nao_500(tmp_path, monkeypatch):
+    """A combinação que estourava.
+
+    `ArquivoSource` entrega dicionário; `ExactMatcher` lê `be.document`. Com
+    `kind="banco"` o CSV cai direto no `banco()` da conciliação e o resultado
+    era um 500 de `AttributeError`, vindo de três camadas abaixo de quem
+    escolheu as duas pontas.
+
+    A recusa nomeia o RESOLVER e o KIND, porque é a combinação que está errada
+    e não nenhuma das duas escolhas sozinha.
+    """
+    import orchestrator.api.app as api_app
+
+    raiz = tmp_path / "entradas"
+    raiz.mkdir()
+    (raiz / "itens.csv").write_text("id,texto\na,um\n", encoding="utf-8")
+    monkeypatch.setattr(api_app, "_RAIZ_ENTRADAS", raiz)
+
+    r = cliente.post(
+        "/api/workflows/conciliacao/runs",
+        json={"fonte": {"tipo": "arquivo", "caminho": "itens.csv",
+                        "kind": "banco", "campo_id": "id"}},
+    )
+
+    assert r.status_code == 422, r.text
+    detalhe = r.json()["detail"]
+    assert "L1" in detalhe
+    assert "banco" in detalhe
+    assert "BankEntry" in detalhe
+    assert "dict" in detalhe
+
+
+def test_a_fonte_SINTETICA_atravessa_a_mesma_conferencia_de_payload():
+    """A guarda não pode ter transformado o caminho de hoje em 422 — ela é uma
+    recusa de COMBINAÇÃO, e `SyntheticSource` entrega exatamente os tipos que a
+    conciliação declara exigir."""
+    r = cliente.post("/api/workflows/conciliacao/runs", json={})
+
+    assert r.status_code == 200, r.text
+
+
+def test_um_resolver_que_NAO_declara_payload_nao_e_conferido(tmp_path, monkeypatch):
+    """O outro lado da guarda, e o que a mantém honesta.
+
+    Exigir declaração de todo resolver tornaria impossível rodar qualquer
+    cascata genérica sobre um arquivo — que é a tese desta fatia. `payloads`
+    vazio significa "não inspeciono o payload", e um resolver assim roda sobre
+    qualquer fonte.
+    """
+    import orchestrator.api.app as api_app
+    from orchestrator.kernel.resolver import ResolverDescription
+
+    fabrica = _triagem()
+    (stage,) = fabrica(None).stages
+    (resolver,) = stage.cascade
+    assert resolver.describe().payloads == {}
+    # E o default da própria descrição, para o dia em que alguém "arrumar" o
+    # campo para exigir valor.
+    assert ResolverDescription("x", resolver.cost_class, "y").payloads == {}
+
+    raiz = tmp_path / "entradas"
+    raiz.mkdir()
+    (raiz / "issues.csv").write_text("numero,prioridade\n1,baixa\n", encoding="utf-8")
+    monkeypatch.setattr(api_app, "_RAIZ_ENTRADAS", raiz)
+    _registrar(monkeypatch, "triagem", fabrica)
+
+    r = cliente.post(
+        "/api/workflows/triagem/runs",
+        json={"fonte": {"tipo": "arquivo", "caminho": "issues.csv",
+                        "kind": "issue", "campo_id": "numero"}},
+    )
+
+    assert r.status_code == 200, r.text
+
+
+def test_campo_desconhecido_DENTRO_da_fonte_e_recusado():
+    """A trava um nível abaixo do `RunRequest`.
+
+    `extra="forbid"` no `RunRequest` de fora não desce para os modelos da
+    união: sem a trava nos dois, `{"tipo": "sintetica", "sede": 2}` dropava
+    `sede` em silêncio e rodava com `seed=1` — um run com parâmetro diferente
+    do pedido, exatamente o defeito que a trava de fora existe para impedir.
+    """
+    r = cliente.post(
+        "/api/workflows/conciliacao/runs",
+        json={"fonte": {"tipo": "sintetica", "sede": 2}},
+    )
+
+    assert r.status_code == 422, r.text
+    assert "sede" in r.text
+
+
+def test_campo_desconhecido_dentro_da_fonte_de_ARQUIVO_e_recusado():
+    """O irmão do de cima. Aqui os quatro campos são obrigatórios, então um
+    typo já levava 422 por ausência; o que a trava fecha é o campo A MAIS —
+    um `max_linhas` que o cliente acha que está configurando um teto."""
+    r = cliente.post(
+        "/api/workflows/conciliacao/runs",
+        json={"fonte": {"tipo": "arquivo", "caminho": "x.csv", "kind": "k",
+                        "campo_id": "id", "max_linhas": 10}},
+    )
+
+    assert r.status_code == 422, r.text
+    assert "max_linhas" in r.text
+
+
+def test_uma_falha_da_fonte_SINTETICA_sobe_como_erro_de_SERVIDOR(monkeypatch):
+    """O `_ler` traduz falha de leitura em 422, e só para a fonte de ARQUIVO.
+
+    Uma fonte sintética não toca o disco: se ela levanta, é defeito do
+    servidor. Traduzir isso em 422 diria ao cliente que o pedido dele estava
+    errado sobre um bug que não é dele — um erro confiante, que é pior que o
+    500 honesto.
+    """
+    from orchestrator.synth.benchmark import SyntheticSource
+
+    def _explode(self):
+        raise ValueError("defeito do gerador, não do pedido")
+
+    monkeypatch.setattr(SyntheticSource, "load", _explode)
+
+    with pytest.raises(ValueError, match="defeito do gerador"):
+        cliente.post("/api/workflows/conciliacao/runs", json={})
+
+
+def _transformador():
+    """Um stage que CONSOME `issue` e PRODUZ `banco`, com payload de dicionário.
+
+    `produced` e `WorkSet.com()` existem desde a fatia do grafo: um resolver
+    pode criar itens de outro `kind`, e o stage seguinte os consome.
+    """
+    from orchestrator.kernel.cost import CostClass
+    from orchestrator.kernel.definition import Stage, WorkflowDefinition
+    from orchestrator.kernel.resolution import Resolution
+    from orchestrator.kernel.resolver import ResolverDescription, ResolverOutput
+    from orchestrator.kernel.work import WorkItem
+    from orchestrator.matching.exact import ExactMatcher
+
+    class Transforma:
+        name = "transforma"
+        cost_class = CostClass.REGRA
+
+        def describe(self) -> ResolverDescription:
+            return ResolverDescription(self.name, self.cost_class, "issue vira lançamento")
+
+        def resolve(self, work):
+            return ResolverOutput(
+                resolutions=[
+                    Resolution(item_ids=frozenset({i.id}), produced_by=self.name, rule="t")
+                    for i in work.items
+                ],
+                produced=tuple(
+                    # Payload de DICIONÁRIO, que é o que uma fonte de arquivo
+                    # entrega e o que este resolver genérico repassa.
+                    WorkItem(id=f"b-{i.id}", kind="banco", payload=dict(i.payload),
+                             origem=self.name)
+                    for i in work.items
+                ),
+            )
+
+    def fabrica(ctx):
+        return WorkflowDefinition(
+            id="produz",
+            name="produz lançamento a partir de issue",
+            stages=(
+                Stage(name="transformar", cascade=(Transforma(),),
+                      consome=frozenset({"issue"}), produz=frozenset({"banco"})),
+                # L1 EXIGE `BankEntry` para o kind `banco` — e vai receber dict.
+                Stage(name="conciliar", cascade=(ExactMatcher(),),
+                      consome=frozenset({"banco"})),
+            ),
+        )
+
+    return fabrica
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "LACUNA CONHECIDA: `_conferir_payload` inspeciona o pool INICIAL. Um "
+        "stage que PRODUZ itens os injeta depois da conferência, então um "
+        "produtor genérico alimentando um consumidor tipado traz de volta o "
+        "500 original. Fechar isso exige uma declaração do lado do PRODUTOR "
+        "(que tipo ele emite por kind), que não existe, e o ponto de "
+        "aplicação seria `runtime/engine.py` — onde `produced` entra no pool "
+        "e onde o motor, por desenho, nunca inspeciona payload. Inalcançável "
+        "por configuração publicada: nenhum bloco do catálogo produz."
+    ),
+)
+def test_um_stage_PRODUTOR_ainda_fura_a_conferencia_de_payload(tmp_path, monkeypatch):
+    """A borda protege o que entra pela FONTE, não o que nasce no meio do run.
+
+    Este teste falha de propósito, e o `strict=True` é o catraca: no dia em que
+    alguém fechar a lacuna, ele passa a dar XPASS e a suíte fica vermelha até
+    que a marcação saia junto. Um `xfail` frouxo viraria um teste que ninguém
+    percebe ter sido consertado — ou quebrado de novo.
+    """
+    import orchestrator.api.app as api_app
+
+    raiz = tmp_path / "entradas"
+    raiz.mkdir()
+    (raiz / "issues.csv").write_text("id,texto\n1,um\n", encoding="utf-8")
+    monkeypatch.setattr(api_app, "_RAIZ_ENTRADAS", raiz)
+    _registrar(monkeypatch, "produz", _transformador())
+
+    local = TestClient(api_app.app, raise_server_exceptions=False)
+    r = local.post(
+        "/api/workflows/produz/runs",
+        json={"fonte": {"tipo": "arquivo", "caminho": "issues.csv",
+                        "kind": "issue", "campo_id": "id"}},
+    )
+
+    # O que DEVERIA acontecer. Hoje é 500, com `AttributeError: 'dict' object
+    # has no attribute 'document'` vindo de `matching/exact.py`.
+    assert r.status_code == 422, r.status_code
+
+
+def test_a_lacuna_do_produtor_nao_e_alcancavel_pelo_CATALOGO():
+    """O que torna a lacuna acima documentável em vez de urgente.
+
+    Nenhum bloco do catálogo produz item nenhum: `produz` é declarado no
+    `Stage`, e as duas vias de composição (`grill.receita.construir` e
+    `authoring.composicao.construir_composicao`) montam stages sem ele. Se
+    isso mudar, a lacuna passa a ser alcançável pela tela e este teste é quem
+    avisa.
+    """
+    # `descrever` em vez de `registry` + `construir_definicao`: ela isola a
+    # receita que não constrói, então uma receita quebrada no `data/` de um
+    # desenvolvedor não transforma esta asserção num erro sobre outro assunto.
+    from orchestrator.workflows import descrever
+
+    for workflow_id, definicao in descrever():
+        for stage in definicao.stages:
+            assert stage.produz == frozenset(), (workflow_id, stage.name)
+
+
+# ===========================================================================
+# EXECUTAR COM AGENTE, COM TETO
+#
+# A regra deste módulo ficou MAIS PRECISA, não mais frouxa. Era "nenhum
+# endpoint gasta dinheiro", e o 409 de "etapa paga" era a porta. Agora:
+#
+#     EXECUTAR pela web GASTA quando a cascata tem agente, com teto, e o teto
+#     é dito antes.
+#
+# As três guardas são as de `api/entrevista.py`, e nenhuma é opcional:
+#   1. teto por unidade de trabalho, aplicado por REQUISIÇÃO;
+#   2. o custo volta em CADA desfecho — inclusive no que falhou;
+#   3. sem chave, recusa legível.
+# ===========================================================================
+
+
+# 100 tokens de entrada + 50 de saída em `claude-opus-5`: 100*500 + 50*2500.
+# Escrito uma vez, derivado da tabela de preços, usado nas asserções de teto.
+_POR_CHAMADA = 100 * 500 + 50 * 2500  # 175.000 µ¢
+
+
+def _resposta(tipo: str = "BUG", *, entrada: int = 100, saida: int = 50):
+    """Uma resposta de modelo válida para o vocabulário do `triador`."""
+    from orchestrator.agent.llm import LLMResponse
+    from orchestrator.kernel.cost import Cost
+
+    return LLMResponse(
+        text=(
+            '{"tipo": "' + tipo + '", "explicacao": "porque sim", '
+            '"evidencia": ["o titulo"], "confianca": "ALTA"}'
+        ),
+        tool_calls=[],
+        cost=Cost(input_tokens=entrada, output_tokens=saida),
+    )
+
+
+def _declarado(**kw):
+    from orchestrator.agent.declarado import AgenteDeclarado
+
+    base = dict(
+        name="gastador",
+        system="classifique",
+        kind="issue",
+        prompt="{titulo}",
+        tipos=("BUG", "FEATURE"),
+        abstem_com="NAO_SEI",
+        max_turns=1,
+    )
+    base.update(kw)
+    return AgenteDeclarado(**base)
+
+
+def _fabrica_com_agentes(*declaracoes, workflow_id="com-agente"):
+    """Uma cascata de agentes declarados que HONRA `ctx.cliente`.
+
+    É a mesma costura de `workflows._de_receita`: `None` continua significando
+    `ClienteAusente` — a tranca —, e quem executa passa um cliente de verdade.
+    """
+    from orchestrator.agent.declarado import construir_agente
+    from orchestrator.grill.catalogo import ClienteAusente
+    from orchestrator.kernel.definition import Stage, WorkflowDefinition
+
+    def fabrica(ctx):
+        cliente_do_ctx = ctx.cliente if ctx.cliente is not None else ClienteAusente()
+        return WorkflowDefinition(
+            id=workflow_id,
+            name="cascata com agente",
+            stages=(
+                Stage(
+                    name="triar",
+                    cascade=tuple(
+                        construir_agente(d, cliente_do_ctx) for d in declaracoes
+                    ),
+                ),
+            ),
+        )
+
+    return fabrica
+
+
+def _csv_de_issues(tmp_path, monkeypatch, linhas: int = 3) -> None:
+    import orchestrator.api.app as api_app
+
+    raiz = tmp_path / "entradas"
+    raiz.mkdir(exist_ok=True)
+    corpo = "numero,titulo,corpo\n" + "".join(
+        f"{i},titulo {i},corpo {i}\n" for i in range(1, linhas + 1)
+    )
+    (raiz / "issues.csv").write_text(corpo, encoding="utf-8")
+    monkeypatch.setattr(api_app, "_RAIZ_ENTRADAS", raiz)
+
+
+_FONTE_ISSUES = {
+    "tipo": "arquivo",
+    "caminho": "issues.csv",
+    "kind": "issue",
+    "campo_id": "numero",
+}
+
+
+def _cliente_falso(monkeypatch, respostas, teto_visto: dict | None = None):
+    """Troca SÓ a ponta de rede. O teto continua passando por `ClienteComTeto`.
+
+    Monkeypatchar `_cliente_de_execucao` para devolver um `FakeLLMClient` cru
+    provaria o roteamento e nada sobre o teto — o teto seria um argumento que
+    o teste recebe e joga fora. Aqui o embrulho REAL é construído, com o teto
+    REAL do pedido, e só o cliente de dentro é falso.
+    """
+    import orchestrator.api.app as api_app
+    from orchestrator.agent.llm import FakeLLMClient
+    from orchestrator.agent.teto import ClienteComTeto
+
+    fake = FakeLLMClient(list(respostas))
+
+    def _de_execucao(teto):
+        if teto_visto is not None:
+            teto_visto["teto"] = teto
+        return ClienteComTeto(fake, teto_microcents=teto)
+
+    monkeypatch.setattr(api_app, "_tem_chave", lambda: True)
+    monkeypatch.setattr(api_app, "_cliente_de_execucao", _de_execucao)
+    return fake
+
+
+# -- guarda 3: sem chave, recusa legível ------------------------------------
+
+
+def test_sem_chave_a_execucao_com_agente_e_recusada_com_MOTIVO(monkeypatch):
+    """Guarda 3, a mesma do chat. Sem chave, recusa legível — em vez de o SDK
+    levantar no meio do laço com o trabalho já pela metade."""
+    import orchestrator.api.app as api_app
+
+    monkeypatch.setattr(api_app, "_tem_chave", lambda: False)
+    _registrar(monkeypatch, "com-agente", _fabrica_com_agentes(_declarado()))
+
+    # COM teto: o teto é exigência do PEDIDO e é conferida antes, então um
+    # pedido sem ele levaria 422 e este teste não chegaria a observar o 409.
+    r = cliente.post(
+        "/api/workflows/com-agente/runs", json={"teto_microcents": 1_000_000}
+    )
+
+    assert r.status_code == 409, r.text
+    assert "chave" in r.json()["detail"].lower()
+    # E o texto diz o que fazer, nas DUAS saídas: configurar, ou rodar pela CLI.
+    assert "ANTHROPIC_API_KEY" in r.json()["detail"]
+
+
+def test_cascata_SEM_agente_nao_exige_chave(monkeypatch):
+    """A regra ficou mais precisa, não mais frouxa: só gasta quem tem agente."""
+    import orchestrator.api.app as api_app
+
+    monkeypatch.setattr(api_app, "_tem_chave", lambda: False)
+
+    r = cliente.post("/api/workflows/conciliacao/runs", json={})
+
+    assert r.status_code == 200, r.text
+
+
+def test_sem_agente_o_cliente_de_execucao_NUNCA_e_construido(monkeypatch):
+    """A tranca, não a porta. `ClienteAusente` continua sendo o default, e
+    `_cliente_de_execucao` — o único caminho daqui até o modelo — não é sequer
+    chamado quando não há agente na cascata."""
+    import orchestrator.api.app as api_app
+
+    def _proibido(teto):  # pragma: no cover - o teste falha se isto rodar
+        raise AssertionError("cascata sem agente construiu cliente de execução")
+
+    monkeypatch.setattr(api_app, "_cliente_de_execucao", _proibido)
+    monkeypatch.setattr(api_app, "_tem_chave", lambda: True)
+
+    assert cliente.post("/api/workflows/conciliacao/runs", json={}).status_code == 200
+
+
+# -- guarda 1: o teto, dito antes ------------------------------------------
+
+
+def test_o_teto_do_pedido_chega_ao_agente(monkeypatch):
+    """Guarda 1. O teto é dito ANTES, e é o do pedido que vale — não o default
+    do agente, que é generoso por ser um default."""
+    vistos: dict = {}
+    _cliente_falso(monkeypatch, [_resposta()], teto_visto=vistos)
+    _registrar(
+        monkeypatch, "com-teto", _fabrica_com_agentes(_declarado(), workflow_id="com-teto")
+    )
+
+    cliente.post("/api/workflows/com-teto/runs", json={"teto_microcents": 12345})
+
+    assert vistos["teto"] == 12345
+
+
+def test_o_teto_do_pedido_PARA_o_gasto(tmp_path, monkeypatch):
+    """O teto não é decoração: ele para de gastar.
+
+    Três issues, uma chamada por issue, 175.000 µ¢ cada. Com teto de 100.000 µ¢
+    a PRIMEIRA passa — nada tinha sido gasto ainda — e as duas seguintes nem
+    chegam ao modelo.
+
+    E é por isso que o gasto final (175.000) fica ACIMA do teto (100.000): não
+    há como saber o custo de uma chamada sem fazê-la, então o teto é conferido
+    ANTES de cada uma e a última pode ultrapassá-lo por um turno. É a mesma
+    forma do orçamento por item em `agent/conversa.py`, está dita no
+    `ClienteComTeto`, e o teste a fixa em vez de escolher números que a
+    escondam — um teto lido como "limite exato" viraria um relatório de bug.
+    """
+    _csv_de_issues(tmp_path, monkeypatch, linhas=3)
+    fake = _cliente_falso(monkeypatch, [_resposta()] * 3)
+    _registrar(monkeypatch, "com-agente", _fabrica_com_agentes(_declarado()))
+
+    r = cliente.post(
+        "/api/workflows/com-agente/runs",
+        json={"fonte": _FONTE_ISSUES, "teto_microcents": 100_000},
+    )
+
+    assert r.status_code == 200, r.text
+    assert len(fake.chamadas) == 1
+    assert r.json()["custo_microcents"] == _POR_CHAMADA > 100_000
+
+
+def test_pedido_com_agente_SEM_teto_e_RECUSADO_pela_web(monkeypatch):
+    """"Gasta com teto, E O TETO É DITO ANTES" — a segunda metade é a regra.
+
+    Um pedido que omite `teto_microcents` não disse teto nenhum: ele HERDA o do
+    agente, que é 400.000.000 µ¢ = **US$ 4,00 por requisição**. Sem esta guarda,
+    `POST /api/workflows/<pago>/runs` com corpo `{}`, sem autenticação, sem
+    cache e sem limite de taxa, é uma torneira de US$ 4 por F5 — e a herança
+    silenciosa é exatamente o fallback que a primeira regra do projeto proíbe.
+
+    A recusa é 422 e não 409: falta um campo do PEDIDO. E vem ANTES da guarda de
+    chave, pela mesma ordem que o resto desta rota segue — erro do pedido antes
+    de erro do ambiente.
+    """
+    import orchestrator.api.app as api_app
+
+    monkeypatch.setattr(api_app, "_tem_chave", lambda: True)
+    _registrar(monkeypatch, "com-agente", _fabrica_com_agentes(_declarado()))
+
+    r = cliente.post("/api/workflows/com-agente/runs", json={})
+
+    assert r.status_code == 422, r.text
+    # A recusa diz O QUE MANDAR, com a unidade. Uma recusa que não diz isso
+    # manda a pessoa adivinhar entre dólar, centavo e micro-centavo.
+    assert "teto_microcents" in r.json()["detail"]
+    assert "micro-centavos" in r.json()["detail"]
+
+
+def test_o_teto_AUSENTE_continua_valido_para_quem_NAO_e_a_web(monkeypatch):
+    """A exigência é da BORDA HTTP, não do schema nem da biblioteca.
+
+    `RunRequest.teto_microcents` continua aceitando `None`, e `ClienteComTeto`
+    continua traduzindo `None` como "o teto do agente" — para a CLI e para quem
+    chama a biblioteca, escolher o teto do agente é escolha legítima de quem já
+    sabe qual é. O que não é legítimo é um cliente HTTP anônimo fazer essa
+    escolha sem escrevê-la.
+
+    E uma cascata SEM agente não precisa de teto nenhum, porque não há o que
+    limitar: exigi-lo ali seria cerimônia sobre uma execução que não gasta.
+    """
+    from orchestrator.api.schemas import RunRequest
+
+    assert RunRequest().teto_microcents is None
+    assert cliente.post("/api/workflows/conciliacao/runs", json={}).status_code == 200
+
+
+def test_um_teto_GENEROSO_nao_desliga_o_teto_do_AGENTE(tmp_path, monkeypatch):
+    """Não existe valor que signifique "sem teto" — nem um valor enorme.
+
+    Cinco issues, um agente com teto total de 200.000 µ¢, e um teto de pedido
+    mil vezes maior. O gasto para em DUAS chamadas: o teto do agente continua
+    operante por baixo do teto da requisição, e os dois são pisos um do outro,
+    nunca substituição.
+    """
+    _csv_de_issues(tmp_path, monkeypatch, linhas=5)
+    fake = _cliente_falso(monkeypatch, [_resposta()] * 5)
+    _registrar(
+        monkeypatch,
+        "com-agente",
+        _fabrica_com_agentes(_declarado(budget_total_microcents=200_000)),
+    )
+
+    r = cliente.post(
+        "/api/workflows/com-agente/runs",
+        json={"fonte": _FONTE_ISSUES, "teto_microcents": 200_000_000},
+    )
+
+    assert r.status_code == 200, r.text
+    # 2 chamadas: a 3ª encontra 350.000 > 200.000 e abstém sem chamar o modelo.
+    assert len(fake.chamadas) == 2
+    assert r.json()["custo_microcents"] == 2 * _POR_CHAMADA
+    # E quem parou foi o AGENTE, não o teto do pedido — que nem chegou perto.
+    assert r.json()["teto_atingido"] is False
+
+
+def test_o_embrulho_de_teto_nao_inventa_ilimitado():
+    """A outra metade da mesma garantia, na unidade: `teto=None` deixa o teto
+    do agente valer, e nunca troca um teto por ausência de teto."""
+    import orchestrator.api.app as api_app
+    from orchestrator.agent.teto import ClienteComTeto
+
+    # Construir NÃO fala com rede: `AnthropicClient` só instancia o SDK na
+    # primeira chamada, e aqui nenhuma é feita.
+    c = api_app._cliente_de_execucao(None)
+
+    assert isinstance(c, ClienteComTeto)
+    assert c.teto_microcents is None
+    assert api_app._cliente_de_execucao(7).teto_microcents == 7
+
+
+# -- guarda 2: o custo volta em CADA desfecho -------------------------------
+
+
+def test_um_run_que_GASTOU_e_FALHOU_devolve_quanto_gastou(tmp_path, monkeypatch):
+    """Guarda 2, e é o buraco que o plano não cobria.
+
+    Gasto que não aparece na tela é gasto que ninguém revisa. Sem isto, uma
+    cascata que gasta e depois levanta devolve um 500 nu e o dinheiro morre
+    com a exceção.
+
+    O segundo agente cita no prompt um campo que o CSV não tem —
+    `declarado._units` levanta `KeyError` de propósito, em vez de mandar ao
+    modelo um prompt com buracos. É um caminho de erro REAL e alcançável por
+    configuração: basta compor um agente cujo template não case com as colunas
+    do arquivo. Note que um cliente que levanta DENTRO de `complete` não serve
+    para provar isto: `agent/conversa.py` captura exatamente essa chamada e a
+    transforma em abstenção, de propósito.
+    """
+    _csv_de_issues(tmp_path, monkeypatch, linhas=2)
+    _cliente_falso(monkeypatch, [_resposta()] * 2)
+    _registrar(
+        monkeypatch,
+        "com-agente",
+        _fabrica_com_agentes(
+            _declarado(),
+            _declarado(name="quebrado", prompt="{coluna_que_nao_existe}"),
+        ),
+    )
+
+    r = cliente.post(
+        "/api/workflows/com-agente/runs",
+        json={"fonte": _FONTE_ISSUES, "teto_microcents": 10_000_000},
+    )
+
+    assert r.status_code == 500, r.text
+    detalhe = r.json()["detail"]
+    assert detalhe["custo_microcents"] == 2 * _POR_CHAMADA
+    assert "KeyError" in detalhe["motivo"]
+
+
+def test_um_run_que_falhou_SEM_gastar_reporta_zero_MEDIDO(monkeypatch):
+    """O outro lado: zero aqui é MEDIDO, não inventado.
+
+    Sem agente na cascata não existe caminho até o modelo — `ClienteAusente` é
+    a tranca —, então `0` é o gasto de fato, e não um número que finge medição
+    onde nada foi medido.
+    """
+    import orchestrator.api.app as api_app
+
+    def _explode(*a, **kw):
+        raise RuntimeError("defeito do motor")
+
+    monkeypatch.setattr(api_app, "execute", _explode)
+
+    r = cliente.post("/api/workflows/conciliacao/runs", json={})
+
+    assert r.status_code == 500, r.text
+    assert r.json()["detail"]["custo_microcents"] == 0
+
+
+def test_um_run_que_GASTOU_e_deu_certo_fica_no_HISTORICO_com_o_custo(
+    tmp_path, monkeypatch
+):
+    """A outra metade da guarda 2: no caminho feliz o custo não depende de o
+    corpo da resposta sobreviver — ele está no store, e `/api/runs` o devolve.
+    """
+    _csv_de_issues(tmp_path, monkeypatch, linhas=2)
+    _cliente_falso(monkeypatch, [_resposta()] * 2)
+    _registrar(monkeypatch, "com-agente", _fabrica_com_agentes(_declarado()))
+
+    corpo = cliente.post(
+        "/api/workflows/com-agente/runs",
+        json={"fonte": _FONTE_ISSUES, "teto_microcents": 10_000_000},
+    ).json()
+
+    (resumo,) = cliente.get("/api/runs", params={"workflow_id": "com-agente"}).json()
+    assert resumo["microcents"] == corpo["custo_microcents"] == 2 * _POR_CHAMADA
+    # `proposed == 2` sozinho valeria igual para um agente que absteve nas duas
+    # — abstenção É uma `Proposal`. O que ele diz é o que separa as duas.
+    assert resumo["proposed"] == 2
+    assert corpo["propostas_por_tipo"] == {"BUG": 2}
+    assert corpo["falhas"] == 0
+
+
+# -- a ordem entre o 409 e o 422 -------------------------------------------
+
+
+def test_o_422_de_PAYLOAD_vem_ANTES_do_409_de_chave(tmp_path, monkeypatch):
+    """A ordem mudou junto com o significado do 409, e de propósito.
+
+    Antes, o 409 dizia "esta cascata é paga e nunca roda por aqui" — uma
+    propriedade permanente da cascata, que precede qualquer coisa sobre o
+    formato do dado. Agora ele diz "falta uma chave NO SERVIDOR" — estado do
+    hospedeiro, não do pedido. Devolver isso primeiro mandaria o usuário
+    procurar o administrador para depois descobrir que o CSV dele seria
+    recusado de qualquer jeito.
+
+    Erro do PEDIDO antes de erro do AMBIENTE.
+    """
+    import orchestrator.api.app as api_app
+    from orchestrator.agent.declarado import construir_agente
+    from orchestrator.grill.catalogo import ClienteAusente
+    from orchestrator.kernel.definition import Stage, WorkflowDefinition
+    from orchestrator.matching.exact import ExactMatcher
+
+    raiz = tmp_path / "entradas"
+    raiz.mkdir()
+    (raiz / "itens.csv").write_text("id,texto\na,um\n", encoding="utf-8")
+    monkeypatch.setattr(api_app, "_RAIZ_ENTRADAS", raiz)
+    monkeypatch.setattr(api_app, "_tem_chave", lambda: False)
+
+    def fabrica(ctx):
+        cliente_do_ctx = ctx.cliente if ctx.cliente is not None else ClienteAusente()
+        return WorkflowDefinition(
+            id="misto",
+            name="regra tipada mais agente",
+            stages=(
+                Stage(
+                    name="s",
+                    cascade=(
+                        ExactMatcher(),
+                        construir_agente(_declarado(), cliente_do_ctx),
+                    ),
+                ),
+            ),
+        )
+
+    _registrar(monkeypatch, "misto", fabrica)
+
+    r = cliente.post(
+        "/api/workflows/misto/runs",
+        json={"fonte": {"tipo": "arquivo", "caminho": "itens.csv",
+                        "kind": "banco", "campo_id": "id"}},
+    )
+
+    assert r.status_code == 422, r.text
+    assert "L1" in r.json()["detail"]
+
+
+# -- o objetivo da fatia: compor na tela e rodar sobre um arquivo -----------
+
+
+def test_um_CSV_de_issues_roda_no_TRIADOR_composto_pela_WEB(tmp_path, monkeypatch):
+    """A evidência do objetivo desta fatia, de ponta a ponta.
+
+    Até aqui NENHUM bloco do catálogo executável por `/runs` consumia
+    dicionário: as seis regras exigem payload tipado, e os três agentes são
+    `AGENTE` — barrados pelo 409. O teste de CSV da Task 3 precisou de um
+    resolver construído dentro do próprio teste, então a máquina estava
+    provada e nenhuma configuração ENTREGUE estava.
+
+    Com o 409 fora, o `triador` do catálogo roda: `kind="issue"`, prompt sobre
+    campos do payload, e `agent/declarado.py::_campos` aceita dicionário — que
+    é exatamente o que `ArquivoSource` entrega. Compor pela web
+    (`/api/receitas`) e rodar sobre um arquivo do usuário, sem sair da tela.
+    """
+    import orchestrator.api.app as api_app
+
+    monkeypatch.setattr(api_app, "_RAIZ_RECEITAS", tmp_path / "receitas")
+    _csv_de_issues(tmp_path, monkeypatch, linhas=3)
+    fake = _cliente_falso(monkeypatch, [_resposta()] * 3)
+
+    criada = cliente.post("/api/receitas", json={
+        "id": "triagem-web", "nome": "Triagem", "justificativa": "j",
+        "resolvers": [{"nome": "triador"}]})
+    assert criada.status_code == 201, criada.text
+
+    r = cliente.post(
+        "/api/workflows/triagem-web/runs",
+        json={"fonte": _FONTE_ISSUES, "teto_microcents": 10_000_000},
+    )
+
+    assert r.status_code == 200, r.text
+    corpo = r.json()
+    assert corpo["itens"] == 3
+    assert corpo["input_ref"].startswith("file:issues.csv@")
+    # O agente LEU o arquivo: o prompt do `triador` é "{titulo}\n\n{corpo}",
+    # e o que chegou ao modelo são as colunas do CSV. Sem isto, a cascata
+    # poderia ter rodado sobre um pool vazio e o teste continuaria verde.
+    assert len(fake.chamadas) == 3
+    enviados = [c["messages"][0]["content"] for c in fake.chamadas]
+    assert enviados == [f"titulo {i}\n\ncorpo {i}" for i in (1, 2, 3)]
+    # O custo volta, e é de AGENTE — não de regra.
+    (linha,) = corpo["por_resolver"]
+    assert (linha["name"], linha["cost_class"]) == ("triador", "AGENTE")
+    assert linha["microcents"] == corpo["custo_microcents"] == 3 * _POR_CHAMADA
+    # E o agente CLASSIFICOU as três — não abstém em nenhuma, e nenhuma chamada
+    # falhou. Sem estas duas linhas o teste passaria igual com um triador que
+    # respondesse "NAO_SEI" em tudo ou com a API caída, porque abstenção também
+    # é `Proposal`: seria a fatia declarando vitória sobre o próprio objetivo
+    # com um agente que não entregou nada.
+    assert corpo["propostas_por_tipo"] == {"BUG": 3}
+    assert corpo["falhas"] == 0
+    assert corpo["teto_atingido"] is False
+    # Agente PROPÕE, nunca resolve: a lacuna continua inteira, e é isso que
+    # manda as três issues para a revisão humana.
+    assert corpo["resolvidos"] == 0
+    assert corpo["gap"]["items"] == 3
+    assert corpo["contra_gabarito"] is None
+
+
+def test_o_triador_composto_pela_WEB_e_LISTADO_como_executavel(tmp_path, monkeypatch):
+    """A tela não pode desabilitar um botão que o servidor aceitaria.
+
+    `executavel` era "a cascata não tem AGENTE". Com o caminho pago aberto, a
+    pergunta que a tela faz é outra — "este servidor consegue rodar isto?" — e
+    a resposta depende da chave. Uma cascata paga num servidor COM chave é
+    executável, e dizer o contrário faria a API mentir sobre a própria rota.
+    """
+    import orchestrator.api.app as api_app
+
+    monkeypatch.setattr(api_app, "_RAIZ_RECEITAS", tmp_path / "receitas")
+    cliente.post("/api/receitas", json={
+        "id": "triagem-web", "nome": "Triagem", "justificativa": "j",
+        "resolvers": [{"nome": "triador"}]})
+
+    monkeypatch.setattr(api_app, "_tem_chave", lambda: True)
+    com = next(
+        w for w in cliente.get("/api/workflows").json() if w["id"] == "triagem-web"
+    )
+    monkeypatch.setattr(api_app, "_tem_chave", lambda: False)
+    sem = next(
+        w for w in cliente.get("/api/workflows").json() if w["id"] == "triagem-web"
+    )
+
+    assert com["executavel"] is True
+    assert sem["executavel"] is False
+    assert com["classes"] == sem["classes"] == ["AGENTE"]
+
+
+# -- a política, que o 409 segurava em pé -----------------------------------
+
+
+def test_a_politica_economica_continua_INERTE_com_o_409_fora(tmp_path, monkeypatch):
+    """Tirar o 409 derruba UMA das pernas que seguram a política inerte. As
+    outras duas seguem de pé, e isto é o que as prende.
+
+    A revisão da Task 3 registrou que `POLITICA_ECONOMICA`/`max_cost_ratio`
+    está inerte por acidente, sobre três coincidências: (a) nenhum formato de
+    composição expressa política; (b) o 409 barra `AGENTE`; (c)
+    `custo_estimado` devolve 0 fora do `investigador`. Esta task remove (b).
+
+    Política que às vezes se aplica é pior que política nenhuma, porque
+    ninguém sabe qual das duas está olhando. Então a escolha é EXPLÍCITA:
+    neste caminho ela continua totalmente desligada, e as afirmações abaixo
+    são o que impede alguém de religá-la pela metade sem perceber.
+    """
+    import orchestrator.api.app as api_app
+    from orchestrator.kernel.policy import ExecutionPolicy
+    from orchestrator.workflows import descrever
+
+    # (a) Nenhum workflow publicado carrega razão de custo nem predicado.
+    #     `descrever` cobre o embutido e tudo que veio de receita.
+    monkeypatch.setattr(api_app, "_RAIZ_RECEITAS", tmp_path / "receitas")
+    cliente.post("/api/receitas", json={
+        "id": "triagem-web", "nome": "Triagem", "justificativa": "j",
+        "resolvers": [{"nome": "triador"}]})
+    for workflow_id, definicao in descrever(tmp_path / "receitas"):
+        for stage in definicao.stages:
+            assert stage.policy.max_cost_ratio is None, (workflow_id, stage.name)
+            assert stage.policy.skip_when is None, (workflow_id, stage.name)
+            assert stage.policy.escalate_when is None, (workflow_id, stage.name)
+    assert ExecutionPolicy().max_cost_ratio is None
+
+    # (c) E, mesmo que alguém ligasse uma razão de custo, `/runs` não passa
+    #     `PolicyContext` — sem `value_at_risk`/`estimated_cost` a regra 7 do
+    #     motor devolve `None` e não pula item nenhum. A observação é sobre a
+    #     CHAMADA que o endpoint faz, não sobre uma leitura do código.
+    vistos: dict = {}
+    original = api_app.execute
+
+    def _espiao(definicao, pool, **kw):
+        vistos.update(kw)
+        return original(definicao, pool, **kw)
+
+    monkeypatch.setattr(api_app, "execute", _espiao)
+    _csv_de_issues(tmp_path, monkeypatch, linhas=1)
+    _cliente_falso(monkeypatch, [_resposta()])
+
+    r = cliente.post(
+        "/api/workflows/triagem-web/runs",
+        json={"fonte": _FONTE_ISSUES, "teto_microcents": 10_000_000},
+    )
+
+    assert r.status_code == 200, r.text
+    assert vistos.get("policy") is None
+
+
+def test_a_tranca_de_REDE_da_suite_e_ALTA_e_nao_engolida(tmp_path, monkeypatch):
+    """A guarda que impede esta fatia de gastar dinheiro em CI, provada.
+
+    `tests/conftest.py::_rede_proibida` troca `anthropic.Anthropic` por algo que
+    levanta. Ela existe porque quatro testes desta suite passaram a ir a rede no
+    dia em que `/runs` aprendeu a executar cascata paga, e ninguem notou: a
+    falha virava abstencao em `agent/conversa.py` e a rota devolvia 200.
+
+    Por isso `RedeProibida` deriva de `BaseException` — e por isso este teste
+    existe. Sem ele a tranca seria uma linha de conftest que ninguem exercita, e
+    a proxima pessoa a "arrumar" a heranca para `Exception` a desligaria sem que
+    nada ficasse vermelho.
+
+    Aqui `_cliente_de_execucao` NAO e substituido de proposito: e o unico teste
+    do repositorio que deixa o caminho de rede de verdade ser percorrido, ate o
+    ponto exato em que a tranca fecha.
+    """
+    import orchestrator.api.app as api_app
+
+    _csv_de_issues(tmp_path, monkeypatch, linhas=1)
+    monkeypatch.setattr(api_app, "_tem_chave", lambda: True)
+    _registrar(monkeypatch, "com-agente", _fabrica_com_agentes(_declarado()))
+
+    # `BaseException`, e nao `Exception`: se a tranca fosse uma `Exception`,
+    # `conversar` a capturaria, o POST devolveria 200, e este `raises` falharia
+    # — que e exatamente o sinal que se quer.
+    with pytest.raises(BaseException, match="falar com o modelo de verdade"):
+        cliente.post(
+            "/api/workflows/com-agente/runs",
+            json={"fonte": _FONTE_ISSUES, "teto_microcents": 10_000_000},
+        )
+
+
+# -- os TRES desfechos, que eram um so ---------------------------------------
+#
+# `agent/conversa.py` captura a falha da chamada ao modelo e a transforma em
+# abstencao — comportamento CERTO para o laco, porque uma queda de rede nao pode
+# derrubar um fechamento por causa de um item. O preco e que, do lado de fora,
+# "o modelo nao achou nada", "paramos no teto" e "a API falhou" chegavam com a
+# mesma cara: 200, `resolvidos: 0`, `gap` inteiro, e nada dizendo o que houve.
+#
+# Num endpoint que GASTA, essa e a diferenca que decide se vale tentar de novo.
+
+
+def _corpo_com_agente(monkeypatch, tmp_path, respostas, *, teto=10_000_000, linhas=3):
+    _csv_de_issues(tmp_path, monkeypatch, linhas=linhas)
+    _cliente_falso(monkeypatch, respostas)
+    _registrar(monkeypatch, "com-agente", _fabrica_com_agentes(_declarado()))
+    r = cliente.post(
+        "/api/workflows/com-agente/runs",
+        json={"fonte": _FONTE_ISSUES, "teto_microcents": teto},
+    )
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_desfecho_o_modelo_RESPONDEU_em_todos_os_itens(tmp_path, monkeypatch):
+    """Desfecho 1: deu certo. O agente classificou as tres issues."""
+    corpo = _corpo_com_agente(monkeypatch, tmp_path, [_resposta("BUG")] * 3)
+
+    assert corpo["propostas_por_tipo"] == {"BUG": 3}
+    assert corpo["falhas"] == 0
+    assert corpo["teto_atingido"] is False
+    assert corpo["estado"] == "concluido"
+
+
+def test_desfecho_o_modelo_ABSTEVE_em_todos_os_itens(tmp_path, monkeypatch):
+    """Desfecho 2: nao achou nada — e isso NAO e falha.
+
+    Nao saber e resposta, e o agente a deu em todos os itens. `falhas == 0` diz
+    que o modelo respondeu; `propostas_por_tipo` diz o que ele respondeu. Sem o
+    segundo campo, este desfecho e o de cima sao byte a byte iguais.
+    """
+    corpo = _corpo_com_agente(monkeypatch, tmp_path, [_resposta("NAO_SEI")] * 3)
+
+    assert corpo["propostas_por_tipo"] == {"NAO_SEI": 3}
+    assert corpo["falhas"] == 0
+    assert corpo["teto_atingido"] is False
+    # `concluido`, e sem ressalva: o agente foi perguntado sobre as tres issues
+    # e respondeu as tres. Nao saber e resposta.
+    assert corpo["estado"] == "concluido"
+
+
+def test_desfecho_a_API_FALHOU_e_isso_NAO_e_abstencao_do_modelo(tmp_path, monkeypatch):
+    """Desfecho 3: a API caiu, e o run precisa dizer isso.
+
+    O rotulo da proposta e o mesmo `NAO_SEI` do teste acima — `agent/conversa.py`
+    desiste pelo caminho da abstencao, de proposito. `falhas` e o que separa os
+    dois, e ele e CONTADO no trace (`TraceKind.ERRO`), nao inferido.
+    """
+    import orchestrator.api.app as api_app
+    from orchestrator.agent.teto import ClienteComTeto
+
+    _csv_de_issues(tmp_path, monkeypatch, linhas=3)
+
+    class _CaiSempre:
+        model = "claude-opus-5"
+
+        def complete(self, system, messages, tools):
+            raise ConnectionError("a rede caiu")
+
+    monkeypatch.setattr(api_app, "_tem_chave", lambda: True)
+    monkeypatch.setattr(
+        api_app,
+        "_cliente_de_execucao",
+        lambda teto: ClienteComTeto(_CaiSempre(), teto_microcents=teto),
+    )
+    _registrar(monkeypatch, "com-agente", _fabrica_com_agentes(_declarado()))
+
+    corpo = cliente.post(
+        "/api/workflows/com-agente/runs",
+        json={"fonte": _FONTE_ISSUES, "teto_microcents": 10_000_000},
+    ).json()
+
+    assert corpo["propostas_por_tipo"] == {"NAO_SEI": 3}
+    assert corpo["falhas"] == 3
+    # E NAO foi o teto: a distincao inteira desta guarda.
+    assert corpo["teto_atingido"] is False
+    assert corpo["custo_microcents"] == 0
+    # DECISAO EXPLICITA: aqui `concluido` e HONESTO, e nao uma omissao.
+    #
+    # `RunState` descreve o CICLO DE VIDA do run — a cascata percorreu o pool? —,
+    # nao a qualidade do que saiu. Com a API caida, TODO item foi tentado; a
+    # tentativa e que nao rendeu. Com o teto, item nenhum foi tentado: o run
+    # parou antes, por ordem de quem pediu. "Tentei e nao consegui" e "fui
+    # proibido de tentar" sao fatos de ciclo de vida diferentes, e so o segundo
+    # e "nao terminou".
+    #
+    # E se `falhas > 0` derrubasse o estado, uma oscilacao de rede em 1 de 300
+    # itens marcaria o run inteiro como nao-concluido, e `estado` deixaria de
+    # significar "a cascata rodou" para significar "deu tudo certo" — um juizo
+    # de qualidade que `falhas` ja reporta em numero, e que um booleano so
+    # empobrece.
+    assert corpo["estado"] == "concluido"
+
+
+def test_desfecho_PAROU_NO_TETO_nao_se_confunde_com_falha_de_API(tmp_path, monkeypatch):
+    """Desfecho 4, e o que motivou o campo: `teto_microcents: 0`.
+
+    Antes deste campo, um teto de 0 devolvia 200, `resolvidos: 0`, `gap` inteiro,
+    `custo_microcents: 0`, ZERO chamadas ao modelo, a palavra "teto" em lugar
+    nenhum do corpo, e o run gravado como `concluido`. Era indistinguivel de uma
+    cascata que rodou e nao achou nada — sobre um pedido que explicitamente
+    mandou nao gastar.
+
+    `teto_atingido` vem do PROPRIO embrulho que recusou (`ClienteComTeto.recusas`),
+    contado na origem. Inferi-lo por subtracao entre `falhas` e outra coisa seria
+    o join fragil de sempre.
+
+    **E o `estado` diz isso sozinho.** A primeira versao deste campo devolvia
+    `concluido` aqui: um run que o pedido PROIBIU de trabalhar, publicado como se
+    tivesse terminado. `teto_atingido` desambiguava — para quem soubesse cruzar
+    dois campos —, e o ponto deste round e justamente que o chamador nao precise
+    deduzir o desfecho. `limite_de_custo` e irmao de `LIMITE_DE_RONDAS`, e
+    separado dele porque dizer "limite de rondas" sobre um teto de dinheiro
+    mandaria quem opera mexer em `max_rondas` para resolver um problema de
+    orcamento.
+    """
+    corpo = _corpo_com_agente(monkeypatch, tmp_path, [_resposta()] * 3, teto=0)
+
+    assert corpo["estado"] == "limite_de_custo"
+    assert corpo["teto_atingido"] is True
+    assert corpo["falhas"] == 3
+    assert corpo["custo_microcents"] == 0
+    assert corpo["propostas_por_tipo"] == {"NAO_SEI": 3}
+
+
+def test_o_estado_de_LIMITE_DE_CUSTO_e_o_MESMO_no_historico(tmp_path, monkeypatch):
+    """A correcao e feita no `Run`, antes de persistir — nao so na projecao.
+
+    So na projecao, `/runs` diria `limite_de_custo` e `/api/runs` diria
+    `concluido` sobre a MESMA execucao: duas verdades sobre um fato, que e
+    exatamente o defeito que este campo existe para nao cometer. Quem investiga
+    um gasto depois olha o historico, nao a resposta que passou.
+    """
+    corpo = _corpo_com_agente(monkeypatch, tmp_path, [_resposta()] * 3, teto=0)
+
+    (resumo,) = cliente.get("/api/runs", params={"workflow_id": "com-agente"}).json()
+    assert resumo["state"] == corpo["estado"] == "limite_de_custo"
+
+
+def test_o_teto_VENCE_aguardando_humano_quando_os_dois_valem(tmp_path, monkeypatch):
+    """Quando os dois se aplicam, o TETO ganha — e nao e arbitrario.
+
+    O teto e POR QUE existe lacuna; a fila humana e o sintoma. Mandar o operador
+    para a revisao esconderia a causa atras do efeito, e ele aprovaria itens sem
+    saber que o agente nem chegou a olha-los. E a mesma precedencia que o motor
+    ja usa: `LIMITE_DE_RONDAS` vence `AGUARDANDO_HUMANO` em `runtime/engine.py`.
+    """
+    from orchestrator.agent.declarado import construir_agente
+    from orchestrator.grill.catalogo import ClienteAusente
+    from orchestrator.kernel.definition import Stage, WorkflowDefinition
+    from orchestrator.review.revisor import RevisorHumano
+
+    def fabrica(ctx):
+        cliente_do_ctx = ctx.cliente if ctx.cliente is not None else ClienteAusente()
+        return WorkflowDefinition(
+            id="com-humano",
+            name="agente mais revisor",
+            stages=(
+                Stage(
+                    name="triar",
+                    cascade=(
+                        construir_agente(_declarado(), cliente_do_ctx),
+                        RevisorHumano(fila=ctx.fila),
+                    ),
+                ),
+            ),
+        )
+
+    _csv_de_issues(tmp_path, monkeypatch, linhas=3)
+    _cliente_falso(monkeypatch, [_resposta()] * 3)
+    _registrar(monkeypatch, "com-humano", fabrica)
+
+    sem_teto = cliente.post(
+        "/api/workflows/com-humano/runs",
+        json={"fonte": _FONTE_ISSUES, "teto_microcents": 10_000_000},
+    ).json()
+    com_teto = cliente.post(
+        "/api/workflows/com-humano/runs",
+        json={"fonte": _FONTE_ISSUES, "teto_microcents": 0},
+    ).json()
+
+    # A cascata TEM degrau humano e sobra pool nos dois casos, entao o motor
+    # diria `aguardando_humano` nos dois. O teto e o que muda a resposta.
+    assert sem_teto["estado"] == "aguardando_humano"
+    assert com_teto["estado"] == "limite_de_custo"
+
+
+def test_LIMITE_conhecido_o_teto_do_PROPRIO_AGENTE_nao_muda_o_estado(
+    tmp_path, monkeypatch
+):
+    """LACUNA CONHECIDA, pinada para nao virar surpresa.
+
+    `estado == limite_de_custo` cobre o teto DA REQUISICAO, que e o unico que
+    esta camada consegue observar: `ClienteComTeto` e um objeto dela e conta as
+    proprias recusas. O teto do PROPRIO AGENTE
+    (`AgentSpec.budget_total_microcents`) tambem para itens sem sequer tenta-los
+    — mesma natureza de fato —, mas ele para DENTRO de `Agent.resolve`, e nada
+    sai de la contando isso: a unica marca e um `TraceKind.OUTCOME` com
+    `detail={"motivo": "orçamento total"}`.
+
+    Nao fechei a lacuna casando essa string na camada HTTP. Um `if` sobre texto
+    em portugues dentro de um `detail` e o join fragil que este repositorio ja
+    matou seis vezes: renomear o motivo deixaria a suite verde e o estado
+    errado, em silencio. Fechar de verdade pede um contador no `Agent`, ao lado
+    do custo, e isso e mudanca no laco que gasta — fora desta fatia.
+
+    Enquanto isso, `custo_microcents` mostra o gasto e a lacuna mostra o resto.
+    Este teste falha no dia em que alguem fechar a lacuna, e e ai que ele deve
+    ser trocado por um que exija `limite_de_custo`.
+    """
+    _csv_de_issues(tmp_path, monkeypatch, linhas=5)
+    _cliente_falso(monkeypatch, [_resposta()] * 5)
+    _registrar(
+        monkeypatch,
+        "com-agente",
+        _fabrica_com_agentes(_declarado(budget_total_microcents=200_000)),
+    )
+
+    corpo = cliente.post(
+        "/api/workflows/com-agente/runs",
+        json={"fonte": _FONTE_ISSUES, "teto_microcents": 200_000_000},
+    ).json()
+
+    assert corpo["estado"] == "concluido"
+    assert corpo["teto_atingido"] is False
+    # E o gasto PAROU — a lacuna e de RELATO, nao de contencao.
+    assert corpo["custo_microcents"] == 2 * _POR_CHAMADA
+
+
+def test_uma_cascata_SEM_agente_reporta_os_tres_campos_como_MEDIDOS(monkeypatch):
+    """Zero e `False` aqui sao fatos, nao ausencia disfarcada de numero.
+
+    Sem agente nao ha chamada paga para falhar nem para o teto recusar, e
+    `propostas_por_tipo` vazio e o que a conciliacao so de regras de fato
+    produz.
+    """
+    corpo = cliente.post("/api/workflows/conciliacao/runs", json={}).json()
+
+    assert corpo["propostas_por_tipo"] == {}
+    assert corpo["falhas"] == 0
+    assert corpo["teto_atingido"] is False
+    # O estado do run passa a aparecer na resposta do POST, e nao so em
+    # `/api/runs`: a conciliacao tem degrau HUMANO e sobra pool, entao ela
+    # ESPERA alguem — que e diferente de ter terminado.
+    assert corpo["estado"] == "aguardando_humano"
+
+
+def test_o_ESTADO_do_POST_e_o_MESMO_que_o_historico_guarda():
+    """Um campo novo na projecao nao pode ser uma segunda verdade.
+
+    `/runs` e `/api/runs` passam a devolver o estado do mesmo run, e se um dia
+    eles divergirem sera porque alguem calculou um dos dois em vez de ler.
+    """
+    corpo = cliente.post("/api/workflows/conciliacao/runs", json={}).json()
+
+    (resumo,) = cliente.get("/api/runs", params={"workflow_id": "conciliacao"}).json()
+    assert resumo["state"] == corpo["estado"]
+    assert resumo["input_ref"] == corpo["input_ref"]
+
+
+# -- o teto negativo, que nao tinha teste -----------------------------------
+
+
+def test_teto_NEGATIVO_e_recusado_na_construcao_do_embrulho():
+    """A guarda existia e nada a exercitava: trocar a condicao por `if False:`
+    deixava a suite inteira verde.
+
+    Um teto negativo nasce estourado — a primeira comparacao ja recusa —, entao
+    TODO item abstem sem nunca chamar o modelo. Sem esta recusa isso pareceria
+    um agente funcionando com orcamento zerado, em vez da configuracao invalida
+    que e. Mesma guarda de `Agent.__post_init__` e de `Budget.__post_init__`.
+    """
+    from orchestrator.agent.llm import FakeLLMClient
+    from orchestrator.agent.teto import ClienteComTeto
+
+    with pytest.raises(ValueError, match="negativo"):
+        ClienteComTeto(FakeLLMClient([]), teto_microcents=-1)
+
+    # E as duas vizinhas continuam valendo, para que a recusa seja do SINAL e
+    # nao de "qualquer numero pequeno".
+    assert ClienteComTeto(FakeLLMClient([]), teto_microcents=0).teto_microcents == 0
+    assert ClienteComTeto(FakeLLMClient([])).teto_microcents is None
+
+
+def test_teto_negativo_tambem_e_recusado_pelo_SCHEMA_antes_da_rota():
+    """A mesma recusa um nivel acima, onde ela vira 422 em vez de 500.
+
+    As duas existem de proposito: o schema protege a BORDA HTTP, e o embrulho
+    protege todo chamador — CLI e biblioteca incluidos, que nao passam pelo
+    Pydantic.
+    """
+    r = cliente.post(
+        "/api/workflows/conciliacao/runs", json={"teto_microcents": -1}
+    )
+
+    assert r.status_code == 422, r.text

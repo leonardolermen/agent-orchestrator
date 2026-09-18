@@ -6,7 +6,7 @@ mão em paralelo a eles — ver o teste anti-drift.
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from orchestrator.kernel.definition import Stage, WorkflowDefinition
 from orchestrator.review.decision import Veredito
@@ -35,25 +35,99 @@ class WorkflowResumoJSON(BaseModel):
     nome: str
     classes: list[str]
     gerado_em: str | None = None
-    # Falso quando a cascata tem classe AGENTE: a tela desabilita o botão em
-    # vez de deixar o usuário colher um 409.
+    # "ESTE servidor consegue rodar isto?" — a tela desabilita o botão em vez
+    # de deixar o usuário colher um 409.
+    #
+    # Era "a cascata não tem classe AGENTE", quando `/runs` recusava toda
+    # cascata paga. Com o caminho pago aberto, uma cascata com agente roda onde
+    # há `ANTHROPIC_API_KEY` e leva 409 onde não há — então a resposta passou a
+    # depender da chave, e é `api/app.py::_tem_chave` que a dá, a MESMA leitura
+    # que a rota usa para recusar. Duas leituras divergiriam, e o sintoma seria
+    # a tela desabilitar um botão para uma execução que o servidor aceitaria.
     executavel: bool
 
 
-class RunRequest(BaseModel):
-    """O pedido de execução do benchmark sintético.
+class FonteSintetica(BaseModel):
+    """O benchmark sintético, agora como UMA fonte entre outras.
 
-    Os limites de `Field` são o que faz o FastAPI devolver 422 sozinho para
-    uma `taxa_divergencia` fora de [0, 1] — em vez de deixar `build_benchmark`
-    levantar `ValueError` e a rota devolver 500.
+    Os três campos eram o corpo inteiro de `RunRequest` — e era essa a forma
+    de dizer "toda execução é um benchmark". Deixaram de ser o pedido e
+    viraram os parâmetros de uma origem específica.
     """
 
+    # `extra="forbid"` aqui também, e não só no `RunRequest` de fora: sem ele,
+    # `{"tipo": "sintetica", "sede": 2}` dropa `sede` em silêncio e roda com o
+    # default — a MESMA falha que a trava do `RunRequest` existe para impedir,
+    # um nível abaixo dela.
+    model_config = ConfigDict(extra="forbid")
+
+    tipo: Literal["sintetica"] = "sintetica"
     seed: int = Field(default=1, ge=0)
     n: int = Field(default=300, ge=1, le=5000)
     taxa_divergencia: float = Field(default=0.15, ge=0.0, le=1.0)
 
 
+class FonteArquivo(BaseModel):
+    """Um arquivo do usuário — CSV ou JSON — como pool de trabalho.
+
+    `kind` e `campo_id` são OBRIGATÓRIOS e não têm default, porque não existe
+    coluna que diga o que um item é nem qual campo o identifica. Inferir do
+    nome do arquivo ou da primeira coluna seria adivinhação, e o `kind` é o que
+    liga um degrau ao outro no grafo.
+    """
+
+    # Mesma trava. Aqui os quatro campos são obrigatórios, então um typo já
+    # levava 422 por ausência; o que ela fecha é o campo A MAIS — um
+    # `"max_linhas": 10` que o cliente acha que está configurando um teto e que
+    # hoje seria descartado sem uma palavra.
+    model_config = ConfigDict(extra="forbid")
+
+    tipo: Literal["arquivo"]
+    caminho: str
+    kind: str
+    campo_id: str
+
+
+class RunRequest(BaseModel):
+    """O pedido de execução.
+
+    `fonte` com default mantém todo chamador de hoje funcionando sem edição: um
+    corpo vazio continua sendo o benchmark sintético com os mesmos números.
+
+    `extra="forbid"`: antes desta fatia, `seed`/`n`/`taxa_divergencia` eram o
+    pedido inteiro. Sem essa trava, um cliente que ainda manda esse formato
+    antigo teria os três campos silenciosamente ignorados (o comportamento
+    padrão do Pydantic para campo desconhecido) e a execução cairia nos
+    defaults de `FonteSintetica` — um run com parâmetros DIFERENTES dos
+    pedidos, sem erro nenhum. Um 422 que nomeia o campo estranho é o que faz
+    esse cliente descobrir que a forma mudou, em vez de descobrir que o
+    número estava errado.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    fonte: FonteSintetica | FonteArquivo = Field(
+        default_factory=FonteSintetica, discriminator="tipo"
+    )
+    # Teto da EXECUÇÃO inteira, em micro-centavos. `None` = o teto do próprio
+    # agente (`AgentSpec.budget_total_microcents`). NÃO existe valor que
+    # signifique "sem teto", e a ausência dele é deliberada: um agente sem teto
+    # é um agente que gasta até o fim da fila.
+    teto_microcents: int | None = Field(default=None, ge=0)
+
+
 class ResolverRunJSON(BaseModel):
+    """O que um resolver da cascata fez, e a que custo.
+
+    **`matches` conta RESOLUÇÕES; `rate` é ITENS sobre `RunJSON.itens`.** Os
+    dois campos existem porque as duas unidades não são a mesma: uma resolução
+    de pagamento agregado consome um bancário e três contábeis. `rate` sai de
+    `Run.resolved_items_by_resolver`, que o motor acumula ao lado da contagem
+    de resoluções exatamente para que ninguém volte a dividir uma pela outra —
+    isso dava metade do número na conciliação e o número certo num domínio de
+    um item por resolução, que é erro de unidade disfarçado de métrica.
+    """
+
     name: str
     cost_class: str
     matches: int
@@ -66,13 +140,86 @@ class GapJSON(BaseModel):
     rate: float
 
 
-class RunJSON(BaseModel):
+class MedidoJSON(BaseModel):
+    """O que só existe quando a fonte carrega gabarito.
+
+    `seed`, `n` e `bank_total` moravam no topo de `RunJSON` porque só existia
+    uma fonte. Num CSV de issues eles não têm valor certo nem valor neutro —
+    têm ausência, e é isso que esta separação passa a expressar.
+    """
+
     seed: int
     n: int
     bank_total: int
     deterministic_rate: float
-    by_resolver: list[ResolverRunJSON]
+
+
+class RunJSON(BaseModel):
+    """O resultado de uma execução, em unidades do MOTOR.
+
+    `itens`, `resolvidos`, `gap.items` e `por_resolver[].rate` estão todos na
+    unidade ITEM, e é isso que faz `sum(por_resolver[].rate) + gap.rate` fechar
+    em 1.0. `por_resolver[].matches` é a outra unidade — RESOLUÇÕES — e está
+    lá por si, nunca como numerador de uma taxa.
+
+    A soma fechar não é garantida pelo tipo: `gap` é CONTADO
+    (`len(run.unresolved.items)`) e as taxas por resolver são AFIRMADAS pelos
+    resolvers (`Resolution.item_ids`). Dois resolvers citando o mesmo item
+    fariam a soma passar de 1.0. É o desenho certo: a lacuna, que é o número
+    que o operador lê, nunca mente; a soma estourar é sintoma visível de um
+    resolver que consome o que não recebeu. Há teste.
+    """
+
+    input_ref: str
+    itens: int
+    resolvidos: int
+    por_resolver: list[ResolverRunJSON]
     gap: GapJSON
+    custo_microcents: int
+    # O ESTADO do run, de `RunState`. Já existia no `Run` e em `/api/runs`, e
+    # não existia aqui: a resposta do POST — a que a tela lê — não dizia se o
+    # run terminou, parou num teto ou está esperando gente.
+    #
+    # Um run que PAROU não pode ser lido como um que terminou, e num endpoint
+    # que gasta essa diferença é o que decide se vale tentar de novo. Um pedido
+    # com `teto_microcents: 0` sai como `limite_de_custo`, nunca `concluido`:
+    # ler o desfecho não pode exigir que o chamador cruze dois campos e deduza.
+    estado: str
+    # As PROPOSTAS, contadas por tipo. Um agente nunca resolve — `Agent.resolve`
+    # só preenche `proposals`, por construção —, então numa cascata só de agente
+    # `resolvidos` é 0 e `gap.items` é o pool inteiro, e sem este campo a
+    # resposta era indistinguível de uma execução que não fez nada.
+    #
+    # Por TIPO e não só o total, porque o total não separa as duas coisas que
+    # mais importam saber de um agente: `{"BUG": 3}` é um agente que
+    # classificou, `{"NAO_SEI": 3}` é um agente que absteve em tudo, e os dois
+    # dão o mesmo `3`. Abstenção é resposta legítima — não saber é resposta —,
+    # mas é uma resposta DIFERENTE, e num endpoint que cobra por ela a diferença
+    # é o que decide se o dinheiro comprou alguma coisa.
+    #
+    # `sum(propostas_por_tipo.values())` é o total, e por isso ele não existe
+    # como campo à parte: dois números para a mesma contagem são dois números
+    # que podem divergir.
+    propostas_por_tipo: dict[str, int]
+    # Quantas dessas propostas terminaram em ERRO registrado no trace
+    # (`TraceKind.ERRO`): falha na chamada ao modelo, teto desta requisição
+    # incluído. CONTADAS, não inferidas.
+    #
+    # `falhas == 0` com `propostas > 0` significa que o modelo respondeu sobre
+    # todos os itens — inclusive para dizer que não sabe, que é resposta e não
+    # falha.
+    falhas: int
+    # O teto DESTA requisição recusou ao menos uma chamada. É o que separa
+    # "paramos no teto" de "a API falhou", que sem ele são o mesmo `falhas > 0`:
+    # os dois viram abstenção pela captura estreita de `agent/conversa.py`, com
+    # o mesmo marcador e o mesmo texto.
+    #
+    # `False` numa cascata sem agente é MEDIDO: não havia chamada paga para
+    # recusar.
+    teto_atingido: bool
+    # AUSENTE, não zero. Publicar `0.0` sobre uma fonte sem verdade seria dizer
+    # "errou tudo" quando o certo é "não há com o que comparar".
+    contra_gabarito: MedidoJSON | None = None
 
 
 class RunResumoJSON(BaseModel):
