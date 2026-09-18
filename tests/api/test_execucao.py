@@ -1480,7 +1480,9 @@ def _issues_pg(monkeypatch, linhas):
 
     class _Cursor:
         def execute(self, q): ...
-        def fetchall(self): return list(linhas)
+        # `fetchmany(n)`, como o cursor de verdade: o teto de linhas existe
+        # justamente para o driver nunca ser mandado trazer tudo.
+        def fetchmany(self, quantas): return list(linhas)[:quantas]
 
     class _Conexao:
         def cursor(self): return _Cursor()

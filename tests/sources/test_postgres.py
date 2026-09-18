@@ -11,16 +11,21 @@ SENTINELA = "postgresql://usuario:SEGREDO-4F2A@db.interna:5432/erp"
 
 
 class _Cursor:
+    """O cursor falso serve `fetchmany(n)` como o de verdade: no MÁXIMO `n`
+    linhas. É por aí que o teto protege a memória — `fetchall()` traria tudo."""
+
     def __init__(self, linhas, erro=None):
         self.linhas, self.erro, self.executadas = linhas, erro, []
+        self.pedidas = []
 
     def execute(self, query):
         self.executadas.append(query)
         if self.erro:
             raise self.erro
 
-    def fetchall(self):
-        return list(self.linhas)
+    def fetchmany(self, quantas):
+        self.pedidas.append(quantas)
+        return list(self.linhas)[:quantas]
 
 
 class _Conexao:
@@ -35,7 +40,10 @@ class _Conexao:
         self.fechada = True
 
 
-def _fonte(monkeypatch, linhas, *, query="SELECT id, titulo FROM issues", erro=None, env=SENTINELA):
+def _fonte(
+    monkeypatch, linhas, *, query="SELECT id, titulo FROM issues", erro=None, env=SENTINELA,
+    erro_de_conexao=None,
+):
     """Conexão FALSA injetada; nenhum socket. A variável de ambiente recebe o
     sentinela para que qualquer vazamento apareça como texto reconhecível."""
     if env is not None:
@@ -46,6 +54,8 @@ def _fonte(monkeypatch, linhas, *, query="SELECT id, titulo FROM issues", erro=N
 
     def conectar(dsn):
         conexoes.append(dsn)
+        if erro_de_conexao is not None:
+            raise erro_de_conexao
         return _Conexao(linhas, erro)
 
     fonte = PostgresSource(
@@ -131,10 +141,54 @@ def test_o_ref_e_ESTAVEL_para_as_mesmas_linhas_e_muda_quando_uma_muda(monkeypatc
     assert a.ref != c.ref
 
 
+def test_o_ref_NAO_depende_da_ORDEM_em_que_as_linhas_chegaram(monkeypatch):
+    """A mesma tabela, sem uma alteração sequer, devolvida em outra ordem.
+
+    Um `SELECT` sem `ORDER BY` não promete ordem nenhuma, e ela muda na prática
+    por troca de plano, por `VACUUM` movendo tuplas, por autovacuum entre duas
+    execuções. Com o `ref` dependendo da ordem de chegada, a execução de terça
+    produzia uma chave de `data/fila/**` nova e vazia, e toda decisão humana já
+    tomada na segunda ficava invisível — as mesmas propostas voltando para
+    revisão.
+    """
+    linhas = [{"id": 1, "t": "a"}, {"id": 2, "t": "b"}, {"id": 3, "t": "c"}]
+    segunda, _ = _fonte(monkeypatch, linhas)
+    terca, _ = _fonte(monkeypatch, list(reversed(linhas)))
+    assert segunda.ref == terca.ref
+
+
+def test_mas_linhas_DIFERENTES_continuam_dando_refs_diferentes(monkeypatch):
+    """A outra metade de content-addressing, e a que o `sorted` poderia ter
+    quebrado: ignorar a ordem não pode virar ignorar o conteúdo."""
+    a, _ = _fonte(monkeypatch, [{"id": 1, "t": "a"}, {"id": 2, "t": "b"}])
+    b, _ = _fonte(monkeypatch, [{"id": 1, "t": "a"}, {"id": 2, "t": "OUTRA"}])
+    c, _ = _fonte(monkeypatch, [{"id": 1, "t": "a"}])
+    d, _ = _fonte(monkeypatch, [{"id": 1, "t": "a"}, {"id": 1, "t": "a"}])
+    assert len({a.ref, b.ref, c.ref, d.ref}) == 4
+
+
+def test_a_ORDEM_do_POOL_continua_sendo_a_ordem_em_que_as_linhas_chegaram(monkeypatch):
+    """O `sorted` é do DIGEST, não das linhas. Ordenar o pool mudaria o que a
+    cascata processa primeiro — e o `ref` não tem nada a ver com isso."""
+    fonte, _ = _fonte(monkeypatch, [{"id": 9}, {"id": 1}, {"id": 5}])
+    assert [i.id for i in fonte.load().items] == ["9", "1", "5"]
+
+
 def test_o_ref_muda_quando_a_QUERY_muda(monkeypatch):
     a, _ = _fonte(monkeypatch, [{"id": 1}], query="SELECT id FROM a")
     b, _ = _fonte(monkeypatch, [{"id": 1}], query="SELECT id FROM b")
     assert a.ref != b.ref
+
+
+def test_o_ref_hasheia_a_query_GUARDADA_e_nao_a_crua(monkeypatch):
+    """`;` final e comentário `--` são retirados por `_guarda_select`, então as
+    três queries EXECUTAM o mesmo statement sobre as mesmas linhas. Hashear a
+    query crua dava três `ref` — e três filas de revisão — para um statement
+    só."""
+    a, _ = _fonte(monkeypatch, [{"id": 1}], query="SELECT id FROM a")
+    b, _ = _fonte(monkeypatch, [{"id": 1}], query="SELECT id FROM a;")
+    c, _ = _fonte(monkeypatch, [{"id": 1}], query="-- um comentário\nSELECT id FROM a")
+    assert a.ref == b.ref == c.ref
 
 
 def test_ref_e_load_sao_UMA_consulta(monkeypatch):
@@ -162,6 +216,42 @@ def test_erro_do_driver_e_REDUZIDO_a_classe_e_a_mensagem_inteira_vai_ao_log(monk
     assert any("SEGREDO-4F2A" in r.getMessage() for r in caplog.records)
 
 
+def test_erro_de_CONEXAO_e_reduzido_a_classe_e_o_DSN_nao_vaza(monkeypatch, caplog):
+    """O ramo que faltava, e é justamente o que ecoa host e usuário.
+
+    O gêmeo acima falha dentro do `cursor.execute` — ramo "consulta falhou". A
+    `OperationalError` de CONEXÃO (`could not connect to host … user …`) nasce
+    no `connect`, e o ramo que a reduz não tinha teste nenhum: a redução estava
+    escrita certa e não estava pinada.
+    """
+
+    class OperationalError(Exception):
+        pass
+
+    fonte, conexoes = _fonte(
+        monkeypatch,
+        [],
+        erro_de_conexao=OperationalError(
+            f'connection failed: could not translate host name to address, dsn="{SENTINELA}"'
+        ),
+    )
+    with caplog.at_level(logging.ERROR, logger="orchestrator.sources"):
+        with pytest.raises(FonteFalhou) as erro:
+            fonte.load()
+    assert str(erro.value) == "conexão falhou: OperationalError"
+    # Nem a senha, nem o host, nem o usuário, nem o DSN inteiro.
+    assert "SEGREDO-4F2A" not in str(erro.value)
+    assert "db.interna" not in str(erro.value) and "usuario" not in str(erro.value)
+    assert SENTINELA not in str(erro.value)
+    # E o texto inteiro CHEGOU ao log do servidor — o lugar designado. Sem esta
+    # linha, "reduzir" seria indistinguível de "perder".
+    assert any(
+        SENTINELA in r.getMessage() and r.name == "orchestrator.sources"
+        for r in caplog.records
+    )
+    assert conexoes == [SENTINELA]
+
+
 def test_a_fonte_nao_IMPRIME_nada(monkeypatch, capsys):
     fonte, _ = _fonte(monkeypatch, [{"id": 1}])
     fonte.load()
@@ -175,15 +265,45 @@ def test_campo_id_ausente_numa_linha_e_erro_ALTO_com_a_linha(monkeypatch):
         fonte.load()
 
 
-def test_teto_de_linhas_recusa_com_motivo(monkeypatch):
-    linhas = [{"id": i} for i in range(6)]
+def _com_teto(monkeypatch, linhas, teto=5):
     monkeypatch.setenv("ERP_DSN", SENTINELA)
+    conexao = _Conexao(linhas)
     fonte = PostgresSource(
         dsn_env="ERP_DSN", query="SELECT id FROM t", kind="k", campo_id="id",
-        max_linhas=5, conectar=lambda dsn: _Conexao(linhas),
+        max_linhas=teto, conectar=lambda dsn: conexao,
     )
+    return fonte, conexao
+
+
+def test_teto_de_linhas_recusa_com_motivo(monkeypatch):
+    fonte, _ = _com_teto(monkeypatch, [{"id": i} for i in range(6)])
     with pytest.raises(FonteFalhou, match="teto"):
         fonte.load()
+
+
+def test_o_teto_protege_o_REF_tambem_e_nao_so_o_load(monkeypatch):
+    """`ref` não passa por `load()` — é a razão escrita em
+    `ArquivoSource._bytes()`. Com o teto só no `load()`, `fonte.ref` devolvia um
+    `ref` com SUCESSO sobre 20.000 linhas já trazidas para a memória."""
+    fonte, _ = _com_teto(monkeypatch, [{"id": i} for i in range(6)])
+    with pytest.raises(FonteFalhou, match="teto"):
+        _ = fonte.ref
+
+
+def test_o_cursor_nunca_e_pedido_por_mais_do_que_o_teto_mais_UM(monkeypatch):
+    """`fetchall()` é bufferizado no cliente: uma tabela de 50 M de linhas vira
+    50 M de dicts antes de o teto ter voz. O `+ 1` é o mínimo para distinguir
+    "encheu" de "estourou"."""
+    fonte, conexao = _com_teto(monkeypatch, [{"id": i} for i in range(20_000)], teto=5)
+    with pytest.raises(FonteFalhou, match="teto"):
+        fonte.load()
+    assert conexao.cursor_.pedidas == [6]
+
+
+def test_um_resultado_EXATAMENTE_no_teto_passa(monkeypatch):
+    """Guarda contra over-refusal, e contra um erro de um a mais no `+ 1`."""
+    fonte, _ = _com_teto(monkeypatch, [{"id": i} for i in range(5)])
+    assert len(fonte.load().items) == 5
 
 
 def test_sem_o_extra_a_falha_e_ALTA_e_nomeia_o_extra(monkeypatch):

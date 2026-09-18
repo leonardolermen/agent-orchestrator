@@ -10,9 +10,11 @@ compromissos, e cada um tem um teste que o prova:
    `ref`, na mensagem de erro, nem em nada que a fonte emita. O erro do driver
    — que ecoa host e usuário — é reduzido à classe; a mensagem inteira vai
    para o log do servidor, o lugar designado.
-3. `ref` = `pg:<dsn_env>/<sha(query)>@<sha(linhas)>`. O hash das linhas é o
-   que faz duas execuções sobre os mesmos dados casarem as decisões humanas
-   já tomadas — e uma linha mudada mudar o `ref`.
+3. `ref` = `pg:<dsn_env>/<sha(query guardada)>@<sha(linhas ordenadas)>`. O
+   hash das linhas é o que faz duas execuções sobre os mesmos dados casarem
+   as decisões humanas já tomadas — e uma linha mudada mudar o `ref`. As duas
+   palavras difíceis dessa fórmula são "guardada" e "ordenadas", e cada uma
+   tem um comentário no `ref` explicando de que defeito ela é o conserto.
 
 A conexão é INJETÁVEL (`conectar`) para que os testes não abram socket: o
 default importa `psycopg` dentro do `load()`, e é isso que torna o extra
@@ -32,6 +34,12 @@ from orchestrator.kernel.work import WorkItem, WorkSet
 from orchestrator.sources.erros import ExtraAusente, FonteFalhou, VariavelAusente
 
 MAX_LINHAS_PADRAO = 5000
+# Os dois relógios da conexão. A irmã HTTP põe `timeout=30.0` explícito; a que
+# fala com o banco do PARCEIRO era a única sem relógio nenhum, e
+# `_guarda_select` deixa passar `SELECT pg_sleep(60)` e qualquer SELECT caro
+# sobre uma tabela grande — por uma rota sem autenticação.
+CONEXAO_TIMEOUT_S = 10
+STATEMENT_TIMEOUT_MS = 30_000
 _LEITURA = ("SELECT", "WITH")
 _log = logging.getLogger("orchestrator.sources")
 
@@ -62,12 +70,33 @@ def _guarda_select(query: str) -> str:
 
 
 def _conectar_padrao(dsn: str) -> Any:
+    """A conexão de verdade, COM relógio nos dois lados.
+
+    Os dois relógios moram aqui, e não no `_consultar`, por duas razões: são
+    propriedade da CONEXÃO (não da consulta), e assim as conexões falsas que os
+    testes injetam continuam valendo sem saber que eles existem.
+
+    `connect_timeout` limita o aperto de mão; `statement_timeout`, passado nas
+    `options` da conexão, limita o servidor — é o único dos dois que interrompe
+    um `pg_sleep(60)` que já começou, porque quem o cancela é o Postgres.
+
+    Estes dois valores VENCEM o que o DSN disser (kwargs ganham do conninfo em
+    `psycopg.connect`): o DSN vem de uma variável de ambiente do servidor, mas
+    a query vem de um campo de texto na tela, e o relógio existe por causa da
+    segunda. Quem precisar de mais tempo muda a constante deste módulo, onde a
+    mudança fica visível.
+    """
     try:
         import psycopg
         from psycopg.rows import dict_row
     except ImportError as erro:
         raise ExtraAusente("psycopg") from erro
-    return psycopg.connect(dsn, row_factory=dict_row)
+    return psycopg.connect(
+        dsn,
+        row_factory=dict_row,
+        connect_timeout=CONEXAO_TIMEOUT_S,
+        options=f"-c statement_timeout={STATEMENT_TIMEOUT_MS}",
+    )
 
 
 @dataclass(frozen=True)
@@ -104,25 +133,61 @@ class PostgresSource:
         try:
             cursor = conexao.cursor()
             cursor.execute(query)
-            linhas = tuple(dict(linha) for linha in cursor.fetchall())
+            # `fetchmany(teto + 1)` e não `fetchall()`: o `fetchall` é
+            # bufferizado no CLIENTE, então uma tabela de 50 M de linhas vira
+            # 50 M de dicts na memória do servidor ANTES de o teto ter chance
+            # de falar. O `+ 1` é o que permite distinguir "encheu" de
+            # "estourou" sem trazer a linha 50-milionésima.
+            brutas = cursor.fetchmany(self.max_linhas + 1)
         except Exception as erro:
             _log.error("fonte pg:%s — consulta falhou: %s", self.dsn_env, erro)
             raise FonteFalhou(f"consulta falhou: {type(erro).__name__}") from erro
         finally:
             conexao.close()
+        # A recusa por teto sai DAQUI, fora do `try` acima — que a viraria em
+        # "consulta falhou: FonteFalhou" — e fora do `load()`, porque `ref` não
+        # passa por `load()`. É a razão escrita em `ArquivoSource._bytes()`: o
+        # teto só é teto se as DUAS vistas passarem por ele.
+        if len(brutas) > self.max_linhas:
+            raise FonteFalhou(
+                f"a query devolveu mais de {self.max_linhas} linhas, o teto desta "
+                f"fonte — a leitura foi interrompida. estreite o `WHERE` ou o `LIMIT`"
+            )
+        linhas = tuple(dict(linha) for linha in brutas)
         object.__setattr__(self, "_linhas", linhas)
         return linhas
 
     @property
     def ref(self) -> str:
         linhas = self._consultar()
-        q = hashlib.sha256(self.query.encode("utf-8")).hexdigest()[:12]
-        canonico = json.dumps(linhas, sort_keys=True, default=str, ensure_ascii=False)
-        d = hashlib.sha256(canonico.encode("utf-8")).hexdigest()
+        # A query GUARDADA, que é a que executa. Hashear `self.query` crua fazia
+        # um `;` a mais ou um comentário `--` mudarem o `ref` sem mudar o
+        # statement nem uma linha do resultado — conteúdo idêntico, chave de
+        # fila diferente, decisão humana invisível.
+        q = hashlib.sha256(_guarda_select(self.query).encode("utf-8")).hexdigest()[:12]
+        # **O `sorted` é a correção, não uma arrumação — não o tire.** Um
+        # `SELECT` sem `ORDER BY` não promete ordem nenhuma, e ela muda na
+        # prática por troca de plano, por `VACUUM` movendo tuplas, por
+        # autovacuum entre duas execuções. Hashear as linhas na ordem em que o
+        # cursor as devolveu fazia a MESMA tabela, sem uma alteração sequer,
+        # produzir dois `ref` — e cada `ref` novo é um `data/fila/<wf>/pg-*.jsonl`
+        # novo e vazio, com toda decisão humana já tomada fora de alcance.
+        # Serializa cada linha, ordena os TEXTOS, hasheia isso: o digest deixa
+        # de depender da ordem de chegada. A ordem do POOL não é tocada —
+        # `load()` continua entregando as linhas como vieram.
+        serializadas = sorted(
+            json.dumps(linha, sort_keys=True, default=str, ensure_ascii=False)
+            for linha in linhas
+        )
+        d = hashlib.sha256("\n".join(serializadas).encode("utf-8")).hexdigest()
         return f"pg:{self.dsn_env}/{q}@{d}"
 
     def load(self) -> WorkSet:
         linhas = self._consultar()
+        # Segunda tranca. Hoje ela não dispara — `_consultar` nunca traz mais do
+        # que o teto —, e continua aqui de propósito: é a única que sabe o
+        # NÚMERO exato, e é quem pega o dia em que alguém alimentar `_linhas`
+        # por outro caminho que não o `fetchmany`.
         if len(linhas) > self.max_linhas:
             raise FonteFalhou(
                 f"a query devolveu {len(linhas)} linhas, acima do teto de {self.max_linhas}"
