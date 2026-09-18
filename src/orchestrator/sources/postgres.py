@@ -23,6 +23,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -51,6 +52,12 @@ def _guarda_select(query: str) -> str:
             "a query precisa ser um SELECT só (ou WITH … SELECT); "
             f"começa com {primeira or 'nada'!r}"
         )
+    # `SELECT … INTO <tabela>` é a única forma de SELECT que escreve no
+    # Postgres — cria e popula uma tabela. `INSERT INTO` já é barrado pela
+    # primeira palavra; este é o caso que sobra. Não tenta distinguir de um
+    # literal de string: sobre-recusar é a direção seguro.
+    if re.search(r"\bINTO\b", sem_final, re.IGNORECASE):
+        raise FonteFalhou("a query precisa ser um SELECT só — `INTO` escreve numa tabela")
     return sem_final
 
 

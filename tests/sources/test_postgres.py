@@ -101,6 +101,9 @@ def test_leitura_PASSA_na_guarda(monkeypatch, query):
         "DROP TABLE issues",
         "CALL limpar()",
         "SELECT 1; DELETE FROM issues",
+        "SELECT id INTO foo FROM t",
+        "SELECT id\nINTO foo FROM t",
+        "select * into novo from t",
     ],
 )
 def test_escrita_e_recusada_ANTES_de_conectar(monkeypatch, query):
