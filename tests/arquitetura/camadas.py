@@ -45,8 +45,15 @@ PERMITIDO: dict[str, frozenset[str]] = {
         {"kernel", "runtime", "agent", "human", "crew", "evaluation", "storage",
          "regras"}
     ),
+    # `authoring` compõe a partir de TODA família de resolver, então conhece
+    # todas: `agent` para o agente declarado, `regras` para os blocos
+    # determinísticos, `human` para o degrau que fecha, e `crew` desde que uma
+    # tripulação virou bloco componível. A alternativa seria um registro de
+    # fábricas no kernel para `authoring` consultar às cegas — o que troca uma
+    # seta legível por uma indireção, e esconde de quem lê o grafo quem depende
+    # de quem.
     "authoring": frozenset(
-        {"kernel", "runtime", "domains", "agent", "human", "regras"}
+        {"kernel", "runtime", "domains", "agent", "human", "regras", "crew"}
     ),
     # Bordas: podem importar tudo. São elas que compõem o produto final.
     "api": _BORDA,

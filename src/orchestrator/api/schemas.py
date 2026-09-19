@@ -518,7 +518,29 @@ class BlocoAgenteJSON(BaseModel):
     declaracao: AgenteDeclaradoJSON
 
 
-BlocoJSON = Annotated[BlocoRegraJSON | BlocoAgenteJSON, Field(discriminator="tipo")]
+class BlocoCrewJSON(BaseModel):
+    """Uma TRIPULAÇÃO: vários agentes sobre o mesmo item.
+
+    Sem `abstem_com`: ele é DERIVADO dos agentes, que já o declaram cada um.
+    Aceitá-lo aqui criaria a segunda fonte de verdade, e o sintoma seria o Crew
+    chamando de desacordo duas abstenções — o caso em que ele deveria se calar.
+
+    Sem `manager`/`synthesizer` ainda: `Crew.__post_init__` recusa
+    `hierarchical` sem gerente e `sintetizar` sem sintetizador, com texto
+    escrito para ser lido, e essa recusa atravessa como 422.
+    """
+
+    tipo: Literal["crew"]
+    nome: str
+    agentes: list[AgenteDeclaradoJSON] = Field(min_length=1)
+    process: str = "sequential"
+    conflito: str = "abster"
+    budget_microcents: int = Field(default=20_000_000, ge=0)
+
+
+BlocoJSON = Annotated[
+    BlocoRegraJSON | BlocoAgenteJSON | BlocoCrewJSON, Field(discriminator="tipo")
+]
 
 
 class EtapaJSON(BaseModel):

@@ -20,11 +20,21 @@ import type { AgenteDeclarado, Catalogo, Regra } from "./api";
  * com um rotulo que envelheceu.
  */
 
-/** Um bloco que ainda nao existe. `porque` e o que o tooltip diz. */
+/** Um bloco que nao esta na paleta, e a razao disso.
+ *
+ *  Duas razoes MUITO diferentes, e confundi-las seria mentir nas duas direcoes:
+ *
+ *    "soon"  — nao foi construido. O tooltip diz o que falta.
+ *    "ja"    — EXISTE, em outra forma. `Parallel` e `Merge` nao sao blocos
+ *              neste motor: sao a FORMA do grafo (um bloco que ramifica mais um
+ *              degrau por ramo), e ha teste provando que funcionam hoje. Um
+ *              "bloco Parallel" nao teria o que fazer alem de existir no
+ *              desenho, que e a definicao de decoracao. */
 interface Planejado {
   rotulo: string;
   icone: string;
   porque: string;
+  marca?: "soon" | "ja";
 }
 
 interface Grupo {
@@ -50,7 +60,13 @@ const GRUPOS: Grupo[] = [
     planejados: [
       { rotulo: "Trigger", icone: "⚡", porque: "não há porta de entrada por evento: um run começa pela API ou pela CLI" },
       { rotulo: "Input", icone: "📥", porque: "a fonte é escolhida na tela de execução, não aqui" },
-      { rotulo: "Output", icone: "📤", porque: "já existe — é o campo `entrega`, em Identidade. Nada roda nele, então não é um nó" },
+      {
+        rotulo: "Output",
+        icone: "📤",
+        marca: "ja",
+        porque:
+          "é o campo `entrega`, em Identidade. Nada roda nele, então não é um nó — e com mais de uma etapa ele só é preciso quando o último ramo não tem degrau depois",
+      },
     ],
   },
   {
@@ -58,10 +74,22 @@ const GRUPOS: Grupo[] = [
     titulo: "Control",
     ajuda: "Ramificar é produzir um kind; o degrau que o consome só roda quando houver item dele.",
     planejados: [
-      { rotulo: "Parallel", icone: "⇉", porque: "o grafo já é um DAG — falta o canvas montar mais de uma etapa" },
+      {
+        rotulo: "Parallel",
+        icone: "⇉",
+        marca: "ja",
+        porque:
+          "não é um bloco: é a forma do grafo. Um bloco que ramifica produz dois kinds, e um degrau por ramo consome um cada — os dois rodam. Há teste",
+      },
+      {
+        rotulo: "Merge",
+        icone: "⊕",
+        marca: "ja",
+        porque:
+          "também não é bloco: é um degrau cujo `consome` tem os dois lados. Os itens que vieram por caminhos diferentes se encontram nele. Há teste",
+      },
       { rotulo: "Loop", icone: "↻", porque: "o kernel tem `max_rondas`, mas nada o expõe ainda" },
       { rotulo: "Wait", icone: "⏸", porque: "não há suspensão: uma execução roda até o fim" },
-      { rotulo: "Merge", icone: "⊕", porque: "sai junto com multi-etapa: fan-in é um degrau que consome dois kinds" },
     ],
   },
   {
@@ -184,14 +212,25 @@ function Bloco({
 }
 
 function BlocoPlanejado({ b }: { b: Planejado }) {
+  const ja = b.marca === "ja";
   return (
     <div
-      title={`ainda não construído — ${b.porque}`}
-      className="flex w-full cursor-help items-center gap-2 rounded px-2 py-1.5 text-left text-[12.5px] text-neutral-300 dark:text-noite-fraca/50"
+      title={ja ? `já existe — ${b.porque}` : `ainda não construído — ${b.porque}`}
+      className={[
+        "flex w-full cursor-help items-center gap-2 rounded px-2 py-1.5 text-left text-[12.5px]",
+        // Quem JA EXISTE nao fica tao apagado quanto quem nao foi construido: a
+        // diferenca entre "nao da" e "da, de outro jeito" precisa se ver sem
+        // passar o mouse.
+        ja
+          ? "text-neutral-400 dark:text-noite-fraca"
+          : "text-neutral-300 dark:text-noite-fraca/50",
+      ].join(" ")}
     >
       <span className="w-4 shrink-0 text-center text-[12px]">{b.icone}</span>
       <span className="truncate">{b.rotulo}</span>
-      <span className="ml-auto shrink-0 text-[9.5px] uppercase tracking-wide">soon</span>
+      <span className="ml-auto shrink-0 text-[9.5px] uppercase tracking-wide">
+        {ja ? "existe" : "soon"}
+      </span>
     </div>
   );
 }

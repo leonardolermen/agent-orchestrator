@@ -131,6 +131,17 @@ class Crew:
             name=self.name,
             cost_class=self.cost_class,
             summary=f"tripulação {self.process.value} [{quem}]",
+            # A UNIÃO do que os agentes consomem, e não vazio.
+            #
+            # Vazio significa "vejo o pool inteiro", e enquanto ninguém compunha
+            # um Crew na tela isso não custava nada — o `Crew` só era montado em
+            # Python, ao lado de uma definição que já dizia o resto. Composto,
+            # ele entra num degrau cujo `consome` é derivado dos blocos
+            # (`consome_de`), e um Crew que não declara nada faria o degrau
+            # inteiro ver o pool todo: o item de outro ramo entraria na
+            # tripulação e sairia com proposta de um agente que não fala sobre
+            # ele — caro e errado, sem erro nenhum.
+            consome=frozenset().union(*(a.describe().consome for a in self.agents)),
         )
 
     def resolve(self, work: WorkSet) -> ResolverOutput:

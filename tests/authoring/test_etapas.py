@@ -241,3 +241,111 @@ def test_arquivo_ANTIGO_sem_etapas_continua_carregando():
 
     assert len(voltou.etapas) == 1
     assert voltou.nomes == ("L1",)
+
+
+# --- Parallel e Merge: forma do grafo, não bloco ----------------------------
+
+
+def _tabela() -> BlocoRegra:
+    return BlocoRegra(
+        nome="tabela",
+        parametros={
+            "kind": "pedido",
+            "campo": "tipo",
+            "de_para": ("PJ=empresa", "PF=pessoa"),
+        },
+    )
+
+
+@dataclass(frozen=True)
+class Cliente:
+    tipo: str
+    valor: int
+
+
+def test_FAN_OUT_ja_existe_e_nao_precisa_de_bloco():
+    """`Parallel` não é um bloco neste motor — é a FORMA do grafo.
+
+    Um bloco que ramifica produz dois kinds; dois degraus depois dele consomem
+    um cada, e ambos rodam porque `runtime/engine.py` devolve ao pool o que uma
+    etapa não consome (`work.items + reservados`). Um "bloco Parallel" não teria
+    o que fazer além de existir no desenho — que é a definição de decoração.
+    """
+    c = _composicao(
+        etapas=(
+            Etapa(nome="rotear", blocos=(_tabela(),)),
+            Etapa(nome="PJ", blocos=(_filtro("empresa"),)),
+            Etapa(
+                nome="PF",
+                blocos=(
+                    BlocoRegra(
+                        nome="validacao",
+                        parametros={
+                            "kind": "pessoa",
+                            "campo": "valor",
+                            # Propõe para quem FALHA: `valor=20` não é maior que
+                            # 100, então o ramo PF vira proposta para o humano.
+                            "teste": "maior",
+                            "valor": "100",
+                        },
+                    ),
+                ),
+            ),
+        )
+    )
+    d = construir_composicao(c)
+    pool = WorkSet(
+        items=(
+            WorkItem(id="a", kind="pedido", payload=Cliente("PJ", 10), origem="t"),
+            WorkItem(id="b", kind="pedido", payload=Cliente("PF", 20), origem="t"),
+        )
+    )
+
+    run = execute(d, pool, model="claude-opus-5")
+
+    # Os DOIS ramos rodaram: o de PJ resolveu o seu, o de PF propôs sobre o seu.
+    resolvidos = {i for r in run.resolutions for i in r.item_ids}
+    assert "a+empresa" in resolvidos
+    assert [p.item_id for p in run.proposals] == ["b+pessoa"]
+
+
+def test_MERGE_e_um_degrau_que_consome_os_DOIS_kinds():
+    """`Merge` também não é bloco: é um degrau cujo `consome` tem os dois lados.
+
+    Aqui `igualdade` casa um item vindo de cada ramo — os dois chegaram por
+    caminhos diferentes e se encontram no degrau de baixo.
+    """
+    c = _composicao(
+        etapas=(
+            Etapa(nome="rotear", blocos=(_tabela(),)),
+            Etapa(
+                nome="juntar",
+                blocos=(
+                    BlocoRegra(
+                        nome="igualdade",
+                        parametros={
+                            "esquerda": "empresa",
+                            "direita": "pessoa",
+                            "campos": ("valor",),
+                        },
+                    ),
+                ),
+            ),
+        )
+    )
+
+    d = construir_composicao(c)
+
+    assert d.stages[1].consome == frozenset({"empresa", "pessoa"})
+
+    pool = WorkSet(
+        items=(
+            WorkItem(id="a", kind="pedido", payload=Cliente("PJ", 99), origem="t"),
+            WorkItem(id="b", kind="pedido", payload=Cliente("PF", 99), origem="t"),
+        )
+    )
+    run = execute(d, pool, model="claude-opus-5")
+
+    juntou = [r for r in run.resolutions if r.produced_by == "igualdade"]
+    assert len(juntou) == 1
+    assert juntou[0].item_ids == frozenset({"a+empresa", "b+pessoa"})

@@ -94,7 +94,49 @@ class BlocoAgente:
     declaracao: AgenteDeclarado
 
 
-Bloco = BlocoRegra | BlocoAgente
+@dataclass(frozen=True)
+class BlocoCrew:
+    """Uma TRIPULAÇÃO: vários agentes sobre o mesmo item, e uma política de
+    conflito.
+
+    `Crew` já existia inteiro em `crew/crew.py`, com processo sequencial ou
+    hierárquico e três maneiras de resolver desacordo — só não tinha como ser
+    composto. Este bloco é a encanação que faltava.
+
+    **`abstem_com` é DERIVADO dos agentes, não perguntado de novo.** O `Crew`
+    exige saber quais valores de `Proposal.tipo` significam "não sei", e cada
+    `AgenteDeclarado` já declara o seu. Perguntar outra vez criaria a segunda
+    fonte de verdade de sempre — e o sintoma seria o Crew chamando de DESACORDO
+    duas abstenções, que é o caso em que ele deveria se calar.
+
+    O `manager` e o `synthesizer` não são campos daqui: `Crew.__post_init__` já
+    recusa `HIERARCHICAL` sem gerente e `SINTETIZAR` sem sintetizador, com texto
+    escrito para ser lido. Duplicar a recusa aqui daria duas mensagens para a
+    mesma falha.
+    """
+
+    nome: str
+    agentes: tuple[AgenteDeclarado, ...]
+    process: str = "sequential"
+    conflito: str = "abster"
+    budget_microcents: int = 20_000_000
+
+
+Bloco = BlocoRegra | BlocoAgente | BlocoCrew
+
+
+def nome_do_bloco(b: Bloco) -> str:
+    """A IDENTIDADE de um bloco, qualquer que seja o tipo dele.
+
+    Era um ternário repetido em quatro lugares, e com um terceiro tipo de bloco
+    um ternário deixa de caber. Repetir a decisão em quatro lugares é o que faz
+    o quinto esquecer dela.
+    """
+    if isinstance(b, BlocoRegra):
+        return b.nome
+    if isinstance(b, BlocoCrew):
+        return b.nome
+    return b.declaracao.name
 
 
 @dataclass(frozen=True)
@@ -214,10 +256,7 @@ class Composicao:
 
     @property
     def nomes(self) -> tuple[str, ...]:
-        return tuple(
-            b.nome if isinstance(b, BlocoRegra) else b.declaracao.name
-            for b in self.blocos
-        )
+        return tuple(nome_do_bloco(b) for b in self.blocos)
 
 
 def construir_composicao(
@@ -312,6 +351,36 @@ def construir_composicao(
     )
 
 
+def _tripulacao(bloco: BlocoCrew, cliente: LLMClient, ferramentas: Any) -> Resolver:
+    """Um `Crew` a partir da declaração. Valida CONSTRUINDO, como tudo aqui.
+
+    `Crew.__post_init__` recusa tripulação vazia, sequencial com um agente só,
+    hierárquica sem gerente, síntese sem sintetizador e maioria com menos de
+    três. As mensagens dele são escritas para serem lidas, e repetir a validação
+    aqui daria duas mensagens para a mesma falha — divergindo na primeira que
+    alguém mudasse.
+
+    `abstem_com` sai dos AGENTES: cada `AgenteDeclarado` já diz qual valor de
+    `Proposal.tipo` significa "não sei" para ele.
+    """
+    from orchestrator.crew.crew import Conflito, Crew, Process
+
+    agentes = tuple(construir_agente(a, cliente, ferramentas) for a in bloco.agentes)
+    try:
+        return Crew(
+            name=bloco.nome,
+            agents=agentes,
+            abstem_com=frozenset(a.abstem_com for a in bloco.agentes),
+            process=Process(bloco.process),
+            conflito=Conflito(bloco.conflito),
+            budget_microcents=bloco.budget_microcents,
+        )
+    except ValueError as erro:
+        # Re-levanta com o NOME do bloco na frente: a mensagem do `Crew` fala
+        # do resolver, e quem está na tela procura o bloco que montou.
+        raise ValueError(f"tripulação {bloco.nome!r}: {erro}") from erro
+
+
 def _degrau(
     etapa: "Etapa",
     por_nome: dict[str, Any],
@@ -329,7 +398,7 @@ def _degrau(
     resolvers: list[Resolver] = []
 
     for bloco in etapa.blocos:
-        nome = bloco.nome if isinstance(bloco, BlocoRegra) else bloco.declaracao.name
+        nome = nome_do_bloco(bloco)
         if nome in vistos:
             raise ValueError(
                 f"bloco repetido no workflow: {nome!r}. o segundo rodaria sobre "
@@ -366,6 +435,8 @@ def _degrau(
                 resolvers.append(RevisorHumano(fila=fila))
             else:
                 resolvers.append(regra.construir(dict(bloco.parametros)))
+        elif isinstance(bloco, BlocoCrew):
+            resolvers.append(_tripulacao(bloco, cliente, ferramentas))
         else:
             # Sem checagem de `kind` AQUI, de propósito: a composição não
             # conhece a fonte. `Stage.consome` sai de `consome_de` no `return`
@@ -434,6 +505,17 @@ def _blocos_para_json(blocos: tuple[Bloco, ...]) -> list[dict[str, Any]]:
     for b in blocos:
         if isinstance(b, BlocoRegra):
             saida.append({"tipo": "regra", "nome": b.nome, "parametros": b.parametros})
+        elif isinstance(b, BlocoCrew):
+            saida.append(
+                {
+                    "tipo": "crew",
+                    "nome": b.nome,
+                    "agentes": [_agente_para_json(a) for a in b.agentes],
+                    "process": b.process,
+                    "conflito": b.conflito,
+                    "budget_microcents": b.budget_microcents,
+                }
+            )
         else:
             saida.append(
                 {"tipo": "agente", "declaracao": _agente_para_json(b.declaracao)}
@@ -481,11 +563,22 @@ def _blocos_de_json(crus: list[dict[str, Any]]) -> tuple[Bloco, ...]:
             blocos.append(BlocoRegra(nome=b["nome"], parametros=dict(b.get("parametros", {}))))
         elif b["tipo"] == "agente":
             blocos.append(BlocoAgente(declaracao=_agente_de_json(b["declaracao"])))
+        elif b["tipo"] == "crew":
+            blocos.append(
+                BlocoCrew(
+                    nome=b["nome"],
+                    agentes=tuple(_agente_de_json(a) for a in b["agentes"]),
+                    process=b.get("process", "sequential"),
+                    conflito=b.get("conflito", "abster"),
+                    budget_microcents=b.get("budget_microcents", 20_000_000),
+                )
+            )
         else:
             # Tipo novo precisa de uma decisão sobre o que ele significa na
             # cascata, não de um `else` que o ignora em silêncio.
             raise ValueError(
-                f"tipo de bloco desconhecido: {b['tipo']!r}. use 'regra' ou 'agente'"
+                f"tipo de bloco desconhecido: {b['tipo']!r}. use 'regra', "
+                f"'agente' ou 'crew'"
             )
     return tuple(blocos)
 

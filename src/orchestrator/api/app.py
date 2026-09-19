@@ -93,6 +93,7 @@ from orchestrator.api.schemas import (
 from orchestrator.authoring.composicao import (
     Bloco,
     BlocoAgente,
+    BlocoCrew,
     BlocoRegra,
     Composicao,
     Etapa,
@@ -229,6 +230,26 @@ def _ferramenta_json(ferramentas: ToolRegistry, nome: str) -> FerramentaJSON:
     return FerramentaJSON(nome=nome, descricao=ferramentas.spec(nome).description)
 
 
+def _declaracao(d: AgenteDeclaradoJSON) -> AgenteDeclarado:
+    """Um `AgenteDeclarado` a partir do JSON. Levanta `ValueError` do DOMÍNIO.
+
+    Extraído porque agora há dois lugares que declaram agente — o bloco de
+    agente e o de tripulação —, e duplicar a conversão faria a recusa divergir
+    entre os dois.
+    """
+    return AgenteDeclarado(
+        name=d.name,
+        system=d.system,
+        kind=d.kind,
+        prompt=d.prompt,
+        tipos=tuple(d.tipos),
+        abstem_com=d.abstem_com,
+        ferramentas=tuple(d.ferramentas),
+        max_turns=d.max_turns,
+        budget_microcents=d.budget_microcents,
+    )
+
+
 def _blocos_de(pedidos: list[BlocoJSON]) -> list[Bloco]:
     """Os blocos de UMA etapa, do JSON para o domínio.
 
@@ -242,6 +263,20 @@ def _blocos_de(pedidos: list[BlocoJSON]) -> list[Bloco]:
         if b.tipo == "regra":
             blocos.append(BlocoRegra(nome=b.nome, parametros=dict(b.parametros)))
             continue
+        if b.tipo == "crew":
+            try:
+                blocos.append(
+                    BlocoCrew(
+                        nome=b.nome,
+                        agentes=tuple(_declaracao(a) for a in b.agentes),
+                        process=b.process,
+                        conflito=b.conflito,
+                        budget_microcents=b.budget_microcents,
+                    )
+                )
+            except ValueError as erro:
+                raise HTTPException(status_code=422, detail=str(erro)) from erro
+            continue
         d = b.declaracao
         try:
             # `AgenteDeclarado.__post_init__` recusa vocabulário vazio, prompt
@@ -249,21 +284,7 @@ def _blocos_de(pedidos: list[BlocoJSON]) -> list[Bloco]:
             # recusas de DOMÍNIO, com texto escrito para ser lido, e viram o
             # 422 — não um erro de schema do Pydantic, que diria "field
             # required" onde a verdade é "isso mediria errado".
-            blocos.append(
-                BlocoAgente(
-                    declaracao=AgenteDeclarado(
-                        name=d.name,
-                        system=d.system,
-                        kind=d.kind,
-                        prompt=d.prompt,
-                        tipos=tuple(d.tipos),
-                        abstem_com=d.abstem_com,
-                        ferramentas=tuple(d.ferramentas),
-                        max_turns=d.max_turns,
-                        budget_microcents=d.budget_microcents,
-                    )
-                )
-            )
+            blocos.append(BlocoAgente(declaracao=_declaracao(d)))
         except ValueError as erro:
             raise HTTPException(status_code=422, detail=str(erro)) from erro
     return blocos
