@@ -58,12 +58,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException, Query, WebSocket
+from fastapi import FastAPI, Header, HTTPException, Query, WebSocket
 from fastapi.staticfiles import StaticFiles
 
 from orchestrator.agent.declarado import AgenteDeclarado, RegraDisponivel
 from orchestrator.agent.teto import ClienteComTeto
 from orchestrator.agent.tools.registry import ToolRegistry
+from orchestrator.api import gatilhos
 from orchestrator.api.entrevista import conduzir
 from orchestrator.api.schemas import (
     AgenteDeclaradoJSON,
@@ -76,6 +77,9 @@ from orchestrator.api.schemas import (
     FerramentaJSON,
     FilaJSON,
     GapJSON,
+    GatilhoCriadoJSON,
+    GatilhoJSON,
+    GatilhoRequest,
     ItemFilaJSON,
     LancamentoJSON,
     MedidoJSON,
@@ -152,6 +156,12 @@ _RAIZ_COMPOSICOES: Path | None = None
 # consumidor (`Path("data")`), esta é o próprio default. Continua sendo
 # atributo de módulo para o teste trocá-la por um `tmp_path`.
 _RAIZ_ENTRADAS = Path(__file__).resolve().parents[3] / "data" / "entradas"
+
+# Onde os gatilhos moram. `None` cai no default do módulo deles, como as raízes
+# de receita e de composição — e continua sendo atributo de módulo para o teste
+# trocá-lo por um `tmp_path`, porque um teste que gravasse gatilho na raiz de
+# verdade deixaria um SEGREDO utilizável no repositório de quem rodou a suíte.
+_RAIZ_GATILHOS: Path | None = None
 
 
 def _tem_chave() -> bool:
@@ -555,6 +565,87 @@ def obter_workflow(workflow_id: str) -> WorkflowJSON:
     return workflow_json(construir_definicao(fabrica, WorkflowContext.vazio()))
 
 
+# -- gatilhos: uma URL que dispara execução ---------------------------------
+#
+# Ver `api/gatilhos.py` para o desenho inteiro e para o que ele NÃO resolve.
+
+
+@app.post("/api/triggers", response_model=GatilhoCriadoJSON, status_code=201)
+def criar_gatilho(pedido: GatilhoRequest) -> GatilhoCriadoJSON:
+    """Cria o gatilho e mostra o segredo UMA vez.
+
+    As duas recusas acontecem aqui, na criação, e não no disparo: um gatilho que
+    existe, parece pronto e falha toda vez que alguém o chama é pior que um
+    gatilho que não nasceu.
+    """
+    fabrica = registry(_RAIZ_RECEITAS, _RAIZ_COMPOSICOES).get(pedido.workflow_id)
+    if fabrica is None:
+        raise HTTPException(
+            status_code=404, detail=f"workflow desconhecido: {pedido.workflow_id}"
+        )
+    forma = construir_definicao(fabrica, WorkflowContext.vazio())
+    if not _carrega_a_propria_entrada(forma):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"o workflow {pedido.workflow_id!r} não carrega a própria "
+                f"entrada: ele espera que quem roda escolha a fonte, e um "
+                f"disparo não tem ninguém para escolher. Acrescente um bloco "
+                f"`entrada` (Input) ao workflow"
+            ),
+        )
+    gatilho, segredo = gatilhos.criar(
+        pedido.workflow_id, pedido.teto_microcents, _RAIZ_GATILHOS
+    )
+    return GatilhoCriadoJSON(**_gatilho_json(gatilho).model_dump(), segredo=segredo)
+
+
+@app.get("/api/triggers", response_model=list[GatilhoJSON])
+def listar_gatilhos() -> list[GatilhoJSON]:
+    return [_gatilho_json(g) for g in gatilhos.listar(_RAIZ_GATILHOS)]
+
+
+@app.delete("/api/triggers/{gatilho_id}", status_code=204)
+def revogar_gatilho(gatilho_id: str) -> None:
+    """Revogar APAGA. Um gatilho inativo no disco é um segredo que continua
+    existindo, e a razão de revogar costuma ser que ele vazou."""
+    if not gatilhos.revogar(gatilho_id, _RAIZ_GATILHOS):
+        raise HTTPException(status_code=404, detail=f"gatilho desconhecido: {gatilho_id}")
+
+
+@app.post("/api/triggers/{gatilho_id}/disparar", response_model=RunJSON)
+def disparar(gatilho_id: str, authorization: str = Header(default="")) -> RunJSON:
+    """O webhook. Sem corpo: tudo que decide o run foi fixado na criação.
+
+    **404 e não 401 para gatilho inexistente**, e a diferença é deliberada: um
+    401 diria "este id existe, o segredo é que está errado", e isso transforma a
+    rota num oráculo para descobrir ids válidos.
+    """
+    gatilho = gatilhos.ler(gatilho_id, _RAIZ_GATILHOS)
+    segredo = authorization.removeprefix("Bearer ").strip()
+    # A leitura acontece antes, mas a RESPOSTA é a mesma para os dois casos —
+    # e `autoriza` roda mesmo com gatilho inexistente para não vazar, pelo
+    # TEMPO, a diferença entre "não existe" e "segredo errado".
+    ok = gatilho is not None and gatilhos.autoriza(gatilho, segredo)
+    if not ok:
+        raise HTTPException(status_code=404, detail="gatilho desconhecido ou segredo inválido")
+    return _executar(
+        gatilho.workflow_id,
+        # Corpo FIXO: o teto vem do gatilho, e a fonte não é lida porque o
+        # workflow carrega a própria entrada — foi isso que a criação exigiu.
+        RunRequest(teto_microcents=gatilho.teto_microcents),
+    )
+
+
+def _gatilho_json(g: "gatilhos.Gatilho") -> GatilhoJSON:
+    return GatilhoJSON(
+        id=g.id,
+        workflow_id=g.workflow_id,
+        teto_microcents=g.teto_microcents,
+        criado_em=g.criado_em.isoformat(),
+    )
+
+
 @app.post("/api/workflows/{workflow_id}/runs", response_model=RunJSON)
 def executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
     fabrica = registry(_RAIZ_RECEITAS, _RAIZ_COMPOSICOES).get(workflow_id)
@@ -916,7 +1007,22 @@ def _executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
     # O `ref` vem ANTES da fila porque a fila depende dele: a chave de
     # `data/fila/**` sai do `ref` da fonte (ver `dataset_de_ref`), e não mais
     # de `(seed, n, taxa)` — que uma fonte de arquivo não tem.
-    ref, pool = _ler(fonte, pedido)
+    # O workflow carrega a PRÓPRIA entrada? Então não se lê fonte nenhuma aqui:
+    # quem lê é o bloco `entrada`, e a borda só planta a semente que o faz
+    # rodar. É o que permite um run sem ninguém para escolher a fonte — o
+    # pré-requisito do `Trigger`.
+    if _carrega_a_propria_entrada(forma):
+        # `workflow:<id>` e não o `ref` da fonte sintética padrão, e a diferença
+        # importa: gravar `synth:1:300:0.15` num run cujo dado veio de uma API
+        # seria uma MENTIRA no rastro de auditoria, e esta é a linha que o
+        # `Run.input_ref` publica. Aqui a entrada é "o que o bloco leu", e o
+        # identificador estável disso é o workflow.
+        #
+        # Também é o que evita gerar 300 itens sintéticos para jogar fora a cada
+        # disparo.
+        ref, pool = f"workflow:{workflow_id}", _semente()
+    else:
+        ref, pool = _ler(fonte, pedido)
     fila, _ = _abrir_fila(workflow_id, ref)
     # A definição com a TRANCA. `cliente=None` é o default de
     # `WorkflowContext`, e `construir` o traduz em `ClienteAusente` — o
@@ -933,18 +1039,6 @@ def _executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
     # pode consertar. Devolvê-lo primeiro mandaria a pessoa atrás de um
     # administrador para, depois da chave posta, descobrir que o CSV dela seria
     # recusado do mesmo jeito. Erro do PEDIDO antes de erro do AMBIENTE.
-    # O workflow carrega a PRÓPRIA entrada? Então o pool do pedido não vale:
-    # quem lê é o bloco `entrada`, e a borda só planta a semente que o faz
-    # rodar. É o que permite um run sem ninguém para escolher a fonte — o
-    # pré-requisito do `Trigger`.
-    #
-    # A troca acontece DEPOIS de `_ler`, e não antes, de propósito: `ref` e
-    # `fila` saem da fonte do pedido, e a fila é endereçada pelo `ref`. Num
-    # workflow autossuficiente a fonte do pedido é a sintética padrão, então o
-    # `ref` continua estável e a fila continua encontrável — o que muda é só o
-    # POOL.
-    if _carrega_a_propria_entrada(definicao):
-        pool = _semente()
     _conferir_payload(definicao, pool, pedido.fonte.tipo)
     _conferir_kinds(definicao, pool)
 

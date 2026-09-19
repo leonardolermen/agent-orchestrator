@@ -63,7 +63,13 @@ const GRUPOS: Grupo[] = [
     id: "WORKFLOW",
     titulo: "Workflow",
     planejados: [
-      { rotulo: "Trigger", icone: "⚡", porque: "não há porta de entrada por evento: um run começa pela API ou pela CLI" },
+      {
+        rotulo: "Trigger",
+        icone: "⚡",
+        marca: "ja",
+        porque:
+          "é uma URL, não um bloco: `POST /api/triggers` cria um disparador com segredo e teto próprios, e `POST /api/triggers/{id}/disparar` executa. Só aceita workflow que tenha um bloco Input — um disparo não tem ninguém para escolher a fonte",
+      },
       {
         rotulo: "Output",
         icone: "📤",

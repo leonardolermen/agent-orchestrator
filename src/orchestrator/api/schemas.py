@@ -543,6 +543,39 @@ BlocoJSON = Annotated[
 ]
 
 
+class GatilhoRequest(BaseModel):
+    """Criar um gatilho. O teto é OBRIGATÓRIO e é dito aqui, não no disparo.
+
+    O disparo vem de fora e não é confiável: um teto que viesse nele seria um
+    teto que quem dispara escolhe.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    workflow_id: str = Field(min_length=1)
+    teto_microcents: int = Field(ge=1)
+
+
+class GatilhoJSON(BaseModel):
+    """Um gatilho, SEM o segredo. Ele só existe uma vez, na criação."""
+
+    id: str
+    workflow_id: str
+    teto_microcents: int
+    criado_em: str
+
+
+class GatilhoCriadoJSON(GatilhoJSON):
+    """A ÚNICA resposta que carrega o segredo em claro.
+
+    Um tipo próprio, e não um campo opcional no `GatilhoJSON`: com opcional,
+    esquecer de limpá-lo numa listagem seria um vazamento silencioso. Aqui o
+    tipo da rota é o que garante que a listagem não pode carregá-lo.
+    """
+
+    segredo: str
+
+
 class EtapaJSON(BaseModel):
     """Um degrau: os blocos que rodam sobre o mesmo pool.
 

@@ -170,6 +170,25 @@ Anti-escopo vale tanto quanto escopo:
   teto agregado/auth/rate limit em `/runs` — o teto é por requisição, por
   decisão do dono.
 
+- **Gatilho: uma URL que dispara execução, com segredo e teto próprios.**
+  `POST /api/triggers` cria um disparador para um workflow e mostra o segredo
+  UMA vez — o disco guarda só o sha256. `POST /api/triggers/{id}/disparar` com
+  `Authorization: Bearer <segredo>` executa. Duas recusas acontecem na CRIAÇÃO,
+  não no disparo: o teto é obrigatório (o disparo vem de fora e não é confiável,
+  então um teto que viesse nele seria um teto que o atacante escolhe), e o
+  workflow precisa carregar a própria entrada — um bloco `Input`, porque um
+  disparo não tem ninguém para escolher a fonte. Gatilho inexistente e segredo
+  errado respondem o MESMO 404, para a rota não virar um oráculo de ids
+  válidos; revogar APAGA, porque a razão de revogar costuma ser que o segredo
+  vazou.
+
+  **O que ele NÃO resolve, e é o mesmo buraco de cima com mais peso:** quem tem
+  o segredo pode disparar em laço. Cada disparo respeita o teto dele; nada
+  limita quantos disparos acontecem por minuto, e dez mil chamadas são dez mil
+  tetos. Limite de frequência exige estado compartilhado que este servidor não
+  guarda. A diferença para o `/runs` é que ninguém descobre o `/runs` por
+  acaso, e uma URL de webhook circula.
+
 ### A invariante mais cara, e o limite dela
 
 **Uma proposta não resolve.** Um `Agent` devolve `proposals` e nunca
