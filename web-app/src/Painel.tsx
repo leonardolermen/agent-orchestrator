@@ -9,7 +9,13 @@ import {
   type ValorParametro,
   type WorkflowConstruido,
 } from "./api";
-import { classeDo, nomeDo, type DadosAgente, type DadosDoNo } from "./NoResolver";
+import {
+  classeDo,
+  nomeDo,
+  type DadosAgente,
+  type DadosCrew,
+  type DadosDoNo,
+} from "./NoResolver";
 import { Paleta } from "./Paleta";
 
 /** Um nó, do ponto de vista do painel. Estrutural, para não importar o React
@@ -29,6 +35,8 @@ interface Props {
   onAcrescentarRegra: (r: Regra) => void;
   onAcrescentarAgente: (a: AgenteDeclarado) => void;
   onNovoAgente: () => void;
+  onNovoTime: () => void;
+  onMudarTime: (id: string, patch: Partial<DadosCrew>) => void;
   onRemover: (id: string) => void;
   onMudarParametro: (id: string, param: string, valor: ValorParametro) => void;
   onMudarAgente: (id: string, patch: Partial<AgenteDeclarado>) => void;
@@ -170,6 +178,99 @@ function SeletorDeEtapa({
   );
 }
 
+/** Quem esta no time, como ele roda, e o que fazer quando discordam.
+ *
+ *  O `abstem_com` NAO aparece aqui: ele sai dos agentes escolhidos, e oferece-lo
+ *  seria oferecer um campo que o servidor ignora. */
+function EditorDeTime({
+  time,
+  catalogo,
+  onMudar,
+  onRemover,
+}: {
+  time: DadosCrew;
+  catalogo: Catalogo;
+  onMudar: (patch: Partial<DadosCrew>) => void;
+  onRemover: () => void;
+}) {
+  const dentro = new Set(time.agentes.map((a) => a.name));
+  const alternar = (nome: string) => {
+    const novo = dentro.has(nome)
+      ? time.agentes.filter((a) => a.name !== nome)
+      : [...time.agentes, catalogo.agentes.find((a) => a.name === nome)!];
+    onMudar({ agentes: novo });
+  };
+
+  return (
+    <Secao titulo={time.nome} ajuda="Vários agentes sobre o MESMO item, e uma política para o desacordo.">
+      <label className="mb-2.5 block">
+        <span className="text-[11px] text-neutral-500 dark:text-noite-fraca">nome</span>
+        <input
+          value={time.nome}
+          onChange={(e) => onMudar({ nome: e.target.value })}
+          className={`mt-1 ${CAMPO}`}
+        />
+      </label>
+
+      <span className="mb-1 block text-[11px] text-neutral-500 dark:text-noite-fraca">
+        quem está no time
+      </span>
+      <div className="mb-2.5 grid gap-1">
+        {catalogo.agentes.map((a) => (
+          <label key={a.name} className="flex items-center gap-2 text-[12px]">
+            <input
+              type="checkbox"
+              checked={dentro.has(a.name)}
+              onChange={() => alternar(a.name)}
+            />
+            <span>{a.name}</span>
+            <span className="ml-auto font-mono text-[10px] text-neutral-400 dark:text-noite-fraca">
+              {a.abstem_com}
+            </span>
+          </label>
+        ))}
+      </div>
+      {/* A recusa de verdade e do servidor — `Crew.__post_init__` explica por que
+          um time de um agente so nao e um time. Isto aqui so poupa a viagem. */}
+      {time.agentes.length < 2 && (
+        <p className="mb-2.5 rounded bg-lacuna-fundo px-2 py-1.5 text-[11px] leading-snug text-lacuna dark:bg-noite-lacuna-fundo dark:text-noite-crew">
+          Um time sequencial com um agente só É um agente — e pagaria classe CREW
+          por isso. Escolha pelo menos dois.
+        </p>
+      )}
+
+      <label className="mb-2 block">
+        <span className="text-[11px] text-neutral-500 dark:text-noite-fraca">processo</span>
+        <select
+          value={time.process}
+          onChange={(e) => onMudar({ process: e.target.value })}
+          className={`mt-1 ${CAMPO}`}
+        >
+          <option value="sequential">sequential — todos opinam</option>
+          <option value="hierarchical">hierarchical — precisa de gerente</option>
+        </select>
+      </label>
+
+      <label className="mb-2.5 block">
+        <span className="text-[11px] text-neutral-500 dark:text-noite-fraca">
+          quando discordam
+        </span>
+        <select
+          value={time.conflito}
+          onChange={(e) => onMudar({ conflito: e.target.value })}
+          className={`mt-1 ${CAMPO}`}
+        >
+          <option value="abster">abster — o desacordo vira informação</option>
+          <option value="maioria">maioria — precisa de 3+</option>
+          <option value="sintetizar">sintetizar — precisa de sintetizador</option>
+        </select>
+      </label>
+
+      <Remover onClick={onRemover} />
+    </Secao>
+  );
+}
+
 export function Painel(p: Props) {
   const [id, setId] = useState("");
   const [nome, setNome] = useState("");
@@ -189,6 +290,7 @@ export function Painel(p: Props) {
         onAcrescentarRegra={p.onAcrescentarRegra}
         onAcrescentarAgente={p.onAcrescentarAgente}
         onNovoAgente={p.onNovoAgente}
+        onNovoTime={p.onNovoTime}
       />
 
       {/* A ETAPA do bloco selecionado. Vale para regra E para agente, entao
@@ -240,6 +342,15 @@ export function Painel(p: Props) {
           )}
           <Remover onClick={() => p.onRemover(p.selecionado!.id)} />
         </Secao>
+      )}
+
+      {p.selecionado?.data.tipo === "crew" && p.catalogo && (
+        <EditorDeTime
+          time={p.selecionado.data}
+          catalogo={p.catalogo}
+          onMudar={(patch) => p.onMudarTime(p.selecionado!.id, patch)}
+          onRemover={() => p.onRemover(p.selecionado!.id)}
+        />
       )}
 
       {p.selecionado?.data.tipo === "agente" && p.catalogo && (

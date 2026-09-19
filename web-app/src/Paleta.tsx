@@ -107,7 +107,6 @@ const GRUPOS: Grupo[] = [
     planejados: [],
   },
   { id: "AI", titulo: "AI", planejados: [
-      { rotulo: "Agent Team", icone: "👥", porque: "`Crew` existe no código e ainda não está no catálogo" },
       { rotulo: "Agent Router", icone: "🧠", porque: "não construído" },
   ] },
   {
@@ -241,12 +240,14 @@ export function Paleta({
   onAcrescentarRegra,
   onAcrescentarAgente,
   onNovoAgente,
+  onNovoTime,
 }: {
   catalogo: Catalogo | null;
   usados: Set<string>;
   onAcrescentarRegra: (r: Regra) => void;
   onAcrescentarAgente: (a: AgenteDeclarado) => void;
   onNovoAgente: () => void;
+  onNovoTime: () => void;
 }) {
   // Aberto por default so onde ha bloco utilizavel: a paleta inteira aberta
   // seria uma parede de cinza, e a maioria do que existe hoje esta em quatro
@@ -338,6 +339,22 @@ export function Paleta({
                   >
                     <span className="w-4 shrink-0 text-center">+</span>
                     <span>New agent</span>
+                  </button>
+                )}
+                {g.id === "AI" && (
+                  <button
+                    type="button"
+                    disabled={!catalogo || catalogo.agentes.length < 2}
+                    onClick={onNovoTime}
+                    title={
+                      catalogo && catalogo.agentes.length < 2
+                        ? "uma tripulação sequencial com um agente só É um agente — e pagaria classe CREW por isso"
+                        : "vários agentes sobre o mesmo item, com política de conflito"
+                    }
+                    className="mt-1 flex w-full items-center gap-2 rounded border border-dashed border-borda px-2 py-1.5 text-left text-[12px] text-neutral-500 transition hover:bg-neutral-50 disabled:opacity-40 dark:border-noite-borda dark:text-noite-fraca dark:hover:bg-noite-cartao"
+                  >
+                    <span className="w-4 shrink-0 text-center">👥</span>
+                    <span>New team</span>
                   </button>
                 )}
                 {g.planejados.map((b) => (

@@ -138,7 +138,17 @@ export interface Receita {
 // dos quais não significam nada.
 export type BlocoPedido =
   | { tipo: "regra"; nome: string; parametros: Record<string, ValorParametro> }
-  | { tipo: "agente"; declaracao: AgenteDeclarado };
+  | { tipo: "agente"; declaracao: AgenteDeclarado }
+  // Sem `abstem_com`: o servidor o DERIVA dos agentes, que ja o declaram cada
+  // um. Mandar daqui seria a segunda fonte de verdade, e o sintoma seria o
+  // Crew chamando de desacordo duas abstencoes.
+  | {
+      tipo: "crew";
+      nome: string;
+      agentes: AgenteDeclarado[];
+      process: string;
+      conflito: string;
+    };
 
 export interface ComposicaoResumo {
   id: string;

@@ -28,7 +28,13 @@ import {
   type ValorParametro,
 } from "./api";
 import { Chat } from "./Chat";
-import { NoResolver, classeDo, nomeDo, type DadosDoNo } from "./NoResolver";
+import {
+  NoResolver,
+  classeDo,
+  nomeDo,
+  type DadosCrew,
+  type DadosDoNo,
+} from "./NoResolver";
 import { Painel } from "./Painel";
 import { BotaoDeTema, usarTema } from "./tema";
 
@@ -282,6 +288,39 @@ export default function App() {
     acrescentarAgente(agenteEmBranco(nome));
   };
 
+  /** Uma TRIPULACAO nova, ja valida.
+   *
+   *  Nasce com os DOIS primeiros agentes do catalogo, e nao vazia: `Crew`
+   *  recusa tripulacao vazia e recusa sequencial com um agente so (isso e um
+   *  `Agent`, e pagaria classe CREW por ele). Um time invalido no canvas seria
+   *  um bloco que so diz "nao" na hora de compor — e o painel ja deixa trocar
+   *  quem esta dentro. */
+  const novoTime = () => {
+    if (!catalogo || catalogo.agentes.length < 2) return;
+    const usados = new Set(nos.map((n) => nomeDo(n.data)));
+    let nome = "time";
+    for (let i = 2; usados.has(nome); i++) nome = `time-${i}`;
+    acrescentar({
+      tipo: "crew",
+      nome,
+      agentes: catalogo.agentes.slice(0, 2).map((a) => ({ ...a })),
+      process: "sequential",
+      conflito: "abster",
+      etapa: etapaDeNascimento(),
+    });
+  };
+
+  /** Troca o que muda num time. `Partial` e nao campo a campo, pela mesma razao
+   *  do editor de agente: sao varios campos de naturezas diferentes. */
+  const mudarTime = (id: string, patch: Partial<DadosCrew>) => {
+    setNos((atuais) =>
+      atuais.map((n) =>
+        n.id === id && n.data.tipo === "crew" ? { ...n, data: { ...n.data, ...patch } } : n,
+      ),
+    );
+    invalidar();
+  };
+
   const remover = (id: string) => {
     setNos((atuais) => atuais.filter((n) => n.id !== id));
     invalidar();
@@ -327,12 +366,27 @@ export default function App() {
           // ordem ENTRE elas e significativa, e e a desta lista.
           etapas: porEtapa.map((coluna, i) => ({
             nome: nomeDaEtapa(i),
-            blocos: coluna.map(
-              (n): BlocoPedido =>
-                n.data.tipo === "regra"
-                  ? { tipo: "regra", nome: n.data.regra.nome, parametros: n.data.parametros }
-                  : { tipo: "agente", declaracao: n.data.declaracao },
-            ),
+            blocos: coluna.map((n): BlocoPedido => {
+              if (n.data.tipo === "regra") {
+                return {
+                  tipo: "regra",
+                  nome: n.data.regra.nome,
+                  parametros: n.data.parametros,
+                };
+              }
+              if (n.data.tipo === "crew") {
+                // Sem `abstem_com`: o servidor o deriva dos agentes. Mandar
+                // daqui seria a segunda fonte de verdade.
+                return {
+                  tipo: "crew",
+                  nome: n.data.nome,
+                  agentes: n.data.agentes,
+                  process: n.data.process,
+                  conflito: n.data.conflito,
+                };
+              }
+              return { tipo: "agente", declaracao: n.data.declaracao };
+            }),
           })),
           // Os kinds que SÃO a saída. Declaração, não degrau — ver o campo em
           // `Painel.tsx`. Sem eles, um bloco que ramifica é recusado por beco
@@ -513,6 +567,8 @@ export default function App() {
           onAcrescentarRegra={acrescentarRegra}
           onAcrescentarAgente={acrescentarAgente}
           onNovoAgente={novoAgente}
+          onNovoTime={novoTime}
+          onMudarTime={mudarTime}
           onRemover={remover}
           onMudarParametro={mudarParametro}
           onMudarAgente={mudarAgente}
