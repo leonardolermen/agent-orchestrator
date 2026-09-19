@@ -339,6 +339,19 @@ def _agrupamento(p: dict[str, ValorDeParametro]) -> Any:
     )
 
 
+def _entrada(p: dict[str, ValorDeParametro]) -> Any:
+    """O bloco de ENTRADA: uma fonte que vira degrau.
+
+    A fonte não é lida aqui — `Entrada.resolve` lê. Compor não pode tocar em
+    banco nem em rede: `/api/composicoes` valida sem executar.
+    """
+    from orchestrator.sources.bloco import Entrada
+    from orchestrator.sources.fabrica import fonte_de_parametros
+
+    _exige("entrada", p, ("tipo", "kind"))
+    return Entrada(fonte=fonte_de_parametros(dict(p)), produz=(str(p["kind"]),))
+
+
 def _paralelo(p: dict[str, ValorDeParametro]) -> Any:
     from orchestrator.regras import Paralelo
 
@@ -481,6 +494,37 @@ CATALOGO = Catalogo(
                 ),
             ),
             construir=lambda p: _tabela(p),
+        ),
+        # A ENTRADA: a fonte como degrau.
+        #
+        # Enquanto a fonte era escolhida na hora de rodar, o workflow não sabia
+        # de onde vinha o dado — e um run disparado por webhook não tem ninguém
+        # para escolher. Este bloco é o que torna um workflow autossuficiente.
+        RegraDisponivel(
+            nome="entrada",
+            cost_class=CostClass.REGRA,
+            resumo="lê a fonte e põe o trabalho no pool",
+            rotulo="Input",
+            categoria="WORKFLOW",
+            parametros=(
+                ParametroDeRegra(
+                    "tipo", "", "de onde vem: postgres | http", obrigatorio=True
+                ),
+                ParametroDeRegra(
+                    "kind", "", "que tipo de item esta fonte entrega", obrigatorio=True
+                ),
+                ParametroDeRegra("campo_id", "", "o campo que identifica cada item"),
+                ParametroDeRegra("url", "", "http: o endereço da API"),
+                ParametroDeRegra(
+                    "token_env", "", "http: o NOME da variável de ambiente com o token"
+                ),
+                ParametroDeRegra("caminho", "", "http: onde a lista está no corpo"),
+                ParametroDeRegra(
+                    "dsn_env", "", "postgres: o NOME da variável com a string de conexão"
+                ),
+                ParametroDeRegra("query", "", "postgres: a consulta"),
+            ),
+            construir=lambda p: _entrada(p),
         ),
         # ABRIR e REUNIR — o que rotear NÃO faz.
         #

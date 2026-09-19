@@ -64,7 +64,6 @@ const GRUPOS: Grupo[] = [
     titulo: "Workflow",
     planejados: [
       { rotulo: "Trigger", icone: "⚡", porque: "não há porta de entrada por evento: um run começa pela API ou pela CLI" },
-      { rotulo: "Input", icone: "📥", porque: "a fonte é escolhida na tela de execução, não aqui" },
       {
         rotulo: "Output",
         icone: "📤",
@@ -150,6 +149,7 @@ const GRUPOS: Grupo[] = [
 // servidor porque e puramente visual — e porque um bloco sem icone cai no
 // neutro sem quebrar nada, diferente de um bloco sem categoria.
 const ICONES: Record<string, string> = {
+  entrada: "📥",
   condicao: "◆",
   paralelo: "⇉",
   juncao: "⊕",

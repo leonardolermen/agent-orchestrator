@@ -41,9 +41,14 @@ PERMITIDO: dict[str, frozenset[str]] = {
     # Só `kernel`, igual a `sources` — se ela precisasse de `domains`, seria o
     # defeito que ela existe para corrigir.
     "regras": frozenset({"kernel"}),
+    # `sources` entrou quando o CATÁLOGO passou a oferecer um bloco de entrada:
+    # quem descreve "este bloco lê de um Postgres" precisa conhecer a família de
+    # fontes, como já conhece a de regras e a de agentes. A seta é do catálogo
+    # para a fonte e nunca ao contrário — `sources` continua importando só
+    # `kernel`, que é o que mantém uma fonte utilizável sem domínio nenhum.
     "domains": frozenset(
         {"kernel", "runtime", "agent", "human", "crew", "evaluation", "storage",
-         "regras"}
+         "regras", "sources"}
     ),
     # `authoring` compõe a partir de TODA família de resolver, então conhece
     # todas: `agent` para o agente declarado, `regras` para os blocos

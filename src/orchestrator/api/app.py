@@ -114,13 +114,14 @@ from orchestrator.kernel.definition import WorkflowDefinition
 from orchestrator.kernel.event import EventBus
 from orchestrator.kernel.resolution import TraceKind
 from orchestrator.kernel.run import RunState
-from orchestrator.kernel.work import WorkSet
+from orchestrator.kernel.work import WorkItem, WorkSet
 from orchestrator.metrics import evaluate
 from orchestrator.observability.collector import SpanCollector
 from orchestrator.review.decision import Decision, Veredito, ids_de_conciliar_com
 from orchestrator.review.fila import Fila, caminho_da_fila, dataset_de_ref
 from orchestrator.runtime.engine import execute
 from orchestrator.sources.arquivo import ArquivoSource, RaizViolada
+from orchestrator.sources.bloco import INICIO
 from orchestrator.sources.erros import ErroDeFonte
 from orchestrator.sources.http import HttpSource
 from orchestrator.sources.postgres import PostgresSource
@@ -760,6 +761,30 @@ def _conferir_payload(definicao: WorkflowDefinition, pool: WorkSet, tipo_da_font
                 )
 
 
+def _carrega_a_propria_entrada(definicao: WorkflowDefinition) -> bool:
+    """Algum degrau consome a semente? Então o workflow tem bloco de entrada.
+
+    Pela DECLARAÇÃO e não por `isinstance`: a borda não precisa conhecer a
+    classe `Entrada` para saber que existe uma, e um segundo bloco que leia de
+    outro lugar entra sem tocar nesta função — basta declarar que consome a
+    semente.
+    """
+    return any(INICIO in s.consome for s in definicao.stages)
+
+
+def _semente() -> WorkSet:
+    """O pool de um workflow que carrega a própria entrada: um item só.
+
+    Ele existe para que o degrau de leitura tenha o que consumir. Sem ele o
+    pool começaria vazio, e a borda recusa pool vazio — com razão: "sem item
+    não há execução, e um run concluído com zero itens seria mais um número com
+    cara de medido".
+    """
+    return WorkSet(
+        items=(WorkItem(id="inicio", kind=INICIO, payload=None, origem="borda"),)
+    )
+
+
 def _conferir_kinds(definicao: WorkflowDefinition, pool: WorkSet) -> None:
     """Cada resolver que declara o que consome é alimentado por esta fonte?
 
@@ -908,6 +933,18 @@ def _executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
     # pode consertar. Devolvê-lo primeiro mandaria a pessoa atrás de um
     # administrador para, depois da chave posta, descobrir que o CSV dela seria
     # recusado do mesmo jeito. Erro do PEDIDO antes de erro do AMBIENTE.
+    # O workflow carrega a PRÓPRIA entrada? Então o pool do pedido não vale:
+    # quem lê é o bloco `entrada`, e a borda só planta a semente que o faz
+    # rodar. É o que permite um run sem ninguém para escolher a fonte — o
+    # pré-requisito do `Trigger`.
+    #
+    # A troca acontece DEPOIS de `_ler`, e não antes, de propósito: `ref` e
+    # `fila` saem da fonte do pedido, e a fila é endereçada pelo `ref`. Num
+    # workflow autossuficiente a fonte do pedido é a sintética padrão, então o
+    # `ref` continua estável e a fila continua encontrável — o que muda é só o
+    # POOL.
+    if _carrega_a_propria_entrada(definicao):
+        pool = _semente()
     _conferir_payload(definicao, pool, pedido.fonte.tipo)
     _conferir_kinds(definicao, pool)
 
