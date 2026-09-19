@@ -40,7 +40,7 @@ interface Props {
   onRemover: (id: string) => void;
   onMudarParametro: (id: string, param: string, valor: ValorParametro) => void;
   onMudarAgente: (id: string, patch: Partial<AgenteDeclarado>) => void;
-  onCompor: (id: string, nome: string, entrega: string[]) => void;
+  onCompor: (id: string, nome: string, entrega: string[], maxRondas: number) => void;
   // Quantas etapas existem, como se chamam, e como mover um bloco entre elas.
   quantasEtapas: number;
   nomeDaEtapa: (i: number) => string;
@@ -275,6 +275,7 @@ export function Painel(p: Props) {
   const [id, setId] = useState("");
   const [nome, setNome] = useState("");
   const [entrega, setEntrega] = useState("");
+  const [rondas, setRondas] = useState(1);
 
   const usados = new Set(p.escolhidos.map((n) => nomeDo(n.data)));
   const temAgente = p.escolhidos.some((n) => classeDo(n.data) === "AGENTE");
@@ -465,6 +466,27 @@ export function Painel(p: Props) {
           o ramo que ninguém mais consome — senão o item ficaria no pool para
           sempre.
         </p>
+        {/* O LOOP. Tambem nao e um no: nada roda "dentro" dele. E quantas vezes
+            a SEQUENCIA de etapas pode rodar, e existe para ARESTA DE VOLTA — o
+            revisor reprova e o rascunho volta ao escritor. E TETO, nao
+            contagem: o motor para sozinho no ponto fixo. */}
+        <label className="mb-1 flex items-center gap-2">
+          <span className="text-[11.5px] text-neutral-600 dark:text-noite-fraca">
+            rondas
+          </span>
+          <input
+            type="number"
+            min={1}
+            value={rondas}
+            onChange={(e) => setRondas(Math.max(1, parseInt(e.target.value, 10) || 1))}
+            className={`ml-auto w-20 text-right font-mono ${CAMPO}`}
+          />
+        </label>
+        <p className="mb-2.5 text-[10.5px] leading-snug text-neutral-400 dark:text-noite-fraca">
+          quantas vezes a sequência de etapas pode rodar. 1 é uma passada; mais
+          existe para aresta de volta — o revisor reprova e o item volta. É teto:
+          o motor para sozinho quando uma ronda não muda nada.
+        </p>
         <div className="flex gap-2">
           <button
             type="button"
@@ -477,6 +499,7 @@ export function Painel(p: Props) {
                   .split(",")
                   .map((s) => s.trim())
                   .filter(Boolean),
+                rondas,
               )
             }
             className="flex-1 rounded border border-tinta bg-tinta px-3 py-1.5 text-[12.5px] text-white transition disabled:cursor-not-allowed disabled:border-neutral-300 disabled:bg-neutral-300 dark:border-noite-borda dark:bg-noite-cartao dark:text-noite-tinta dark:disabled:bg-noite-fundo dark:disabled:text-noite-fraca"

@@ -349,3 +349,35 @@ def test_MERGE_e_um_degrau_que_consome_os_DOIS_kinds():
     juntou = [r for r in run.resolutions if r.produced_by == "igualdade"]
     assert len(juntou) == 1
     assert juntou[0].item_ids == frozenset({"a+empresa", "b+pessoa"})
+
+
+# --- Loop: max_rondas, que é propriedade do workflow e não degrau -----------
+
+
+def test_as_rondas_chegam_a_definicao():
+    c = _composicao(blocos=(BlocoRegra(nome="L1", parametros={}),), max_rondas=3)
+
+    assert construir_composicao(c).max_rondas == 3
+
+
+def test_zero_rondas_e_recusado_na_COMPOSICAO():
+    """A recusa mora no kernel também; aqui ela chega antes. Quem compõe na tela
+    merece a recusa na composição, não na execução."""
+    with pytest.raises(ValueError, match="max_rondas"):
+        _composicao(blocos=(BlocoRegra(nome="L1", parametros={}),), max_rondas=0)
+
+
+def test_as_rondas_mudam_a_VERSAO():
+    # Um workflow que pode rodar três vezes não é o mesmo que roda uma: o
+    # segundo não tem aresta de volta.
+    b = (BlocoRegra(nome="L1", parametros={}),)
+
+    assert _composicao(blocos=b).version != _composicao(blocos=b, max_rondas=2).version
+
+
+def test_o_disco_preserva_as_rondas():
+    from orchestrator.authoring.composicao import de_json, para_json
+
+    c = _composicao(blocos=(BlocoRegra(nome="L1", parametros={}),), max_rondas=4)
+
+    assert de_json(para_json(c)).max_rondas == 4

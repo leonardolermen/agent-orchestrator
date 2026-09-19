@@ -88,7 +88,13 @@ const GRUPOS: Grupo[] = [
         porque:
           "também não é bloco: é um degrau cujo `consome` tem os dois lados. Os itens que vieram por caminhos diferentes se encontram nele. Há teste",
       },
-      { rotulo: "Loop", icone: "↻", porque: "o kernel tem `max_rondas`, mas nada o expõe ainda" },
+      {
+        rotulo: "Loop",
+        icone: "↻",
+        marca: "ja",
+        porque:
+          "é o campo `rondas`, em Identidade. Nada roda dentro dele: é quantas vezes a SEQUÊNCIA de etapas pode rodar, para aresta de volta. E é teto — o motor para sozinho quando uma ronda não muda nada",
+      },
       { rotulo: "Wait", icone: "⏸", porque: "não há suspensão: uma execução roda até o fim" },
     ],
   },

@@ -198,6 +198,15 @@ class Composicao:
     # ensinaria o autor a mentir — que é textualmente o que aquele comentário
     # proíbe.
     entrega: tuple[str, ...] = ()
+    # Quantas vezes a SEQUÊNCIA de etapas pode rodar. É o `Loop` do canvas, e
+    # como a `entrega` ele não é um degrau: nada roda "dentro" dele.
+    #
+    # 1 é a semântica de sempre — uma passada. Mais de uma existe para ARESTA DE
+    # VOLTA: o revisor reprova e o rascunho volta ao escritor. O motor para
+    # sozinho no ponto fixo (a ronda não resolveu nada e não mudou o pool), então
+    # o número é TETO e não contagem — e só acima de 1 ele passa a prometer
+    # convergência, o que faz não alcançá-la virar notícia (`LIMITE_DE_RONDAS`).
+    max_rondas: int = 1
     justificativa: str = ""
     version: str = field(init=False)
 
@@ -214,6 +223,14 @@ class Composicao:
             raise ValueError("o workflow precisa de pelo menos um bloco")
         if self.gerado_em.tzinfo is None:
             raise ValueError("`gerado_em` precisa de fuso (use UTC)")
+        # A recusa MORA no kernel também (`WorkflowDefinition.__post_init__`), e
+        # aqui ela chega antes — quem compõe na tela merece a recusa na
+        # composição, não na execução.
+        if self.max_rondas < 1:
+            raise ValueError(
+                f"max_rondas precisa ser pelo menos 1: {self.max_rondas}. zero "
+                f"rondas não roda degrau nenhum e devolveria o pool intacto"
+            )
         # Normaliza para a forma GERAL e deriva a achatada. Os dois campos
         # sobrevivem porque um sai do outro: `etapas` é a estrutura, `blocos` é
         # "todos os blocos", e nenhum leitor de hoje precisou mudar.
@@ -247,6 +264,7 @@ class Composicao:
                         for e in self.etapas
                     ],
                     "entrega": sorted(self.entrega),
+                    "max_rondas": self.max_rondas,
                 },
                 sort_keys=True,
                 ensure_ascii=False,
@@ -348,6 +366,7 @@ def construir_composicao(
         name=c.nome,
         stages=tuple(etapas),
         entrega=frozenset(c.entrega),
+        max_rondas=c.max_rondas,
     )
 
 
@@ -553,6 +572,7 @@ def para_json(c: Composicao) -> dict[str, Any]:
             {"nome": e.nome, "blocos": _blocos_para_json(e.blocos)} for e in c.etapas
         ],
         "entrega": sorted(c.entrega),
+        "max_rondas": c.max_rondas,
     }
 
 
@@ -606,6 +626,7 @@ def de_json(d: dict[str, Any]) -> Composicao:
         blocos=blocos,
         etapas=etapas,
         entrega=tuple(d.get("entrega", ())),
+        max_rondas=d.get("max_rondas", 1),
     )
 
 

@@ -577,6 +577,10 @@ class ComposicaoRequest(BaseModel):
     # bloco que ramifica produz um kind que ninguém consome, e o kernel recusa
     # por beco sem saída. É declaração e não degrau: nada roda aqui.
     entrega: list[str] = Field(default_factory=list)
+    # O `Loop`: quantas vezes a sequência de etapas pode rodar. Teto, não
+    # contagem — o motor para sozinho no ponto fixo. `ge=1` porque zero rondas
+    # não roda degrau nenhum.
+    max_rondas: int = Field(default=1, ge=1)
 
     @field_validator("id")
     @classmethod

@@ -349,7 +349,12 @@ export default function App() {
     invalidar();
   };
 
-  const compor = async (id: string, nome: string, entrega: string[]) => {
+  const compor = async (
+    id: string,
+    nome: string,
+    entrega: string[],
+    maxRondas: number,
+  ) => {
     setErro(null);
     setAviso(null);
     try {
@@ -393,6 +398,7 @@ export default function App() {
           // sem saída, e a recusa acontece aqui, na composição, em vez de na
           // execução.
           entrega,
+          max_rondas: maxRondas,
         }),
       );
     } catch (e) {

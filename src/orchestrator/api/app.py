@@ -493,6 +493,7 @@ def criar_composicao(pedido: ComposicaoRequest) -> WorkflowJSON:
                 for e in pedido.etapas
             ),
             entrega=tuple(pedido.entrega),
+            max_rondas=pedido.max_rondas,
         )
         definicao = construir_composicao(composicao)
     except ValueError as erro:

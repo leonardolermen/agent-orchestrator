@@ -238,6 +238,9 @@ export const api = {
     etapas: { nome: string; blocos: BlocoPedido[] }[];
     // Os kinds que SAO a saida do workflow. Declaracao, nao degrau.
     entrega: string[];
+    // O `Loop`: quantas vezes a sequencia de etapas pode rodar. Teto, nao
+    // contagem — o motor para sozinho no ponto fixo.
+    max_rondas: number;
   }) =>
     pedir<WorkflowConstruido>("/api/composicoes", {
       method: "POST",
