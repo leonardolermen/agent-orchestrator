@@ -29,6 +29,13 @@ export interface Ferramenta {
   descricao: string;
 }
 
+// Uma variavel de ambiente do cliente. SEM o valor — nem mascarado: mascarado
+// ainda vaza o COMPRIMENTO, e o comprimento de um token identifica o provedor.
+export interface Variavel {
+  nome: string;
+  definida: boolean;
+}
+
 export interface Regra {
   // A IDENTIDADE: e o que a composicao manda e o que o catalogo indexa.
   nome: string;
@@ -205,6 +212,20 @@ export const api = {
   // grill (só conciliação) e `/api/dominios` servia a paleta particionada, o
   // que obrigava a tela a perguntar o domínio antes de mostrar qualquer bloco.
   catalogo: () => pedir<Catalogo>("/api/catalogo"),
+
+  variaveis: () => pedir<Variavel[]>("/api/ambiente/variaveis"),
+
+  definirVariavel: (nome: string, valor: string) =>
+    pedir<Variavel>(`/api/ambiente/variaveis/${encodeURIComponent(nome)}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ valor }),
+    }),
+
+  removerVariavel: (nome: string) =>
+    pedir<void>(`/api/ambiente/variaveis/${encodeURIComponent(nome)}`, {
+      method: "DELETE",
+    }),
 
   ambiente: () => pedir<Ambiente>("/api/ambiente"),
 

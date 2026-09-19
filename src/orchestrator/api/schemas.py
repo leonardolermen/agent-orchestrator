@@ -422,6 +422,24 @@ class ReceitaRequest(BaseModel):
         return v
 
 
+class VariavelJSON(BaseModel):
+    """Uma variável de ambiente do cliente. SEM o valor.
+
+    Nem mascarado: um valor mascarado ainda vaza o COMPRIMENTO, e o comprimento
+    de um token identifica o provedor. `definida` é o mesmo booleano que
+    `AmbienteJSON.tem_chave` já usa, e pela mesma razão.
+    """
+
+    nome: str
+    definida: bool
+
+
+class VariavelRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    valor: str = Field(min_length=1)
+
+
 class AmbienteJSON(BaseModel):
     """O ambiente da execução. Sem segredo nenhum dentro.
 

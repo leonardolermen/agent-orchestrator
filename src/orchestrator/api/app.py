@@ -64,6 +64,7 @@ from fastapi.staticfiles import StaticFiles
 from orchestrator.agent.declarado import AgenteDeclarado, RegraDisponivel
 from orchestrator.agent.teto import ClienteComTeto
 from orchestrator.agent.tools.registry import ToolRegistry
+from orchestrator.api import ambiente as variaveis
 from orchestrator.api import gatilhos
 from orchestrator.api.entrevista import conduzir
 from orchestrator.api.schemas import (
@@ -90,6 +91,8 @@ from orchestrator.api.schemas import (
     RunJSON,
     RunRequest,
     RunResumoJSON,
+    VariavelJSON,
+    VariavelRequest,
     WorkflowJSON,
     WorkflowResumoJSON,
     workflow_json,
@@ -162,6 +165,21 @@ _RAIZ_ENTRADAS = Path(__file__).resolve().parents[3] / "data" / "entradas"
 # trocá-lo por um `tmp_path`, porque um teste que gravasse gatilho na raiz de
 # verdade deixaria um SEGREDO utilizável no repositório de quem rodou a suíte.
 _RAIZ_GATILHOS: Path | None = None
+
+# Onde as variáveis do cliente moram. Mesma regra das outras raízes.
+_RAIZ_AMBIENTE: Path | None = None
+
+# As variáveis gravadas entram no ambiente do PROCESSO assim que o módulo sobe.
+#
+# No import e não num hook de startup porque quem lê `os.environ` é o bloco
+# `entrada` durante um run, e um run pode acontecer sem que o ciclo de vida do
+# FastAPI tenha rodado — a suíte usa `TestClient` direto, e a CLI importa este
+# módulo sem servidor nenhum.
+#
+# `carregar` NÃO sobrescreve o que já veio do ambiente de quem hospeda: um
+# `export` antes de subir diz algo mais forte que um arquivo, e um arquivo
+# antigo apagando isso em silêncio seria a pior surpresa possível.
+variaveis.carregar(_RAIZ_AMBIENTE)
 
 
 def _tem_chave() -> bool:
@@ -372,6 +390,48 @@ def catalogo() -> CatalogoJSON:
         ],
         agentes=[_agente_json(a) for a in CATALOGO.agentes],
     )
+
+
+# -- variáveis do cliente ---------------------------------------------------
+#
+# Ver `api/ambiente.py` para a cerca do prefixo e para o que este desenho NÃO
+# resolve — em uma frase: o servidor não tem autenticação, então quem alcança a
+# porta pode escrever o segredo de qualquer cliente.
+
+
+@app.get("/api/ambiente/variaveis", response_model=list[VariavelJSON])
+def listar_variaveis() -> list[VariavelJSON]:
+    """Os nomes conhecidos e se cada um tem valor. NUNCA os valores."""
+    return [
+        VariavelJSON(nome=n, definida=variaveis.definida(n))
+        for n in variaveis.nomes(_RAIZ_AMBIENTE)
+    ]
+
+
+@app.put("/api/ambiente/variaveis/{nome}", response_model=VariavelJSON)
+def definir_variavel(nome: str, pedido: VariavelRequest) -> VariavelJSON:
+    """Define no processo E no disco.
+
+    No processo porque é o que faz o PRÓXIMO run enxergar; no disco porque um
+    cliente não reconfigura o token a cada restart do servidor.
+    """
+    try:
+        variaveis.definir(nome, pedido.valor, _RAIZ_AMBIENTE)
+    except ValueError as erro:
+        # `NomeRecusado` é `ValueError`: a cerca do prefixo e o valor vazio
+        # chegam pelo mesmo caminho, e os dois são erro de PEDIDO.
+        raise HTTPException(status_code=422, detail=str(erro)) from erro
+    return VariavelJSON(nome=nome, definida=True)
+
+
+@app.delete("/api/ambiente/variaveis/{nome}", status_code=204)
+def remover_variavel(nome: str) -> None:
+    try:
+        existia = variaveis.remover(nome, _RAIZ_AMBIENTE)
+    except ValueError as erro:
+        raise HTTPException(status_code=422, detail=str(erro)) from erro
+    if not existia:
+        raise HTTPException(status_code=404, detail=f"variável desconhecida: {nome}")
 
 
 @app.get("/api/ambiente", response_model=AmbienteJSON)

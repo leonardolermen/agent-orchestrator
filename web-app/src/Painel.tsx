@@ -17,6 +17,7 @@ import {
   type DadosDoNo,
 } from "./NoResolver";
 import { Paleta } from "./Paleta";
+import { Variaveis } from "./Variaveis";
 
 /** Um nó, do ponto de vista do painel. Estrutural, para não importar o React
  *  Flow aqui só por causa de um tipo. */
@@ -385,6 +386,13 @@ export function Painel(p: Props) {
           recebe. O modelo aparece porque decide o preço; a chave aparece como
           SIM/NÃO porque a tela precisa saber se o chat funciona e nunca precisa
           do valor. */}
+      {/* As VARIAVEIS do cliente, antes do Ambiente: a secao de baixo diz o que
+          o SERVIDOR tem (modelo, chave); esta diz o que o CLIENTE configurou
+          para o workflow dele alcancar os sistemas dele. */}
+      <Secao titulo="Variáveis" ajuda="O que um bloco Input usa para alcançar o sistema do cliente.">
+        <Variaveis />
+      </Secao>
+
       {p.ambiente && (
         <Secao titulo="Ambiente" ajuda="O que uma execução usa.">
           <div className="mb-2 flex items-center gap-2 text-[11.5px]">
