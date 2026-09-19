@@ -25,11 +25,16 @@ import type { AgenteDeclarado, Catalogo, Regra } from "./api";
  *  Duas razoes MUITO diferentes, e confundi-las seria mentir nas duas direcoes:
  *
  *    "soon"  — nao foi construido. O tooltip diz o que falta.
- *    "ja"    — EXISTE, em outra forma. `Parallel` e `Merge` nao sao blocos
- *              neste motor: sao a FORMA do grafo (um bloco que ramifica mais um
- *              degrau por ramo), e ha teste provando que funcionam hoje. Um
- *              "bloco Parallel" nao teria o que fazer alem de existir no
- *              desenho, que e a definicao de decoracao. */
+ *    "ja"    — EXISTE, em outra forma. `Output` e o campo `entrega` e `Loop` e
+ *              o campo `rondas`: nada roda "dentro" deles, entao um no
+ *              sugeriria execucao onde nao ha.
+ *
+ *  `Parallel` e `Merge` JA ESTIVERAM marcados como "ja", e era erro meu. Eu
+ *  tinha verificado que fan-out por ROTEAMENTO funciona (cada item vai para um
+ *  ramo) e concluido rapido demais que fan-out estava resolvido. Duplicar —
+ *  todo item para TODOS os ramos, que e o caso da checagem de fraude E de KYC
+ *  sobre a mesma transacao — nenhum roteador faz, porque roteador escolhe. Sao
+ *  blocos de verdade, e agora estao no catalogo. */
 interface Planejado {
   rotulo: string;
   icone: string;
@@ -74,20 +79,6 @@ const GRUPOS: Grupo[] = [
     titulo: "Control",
     ajuda: "Ramificar é produzir um kind; o degrau que o consome só roda quando houver item dele.",
     planejados: [
-      {
-        rotulo: "Parallel",
-        icone: "⇉",
-        marca: "ja",
-        porque:
-          "não é um bloco: é a forma do grafo. Um bloco que ramifica produz dois kinds, e um degrau por ramo consome um cada — os dois rodam. Há teste",
-      },
-      {
-        rotulo: "Merge",
-        icone: "⊕",
-        marca: "ja",
-        porque:
-          "também não é bloco: é um degrau cujo `consome` tem os dois lados. Os itens que vieram por caminhos diferentes se encontram nele. Há teste",
-      },
       {
         rotulo: "Loop",
         icone: "↻",
@@ -160,6 +151,8 @@ const GRUPOS: Grupo[] = [
 // neutro sem quebrar nada, diferente de um bloco sem categoria.
 const ICONES: Record<string, string> = {
   condicao: "◆",
+  paralelo: "⇉",
+  juncao: "⊕",
   tabela: "◇",
   filtro: "⊂",
   validacao: "✓",

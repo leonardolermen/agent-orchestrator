@@ -25,6 +25,7 @@ from orchestrator.kernel.resolution import Resolution
 from orchestrator.kernel.resolver import ResolverDescription, ResolverOutput
 from orchestrator.kernel.work import WorkItem, WorkSet
 from orchestrator.regras.predicado import Comparacao, Predicado
+from orchestrator.regras.ramos import id_no_ramo
 
 
 @dataclass(frozen=True)
@@ -95,11 +96,11 @@ class Condicao:
             )
             produzidos.append(
                 WorkItem(
-                    # `+ramo` no id, como `agent/tarefa.py` faz com `+r`: o item
-                    # produzido é OUTRO item, e um id igual ao do consumido faria
-                    # `WorkSet` recusar por repetição — o que é a guarda certa
-                    # falhando pelo motivo errado.
-                    id=f"{item.id}+{self.produz}",
+                    # A convenção mora em `ramos.py`, num lugar só: o item
+                    # produzido é OUTRO item (id igual faria `WorkSet` recusar
+                    # por repetição), e é por ela que a `juncao` sabe reunir os
+                    # ramos de um mesmo pedido.
+                    id=id_no_ramo(item.id, self.produz),
                     kind=self.produz,
                     payload=item.payload,
                     origem=self.name,

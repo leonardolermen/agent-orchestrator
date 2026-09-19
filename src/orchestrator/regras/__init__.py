@@ -24,6 +24,8 @@ from orchestrator.regras.campos import CampoAusente, valor_do_campo
 from orchestrator.regras.condicao import Condicao
 from orchestrator.regras.filtro import Filtro
 from orchestrator.regras.igualdade import Igualdade
+from orchestrator.regras.juncao import Juncao
+from orchestrator.regras.paralelo import Paralelo
 from orchestrator.regras.pares import Par
 from orchestrator.regras.predicado import Comparacao, ComparacaoImpossivel, Predicado
 from orchestrator.regras.tabela import Tabela
@@ -36,7 +38,9 @@ __all__ = [
     "Condicao",
     "Filtro",
     "Igualdade",
+    "Juncao",
     "Par",
+    "Paralelo",
     "Predicado",
     "Comparacao",
     "ComparacaoImpossivel",

@@ -29,6 +29,7 @@ from orchestrator.kernel.resolver import ResolverDescription, ResolverOutput
 from orchestrator.kernel.work import WorkItem, WorkSet
 from orchestrator.regras.campos import valor_do_campo
 from orchestrator.regras.pares import interpretar_todos
+from orchestrator.regras.ramos import id_no_ramo
 
 
 @dataclass(frozen=True)
@@ -94,7 +95,7 @@ class Tabela:
             )
             produzidos.append(
                 WorkItem(
-                    id=f"{item.id}+{destino}",
+                    id=id_no_ramo(item.id, destino),
                     kind=destino,
                     payload=item.payload,
                     origem=self.name,

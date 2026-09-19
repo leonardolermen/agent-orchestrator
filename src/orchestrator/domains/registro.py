@@ -339,6 +339,20 @@ def _agrupamento(p: dict[str, ValorDeParametro]) -> Any:
     )
 
 
+def _paralelo(p: dict[str, ValorDeParametro]) -> Any:
+    from orchestrator.regras import Paralelo
+
+    _exige("paralelo", p, ("kind", "ramos"))
+    return Paralelo(kind=str(p.get("kind", "")), ramos=_lista(p.get("ramos")))
+
+
+def _juncao(p: dict[str, ValorDeParametro]) -> Any:
+    from orchestrator.regras import Juncao
+
+    _exige("juncao", p, ("ramos", "produz"))
+    return Juncao(ramos=_lista(p.get("ramos")), produz=str(p.get("produz", "")))
+
+
 def _tabela(p: dict[str, ValorDeParametro]) -> Any:
     from orchestrator.regras import Tabela
 
@@ -467,6 +481,48 @@ CATALOGO = Catalogo(
                 ),
             ),
             construir=lambda p: _tabela(p),
+        ),
+        # ABRIR e REUNIR — o que rotear NÃO faz.
+        #
+        # `condicao` e `tabela` escolhem UM ramo por item. O caso mais comum de
+        # paralelismo é o oposto: toda transação passa pela checagem de fraude E
+        # pela de KYC, e depois as duas se reencontram. Nenhum roteador faz
+        # isso, porque roteador escolhe.
+        RegraDisponivel(
+            nome="paralelo",
+            cost_class=CostClass.REGRA,
+            resumo="todo item segue por todos os ramos ao mesmo tempo",
+            rotulo="Parallel",
+            categoria="CONTROL",
+            parametros=(
+                ParametroDeRegra("kind", "", "o kind que entra neste bloco", obrigatorio=True),
+                ParametroDeRegra(
+                    "ramos",
+                    (),
+                    "os kinds dos ramos, pelo menos dois: fraude, kyc",
+                    obrigatorio=True,
+                ),
+            ),
+            construir=lambda p: _paralelo(p),
+        ),
+        RegraDisponivel(
+            nome="juncao",
+            cost_class=CostClass.REGRA,
+            resumo="reúne os ramos de um mesmo item num só",
+            rotulo="Merge",
+            categoria="CONTROL",
+            parametros=(
+                ParametroDeRegra(
+                    "ramos", (), "os kinds a reunir, pelo menos dois", obrigatorio=True
+                ),
+                ParametroDeRegra(
+                    "produz",
+                    "",
+                    "o kind que sai da junção. Só junta quando TODOS os ramos chegaram",
+                    obrigatorio=True,
+                ),
+            ),
+            construir=lambda p: _juncao(p),
         ),
         # Os TRÊS DESTINOS de um item que passa num teste. O que muda entre eles
         # não é a pergunta — é o que acontece com o item, e são três verbos
