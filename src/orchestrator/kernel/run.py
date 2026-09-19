@@ -116,6 +116,18 @@ class Run:
     error: str | None = None
     # Quantas vezes a sequência de stages rodou. 1 no caso comum.
     rondas: int = 1
+    # Quantos itens este run CRIOU. Zero enquanto o pool só encolhia.
+    #
+    # Existe porque a conta da borda era `resolvidos = pool_inicial - sobrou`, e
+    # ela pressupunha que o pool nunca cresce. Com um bloco que produz — a
+    # `entrada` que lê um banco, a `condicao` que roteia — o pool cresce, e a
+    # conta dava NEGATIVO: medido, um run que leu 8 pedidos reportou
+    # `resolvidos: -7` e lacuna de 800%.
+    #
+    # Num produto cuja tese é "a lacuna nunca mente", esse é o pior número
+    # possível. O denominador honesto é "todo item que existiu neste run", e é
+    # isto que o fecha.
+    produzidos: int = 0
 
     def __post_init__(self) -> None:
         # Mesma exigência de `Decision.quando`, e pelo mesmo motivo: horário

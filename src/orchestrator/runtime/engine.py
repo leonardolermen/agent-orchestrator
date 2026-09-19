@@ -87,6 +87,9 @@ def execute(
     matches_por_classe: dict[CostClass, list[Resolution]] = {}
 
     rondas = 0
+    # Contado no motor e não inferido depois: `len(unresolved)` não distingue
+    # um item que entrou pela fonte de um que um resolver criou.
+    produzidos = 0
     estado_por_teto = False
     for _ in range(definicao.max_rondas):
         rondas += 1
@@ -220,6 +223,7 @@ def execute(
                 # essa ausência que torna a invariante estrutural em vez de uma
                 # regra que alguém precisa lembrar.
                 work = work.without(saida.resolutions).com(saida.produced)
+                produzidos += len(saida.produced)
                 for r in saida.resolutions:
                     emitir(
                         EventKind.ITEM_RESOLVIDO,
@@ -317,6 +321,7 @@ def execute(
         resolutions_by_class=matches_por_classe,
         policy_decisions=tuple(decisoes),
         rondas=rondas,
+        produzidos=produzidos,
     )
 
 

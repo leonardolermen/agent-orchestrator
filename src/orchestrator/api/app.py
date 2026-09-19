@@ -120,7 +120,7 @@ from orchestrator.kernel.cost import Cost, CostClass
 from orchestrator.kernel.definition import WorkflowDefinition
 from orchestrator.kernel.event import EventBus
 from orchestrator.kernel.resolution import TraceKind
-from orchestrator.kernel.run import RunState
+from orchestrator.kernel.run import Run, RunState
 from orchestrator.kernel.work import WorkItem, WorkSet
 from orchestrator.metrics import evaluate
 from orchestrator.observability.collector import SpanCollector
@@ -912,6 +912,23 @@ def _conferir_payload(definicao: WorkflowDefinition, pool: WorkSet, tipo_da_font
                 )
 
 
+def _itens_de(run: Run, resolver: str, plantados: set[str]) -> int:
+    """Quantos itens ESTE resolver resolveu, sem contar os que a borda plantou.
+
+    Lê de `run.resolutions` em vez de `resolved_items_by_resolver` porque só as
+    resoluções carregam os IDS — e é por id que a semente se reconhece.
+
+    Por PROVENIÊNCIA (`produced_by`) e não por identidade do resolver na
+    cascata: os dois coincidem hoje (P3.2), e aqui a pergunta é literalmente
+    "quais ids este resolver tirou do pool", que é o que a proveniência responde.
+    """
+    if not plantados:
+        return run.resolved_items_by_resolver.get(resolver, 0)
+    return sum(
+        len(r.item_ids - plantados) for r in run.resolutions if r.produced_by == resolver
+    )
+
+
 def _carrega_a_propria_entrada(definicao: WorkflowDefinition) -> bool:
     """Algum degrau consome a semente? Então o workflow tem bloco de entrada.
 
@@ -1203,7 +1220,22 @@ def _executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
 
     # ITENS do pool, não lançamentos bancários. `bank_total` era a unidade de
     # uma fonte só; num CSV de issues não existe "lado bancário".
-    total = len(pool.items)
+    #
+    # **Todo item que EXISTIU, e não só o pool inicial.** Era `len(pool.items)`,
+    # e isso pressupunha que o pool nunca cresce. Com um bloco que produz — a
+    # `entrada` que lê um banco, a `condicao` que roteia — ele cresce: medido,
+    # um run que leu 8 pedidos de um Postgres reportou `resolvidos: -7` e
+    # lacuna de 800%, porque o denominador era 1 (a semente) e sobraram 8.
+    #
+    # A SEMENTE sai da conta, e não é detalhe de apresentação. Ela é máquina, e
+    # quem lê a tela conta PEDIDOS: com ela dentro, um run que não resolveu
+    # nada apareceria como "1 de 9 resolvidos" — um número que não é falso e
+    # também não é sobre nada que a pessoa fez. A borda pode descontá-la porque
+    # foi ela quem a plantou; o motor não tem como saber.
+    # Os ids que a BORDA plantou. Vazio quando o workflow recebe a fonte de
+    # fora, que é o caso de todo workflow anterior a esta fatia.
+    plantados = {i.id for i in pool.items} if _carrega_a_propria_entrada(definicao) else set()
+    total = len(pool.items) + run.produzidos - len(plantados)
     # A lacuna passa a sair do `Run`: o pool que SOBROU, contado, e não
     # inferido da soma das contagens por resolver.
     #
@@ -1235,7 +1267,13 @@ def _executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
             # conciliação, onde toda resolução casa ao menos um bancário com um
             # contábil — e o número certo num domínio de um item por resolução.
             matches=run.resolved_by_resolver.get(d.name, 0),
-            rate=run.resolved_items_by_resolver.get(d.name, 0) / total if total else 0.0,
+            # A semente sai daqui também, e não só do total. Sem isto, o bloco
+            # de entrada aparecia com 12,5% num run de 8 pedidos — a fatia de
+            # trabalho que ele fez foi consumir a própria máquina —, e a
+            # invariante que o `RunJSON` declara (`sum(rate) + gap.rate == 1.0`)
+            # fechava em 1,125. Uma taxa que não soma 1 é a lacuna deixando de
+            # ser confiável, que é a única coisa que este relatório promete.
+            rate=_itens_de(run, d.name, plantados) / total if total else 0.0,
             # A mesma guarda de `metrics.evaluate`: um resolver que não gastou
             # token nenhum converte para zero em qualquer modelo, e uma cascata
             # só de regras não deve exigir tabela de preços para ler zero.

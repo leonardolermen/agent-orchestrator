@@ -150,3 +150,43 @@ def test_de_ponta_a_ponta_o_run_comeca_pela_SEMENTE():
     assert "s" in resolvidos
     assert {"i0", "i1", "i2"} <= resolvidos
     assert run.unresolved.items == ()
+
+
+def test_a_LACUNA_nao_mente_quando_o_pool_CRESCE():
+    """O defeito que só apareceu rodando contra um Postgres de verdade.
+
+    A borda contava `resolvidos = pool_inicial - sobrou`, o que pressupõe que o
+    pool nunca cresce. Com um bloco que produz, ele cresce: um run que leu 8
+    pedidos reportou `resolvidos: -7` e lacuna de 800%. Num produto cuja tese é
+    "a lacuna nunca mente", esse é o pior número possível.
+
+    O denominador honesto é TODO item que existiu — e o `Run` precisou aprender
+    a contar o que criou, porque `len(unresolved)` não distingue um item que
+    veio da fonte de um que um resolver fabricou.
+    """
+    from orchestrator.kernel.definition import Stage, WorkflowDefinition
+    from orchestrator.runtime.engine import execute
+
+    fonte = _fonte(8)
+    d = WorkflowDefinition(
+        id="w",
+        name="W",
+        stages=(
+            Stage(
+                name="ler",
+                cascade=(Entrada(fonte=fonte, produz=("pedido",)),),
+                consome=frozenset({INICIO}),
+                produz=frozenset({"pedido"}),
+            ),
+        ),
+        # Ninguém consome `pedido`: o run entrega os 8 e eles ficam no pool.
+        entrega=frozenset({"pedido"}),
+    )
+
+    run = execute(d, _semente(), model="claude-opus-5")
+
+    assert run.produzidos == 8
+    # A conta da borda, reproduzida: 1 semente + 8 produzidos - 1 semente = 8.
+    total = len(_semente().items) + run.produzidos - 1
+    assert total == 8
+    assert total - len(run.unresolved.items) == 0
