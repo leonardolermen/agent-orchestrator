@@ -39,15 +39,50 @@ def _resposta(nome: str, argumentos: dict) -> LLMResponse:
 # modelo de verdade recebe. Inventá-los aqui faria o teste provar um contrato
 # que não existe — foi o que aconteceu na primeira tentativa: `propor_cascata`
 # e `recusar` não existem, e os três desfechos viraram "defeito".
-def _propor(resolvers):
+def _propor(etapas, entrega=()):
     return _resposta(
         "propor_workflow",
         {
             "nome": "Do chat",
             "justificativa": "porque o parceiro descreveu assim",
-            "resolvers": resolvers,
+            "etapas": etapas,
+            "entrega": list(entrega),
         },
     )
+
+
+def _so_regras(*nomes):
+    """Uma etapa com blocos de regra. O atalho que a forma antiga era."""
+    return [
+        {
+            "nome": "casar",
+            "blocos": [{"tipo": "regra", "regra": {"nome": n}} for n in nomes],
+        }
+    ]
+
+
+_ESCRITOR = {
+    "tipo": "tarefa",
+    "tarefa": {
+        "name": "escritor",
+        "system": "escreva",
+        "kind": "issue",
+        "produz": "rascunho",
+        "prompt": "Escreva sobre {titulo}",
+    },
+}
+
+_REVISOR = {
+    "tipo": "agente",
+    "agente": {
+        "name": "revisor-de-texto",
+        "system": "revise",
+        "kind": "rascunho",
+        "prompt": "Revise {rascunho}",
+        "tipos": ["APROVADO", "REPROVADO"],
+        "abstem_com": "NAO_SEI",
+    },
+}
 
 
 def _perguntar(texto: str):
@@ -69,7 +104,7 @@ def com_entrevistador(monkeypatch, tmp_path):
 
         async def rota(ws):
             from orchestrator.api.entrevista import conduzir
-            from orchestrator.grill.registro import gravar_receita
+            from orchestrator.authoring.composicao import gravar as composicao_gravar
 
             await conduzir(
                 ws,
@@ -77,7 +112,7 @@ def com_entrevistador(monkeypatch, tmp_path):
                 # `gravar` injetável para que um teste possa exercitar o
                 # gravador REAL da rota (`_gravar_receita_do_chat`, que checa o
                 # `registry()`) em vez deste, que só escreve.
-                gravar=gravar or (lambda r: gravar_receita(r, tmp_path)),
+                gravar=gravar or (lambda c: composicao_gravar(c, tmp_path / "composicoes")),
             )
 
         # Substitui o handler da rota já registrada, sem tocar no app global.
@@ -102,22 +137,26 @@ def _wrap(handler):
 def test_o_chat_PROPOE_uma_cascata_e_ela_vira_workflow(com_entrevistador):
     """O desfecho que importa: a conversa vira uma `Receita` gravada, e a
     receita gravada é um workflow como qualquer outro."""
-    raiz = com_entrevistador([_propor([{"nome": "L1"}, {"nome": "revisor"}])])
+    raiz = com_entrevistador([_propor(_so_regras("L1", "revisor"))])
 
     with cliente.websocket_connect("/api/entrevista") as ws:
         ws.send_json({"workflow_id": "do-chat", "descricao": "conciliar meu extrato"})
         msg = ws.receive_json()
 
     assert msg["tipo"] == "proposta"
-    assert [r["nome"] for r in msg["receita"]["resolvers"]] == ["L1", "revisor"]
-    assert (raiz / "workflows" / "do-chat.json").exists()
+    # A COMPOSIÇÃO, com etapas — e não `receita`, que faria a tela empilhar
+    # todo bloco no primeiro degrau.
+    assert "receita" not in msg
+    (etapa,) = msg["composicao"]["etapas"]
+    assert [b["nome"] for b in etapa["blocos"]] == ["L1", "revisor"]
+    assert (raiz / "composicoes" / "do-chat.json").exists()
 
 
 def test_o_chat_PERGUNTA_e_espera_a_resposta(com_entrevistador):
     """O laço é conversacional de verdade: a pergunta chega, o servidor PARA, e
     só continua com o que a pessoa responde."""
     com_entrevistador(
-        [_perguntar("seu extrato tem data de compensação?"), _propor([{"nome": "L1"}])]
+        [_perguntar("seu extrato tem data de compensação?"), _propor(_so_regras("L1"))]
     )
 
     with cliente.websocket_connect("/api/entrevista") as ws:
@@ -150,7 +189,7 @@ def test_o_chat_RECUSA_e_diz_o_que_faltaria(com_entrevistador):
 def test_TODO_desfecho_devolve_o_custo(com_entrevistador):
     """Gasto que não aparece na tela é gasto que ninguém revisa. É a guarda 2
     do cabeçalho de `api/entrevista.py`."""
-    com_entrevistador([_propor([{"nome": "L1"}])])
+    com_entrevistador([_propor(_so_regras("L1"))])
 
     with cliente.websocket_connect("/api/entrevista") as ws:
         ws.send_json({"workflow_id": "conciliar-acme", "descricao": "conciliar"})
@@ -211,7 +250,7 @@ def test_id_INVALIDO_e_recusado_antes_de_qualquer_turno(com_entrevistador):
     """`validar_id` levantando virava `{"tipo": "defeito"}`, que a tela mostra
     como erro NOSSO. É recusa legítima, com uma regra que a pessoa pode
     atender — achado rodando o primeiro teste desta suíte."""
-    com_entrevistador([_propor([{"nome": "L1"}])])
+    com_entrevistador([_propor(_so_regras("L1"))])
 
     with cliente.websocket_connect("/api/entrevista") as ws:
         ws.send_json({"workflow_id": "x", "descricao": "conciliar"})
@@ -224,7 +263,7 @@ def test_id_INVALIDO_e_recusado_antes_de_qualquer_turno(com_entrevistador):
 def test_descricao_VAZIA_nao_chega_a_gastar(com_entrevistador):
     """Uma descrição em branco produziria um turno pago para o modelo perguntar
     o que a tela já sabia perguntar de graça."""
-    com_entrevistador([_propor([{"nome": "L1"}])])
+    com_entrevistador([_propor(_so_regras("L1"))])
 
     with cliente.websocket_connect("/api/entrevista") as ws:
         ws.send_json({"workflow_id": "qualquer-coisa", "descricao": "   "})
@@ -328,7 +367,7 @@ def test_a_thread_que_termina_NORMALMENTE_nao_muda_de_desfecho(com_entrevistador
     de ve-la. Se a ordem estivesse trocada, TODA entrevista bem-sucedida viraria
     "defeito" — e este teste e quem pega isso.
     """
-    com_entrevistador([_propor([{"nome": "L1"}])])
+    com_entrevistador([_propor(_so_regras("L1"))])
 
     with cliente.websocket_connect("/api/entrevista") as ws:
         ws.send_json({"workflow_id": "do-chat", "descricao": "conciliar"})
@@ -375,8 +414,8 @@ def test_o_chat_NAO_grava_por_cima_de_uma_composicao_do_canvas(
     monkeypatch.setattr(app_mod, "_RAIZ_RECEITAS", tmp_path)
     monkeypatch.setattr(app_mod, "_RAIZ_COMPOSICOES", composicoes)
     com_entrevistador(
-        [_propor([{"nome": "L1"}, {"nome": "revisor"}])],
-        gravar=app_mod._gravar_receita_do_chat,
+        [_propor(_so_regras("L1", "revisor"))],
+        gravar=app_mod._gravar_composicao_do_chat,
     )
 
     with cliente.websocket_connect("/api/entrevista") as ws:
@@ -385,8 +424,13 @@ def test_o_chat_NAO_grava_por_cima_de_uma_composicao_do_canvas(
 
     assert msg["tipo"] == "recusa"
     assert "já existe um workflow com id 'acme2'" in msg["motivo"]
-    # Nada foi gravado, e o `registry()` continua entregando A COMPOSIÇÃO.
-    assert not (tmp_path / "workflows" / "acme2.json").exists()
+    # Nada foi gravado POR CIMA: o arquivo que está lá continua sendo o do
+    # canvas. Afirmar "o arquivo não existe" seria errado agora que as duas
+    # portas escrevem na MESMA pasta — ele existe, e a garantia é que o
+    # conteúdo não é o do chat.
+    from orchestrator.authoring.composicao import ler
+
+    assert ler("acme2", composicoes).nome == "do canvas"
     from orchestrator.workflows import registry
 
     assert "acme2" in registry(tmp_path, composicoes)
@@ -402,8 +446,8 @@ def test_um_id_LIVRE_continua_passando_pela_mesma_porta(
     monkeypatch.setattr(app_mod, "_RAIZ_RECEITAS", tmp_path)
     monkeypatch.setattr(app_mod, "_RAIZ_COMPOSICOES", composicoes)
     com_entrevistador(
-        [_propor([{"nome": "L1"}, {"nome": "revisor"}])],
-        gravar=app_mod._gravar_receita_do_chat,
+        [_propor(_so_regras("L1", "revisor"))],
+        gravar=app_mod._gravar_composicao_do_chat,
     )
 
     with cliente.websocket_connect("/api/entrevista") as ws:
@@ -411,7 +455,7 @@ def test_um_id_LIVRE_continua_passando_pela_mesma_porta(
         msg = ws.receive_json()
 
     assert msg["tipo"] == "proposta"
-    assert (tmp_path / "workflows" / "livre.json").exists()
+    assert (tmp_path / "composicoes" / "livre.json").exists()
 
 
 def test_a_ORDEM_INVERSA_continua_no_409_de_sempre(monkeypatch, tmp_path):

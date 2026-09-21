@@ -16,6 +16,8 @@ import argparse
 import sys
 from pathlib import Path
 
+from orchestrator.authoring.composicao import caminho as caminho_da_composicao
+from orchestrator.authoring.composicao import construir_composicao, gravar
 from orchestrator.domains.reconciliation import reconcile
 from orchestrator.domains.reconciliation.synth.benchmark import build_benchmark
 from orchestrator.grill.entrevistador import (
@@ -24,10 +26,7 @@ from orchestrator.grill.entrevistador import (
     Proposta,
     RecusaFinal,
 )
-from orchestrator.grill.receita import construir
 from orchestrator.grill.registro import (
-    caminho_da_receita,
-    gravar_receita,
     gravar_recusa,
 )
 from orchestrator.kernel.cost import CostClass
@@ -70,8 +69,8 @@ def main(argv=None, *, entrevistador=None, responder=None) -> int:
 
     # Colisão checada ANTES do primeiro turno: descobrir no fim desperdiçaria
     # a conversa inteira do parceiro.
-    if caminho_da_receita(args.id, _RAIZ).exists():
-        print(f"já existe uma receita com id {args.id!r}. escolha outro.", file=sys.stderr)
+    if caminho_da_composicao(args.id, _RAIZ / "composicoes").exists():
+        print(f"já existe uma composição com id {args.id!r}. escolha outro.", file=sys.stderr)
         return 2
 
     # Pelo MESMO motivo, e no mesmo lugar: `build_benchmark` já recusa `n < 1`
@@ -115,8 +114,11 @@ def main(argv=None, *, entrevistador=None, responder=None) -> int:
         return 0
 
     assert isinstance(resultado, Proposta)
-    caminho = gravar_receita(resultado.receita, _RAIZ)
-    print(f"\n✓ {resultado.receita.nome} ({resultado.receita.id})")
+    # `gravar` da COMPOSIÇÃO, e não `gravar_receita`: um entrevistador com duas
+    # saídas seria o join frágil de sempre. A `Receita` continua carregando do
+    # disco por `workflows._de_receita` — o que muda é o que se PRODUZ.
+    caminho = gravar(resultado.composicao, _RAIZ / "composicoes")
+    print(f"\n✓ {resultado.composicao.nome} ({resultado.composicao.id})")
     print(f"✓ {caminho}")
     _medir(resultado, args)
     print(f"→ http://localhost:8000/?workflow={args.id}")
@@ -144,7 +146,7 @@ def _validar_parametros(args) -> str | None:
 
 def _medir(proposta: Proposta, args) -> None:
     dataset = build_benchmark(args.seed, args.n, args.taxa_divergencia)
-    definicao = construir(proposta.receita)
+    definicao = construir_composicao(proposta.composicao)
 
     # A cascata construída carrega os resolvers de verdade — inclusive um
     # `Investigator` ligado ao `ClienteAusente` que `construir` injeta por

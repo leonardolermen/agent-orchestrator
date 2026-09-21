@@ -491,7 +491,7 @@ def ambiente() -> AmbienteJSON:
     )
 
 
-def _gravar_receita_do_chat(receita: Receita) -> None:
+def _gravar_composicao_do_chat(composicao: Composicao) -> None:
     """A TERCEIRA porta de escrita, com a mesma tranca das outras duas.
 
     `gravar_receita` só sabe se o ARQUIVO de receita existe — não consulta o
@@ -505,15 +505,15 @@ def _gravar_receita_do_chat(receita: Receita) -> None:
     `HTTPException` porque um WebSocket não carrega status HTTP: `conduzir`
     traduz esta recusa no desfecho `recusa` que a tela já sabe mostrar.
     """
-    if receita.id in registry(_RAIZ_RECEITAS, _RAIZ_COMPOSICOES):
-        raise ValueError(f"já existe um workflow com id {receita.id!r}; escolha outro")
-    gravar_receita(receita, _RAIZ_RECEITAS)
+    if composicao.id in registry(_RAIZ_RECEITAS, _RAIZ_COMPOSICOES):
+        raise ValueError(f"já existe um workflow com id {composicao.id!r}; escolha outro")
+    gravar(composicao, _RAIZ_COMPOSICOES)
 
 
 @app.websocket("/api/entrevista")
 async def entrevista(ws: WebSocket) -> None:
     """O chat que compõe. GASTA DINHEIRO — ver `api/entrevista.py`."""
-    await conduzir(ws, gravar=_gravar_receita_do_chat)
+    await conduzir(ws, gravar=_gravar_composicao_do_chat)
 
 
 @app.post("/api/receitas", response_model=WorkflowJSON, status_code=201)

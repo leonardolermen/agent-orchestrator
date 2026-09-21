@@ -31,3 +31,19 @@ def test_o_custo_e_dito_por_CLASSE_e_nao_por_um_agente_nomeado():
     Com `triador` e `buscador` no catálogo, a frase certa é por classe."""
     assert "investigador" not in SYSTEM.lower()
     assert "AGENTE" in SYSTEM
+
+
+def test_o_prompt_NAO_promete_um_degrau_so():
+    """"A cascata tem um estágio" era verdade enquanto o entrevistador produzia
+    `Receita`. Com etapas, a frase passa a ENSINAR o modelo a não usar o que
+    existe — e o custo disso não aparece em erro nenhum: aparece numa
+    automação mais pobre do que o produto sabe montar."""
+    assert "um estágio" not in SYSTEM
+
+
+def test_o_prompt_manda_PERGUNTAR_os_campos_do_item():
+    """Campo inventado não falha na composição — falha na execução, com a conta
+    paga. É a mesma disciplina que o prompt já impõe a parâmetro ("NUNCA invente
+    um valor que não ouviu"), estendida a campo."""
+    assert "campos" in SYSTEM.lower()
+    assert "PERGUNTE" in SYSTEM

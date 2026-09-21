@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from orchestrator.agent.llm import LLMClient, ToolCall, blocos_assistente
+from orchestrator.authoring.composicao import Composicao, construir_composicao
 from orchestrator.grill.ferramentas import (
     Pergunta,
     PropostaBruta,
@@ -20,32 +21,46 @@ from orchestrator.grill.ferramentas import (
     interpretar,
 )
 from orchestrator.grill.prompt import SYSTEM
-from orchestrator.grill.receita import Receita, construir, validar_id
+from orchestrator.grill.receita import validar_id
 from orchestrator.kernel.cost import Cost
 
-# Derivação (rodada em 2026-09-15, ver Step 1 da Task 4):
+# Derivação ORIGINAL (2026-09-15), preservada porque o número novo só se lê
+# contra ela:
 #
 #   overhead fixo = len(SYSTEM) + len(json.dumps(esquemas(), ensure_ascii=False))
 #                 = 1421 + 2430 = 3851 chars ≈ 962 tokens de entrada,
 #   (o kwarg não é detalhe: sem ele, os acentos do schema viram `\uXXXX` e a
 #   mesma conta dá 1421 + 2680 = 4101 — a derivação precisa ser reproduzível,
 #   §9.2, e é `ensure_ascii=False` o que o teste que a pina de fato mede.)
-#   pela heurística grosseira de ~4 chars/token.
 #   saída realista por turno ≈ 200 tokens.
+#   1 turno em opus-5: 962*500 + 200*2500 = 981_000 µ¢
+#   x12 turnos = 11_772_000; +50% de folga para o histórico = 17_658_000
+#   Arredondado: 20_000_000 µ¢ (US$ 0,20).
 #
-#   1 turno em opus-5, sem cache (500/2500 µ¢ por token de entrada/saída):
-#     962*500 + 200*2500 = 981_000 µ¢
+# REMEDIDO em 2026-09-21, quando a entrevista passou a propor `Composicao`:
 #
-#   x max_turnos (12): 981_000 * 12 = 11_772_000 µ¢
-#   +50% de folga para o histórico que cresce turno a turno (não modelado
-#   acima, porque cada mensagem anterior — perguntas, respostas, erros de
-#   formato — volta inteira a cada chamada seguinte):
-#     11_772_000 * 1.5 = 17_658_000 µ¢
+#   prompt  2171 chars (eram 1421: entraram as regras de etapa, de declaração
+#           e a de PERGUNTAR os campos do item)
+#   schema 10485 chars (eram 2430: o bloco deixou de ser `{nome, parametros}` e
+#           passou a carregar as declarações inteiras de agente e de tarefa)
+#   => 3164 tokens de entrada por turno, contra 962.
 #
-#   Arredondado para cima até um número limpo: 20_000_000 µ¢ (US$ 0,20 por
-#   entrevista de até 12 turnos em opus-5). Ordem de grandeza esperada pelo
-#   brief: dezenas de milhões de µ¢ — bate.
-ORCAMENTO_PADRAO = 20_000_000
+#   1 turno: 3164*500 + 200*2500 = 2_082_000 µ¢ — o DOBRO de antes, e a razão é
+#   estrutural: o que o modelo recebe agora é o formulário de uma automação
+#   inteira, não uma lista de nomes.
+#
+#   x12 turnos = 24_984_000; +50% de folga pelo mesmo motivo de antes
+#   (o histórico volta inteiro a cada chamada) = 37_476_000
+#
+#   Arredondado para cima até um número limpo: 40_000_000 µ¢ (US$ 0,40 por
+#   entrevista de até 12 turnos em opus-5).
+#
+# **Este número é o TETO, não o gasto esperado.** Uma entrevista que resolve em
+# três turnos custa perto de US$ 0,06. O teto existe para o caso ruim, e o
+# teste `test_orcamento_padrao_cobre_uma_entrevista_realista` é a catraca: se o
+# prompt ou os schemas crescerem de novo, ele quebra sozinho e obriga esta
+# conta a ser refeita em vez de o teto cortar uma conversa no meio.
+ORCAMENTO_PADRAO = 40_000_000
 
 
 class EntrevistaFalhou(Exception):
@@ -62,7 +77,11 @@ class EntrevistaFalhou(Exception):
 
 @dataclass(frozen=True)
 class Proposta:
-    receita: Receita
+    # `composicao` e não `receita`: o formato GERAL, com etapas, agente
+    # declarado na hora, tarefa e tripulação. Enquanto era `Receita`, o que a
+    # entrevista sabia propor era uma fileira de nomes prontos num degrau só —
+    # e o chat ficou sendo a porta mais pobre do produto.
+    composicao: Composicao
     cost: Cost
     transcricao: tuple[str, ...]
 
@@ -208,10 +227,10 @@ class Entrevistador:
                             cost=total,
                             transcricao=tuple(transcricao),
                         )
-                    receita = self._receita(workflow_id, interpretada)
+                    composicao = self._composicao(workflow_id, interpretada)
                     try:
                         # VALIDAR É CONSTRUIR. Se constrói, roda.
-                        construir(receita)
+                        construir_composicao(composicao)
                     except ValueError as e:
                         mensagens.append(
                             self._mensagem_resultado(
@@ -221,7 +240,7 @@ class Entrevistador:
                         tentativas += 1
                     else:
                         return Proposta(
-                            receita=receita, cost=total, transcricao=tuple(transcricao)
+                            composicao=composicao, cost=total, transcricao=tuple(transcricao)
                         )
 
             if tentativas > self.max_tentativas_formato:
@@ -235,13 +254,22 @@ class Entrevistador:
         )
 
     @staticmethod
-    def _receita(workflow_id: str, bruta: PropostaBruta) -> Receita:
-        return Receita(
+    def _composicao(workflow_id: str, bruta: PropostaBruta) -> Composicao:
+        """A proposta do modelo mais o que só o chamador sabe: o id e o relógio.
+
+        O id vem do `--id` da CLI ou do WebSocket, validado ANTES do primeiro
+        turno — deixar o modelo propor um criaria duas fontes de verdade para a
+        mesma chave, e a do modelo só seria conhecida no fim, tarde para
+        recusar sem desperdiçar a conversa do parceiro.
+        """
+        return Composicao(
             id=workflow_id,
             nome=bruta.nome,
             justificativa=bruta.justificativa,
             gerado_em=datetime.now(UTC),
-            resolvers=bruta.resolvers,
+            etapas=bruta.etapas,
+            entrega=bruta.entrega,
+            max_rondas=bruta.max_rondas,
         )
 
     @staticmethod
