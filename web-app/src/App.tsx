@@ -15,6 +15,7 @@ import "@xyflow/react/dist/style.css";
 import {
   agenteEmBranco,
   api,
+  tarefaEmBranco,
   CORES,
   ErroDaApi,
   ORDEM_CLASSE,
@@ -22,6 +23,7 @@ import {
   type AgenteDeclarado,
   type BlocoPedido,
   type Catalogo,
+  type TarefaDeclarada,
   type Receita,
   type Regra,
   type WorkflowConstruido,
@@ -263,6 +265,18 @@ export default function App() {
   const acrescentarAgente = (a: AgenteDeclarado) =>
     acrescentar({ tipo: "agente", declaracao: { ...a }, etapa: etapaDeNascimento() });
 
+  /** Uma TAREFA nova, em branco.
+   *
+   *  Nao ha "cardapio de tarefas" como ha de agentes: nenhum dominio declara
+   *  tarefa no `registro`, e uma tarefa pronta seria um prompt de outra pessoa
+   *  para um kind que nao e o seu. Ela nasce sempre declarada aqui. */
+  const novaTarefa = () => {
+    const usados = new Set(nos.map((n) => nomeDo(n.data)));
+    let nome = "tarefa";
+    for (let i = 2; usados.has(nome); i++) nome = `tarefa-${i}`;
+    acrescentar({ tipo: "tarefa", declaracao: tarefaEmBranco(nome), etapa: etapaDeNascimento() });
+  };
+
   /** Move um bloco de degrau. Etapas vazias somem sozinhas: o numero de etapas
    *  e DERIVADO do que os blocos dizem, entao nao existe estado "etapa vazia"
    *  para ficar inconsistente com o servidor (que recusa etapa sem bloco). */
@@ -349,6 +363,17 @@ export default function App() {
     invalidar();
   };
 
+  const mudarTarefa = (id: string, patch: Partial<TarefaDeclarada>) => {
+    setNos((atuais) =>
+      atuais.map((n) =>
+        n.id === id && n.data.tipo === "tarefa"
+          ? { ...n, data: { ...n.data, declaracao: { ...n.data.declaracao, ...patch } } }
+          : n,
+      ),
+    );
+    invalidar();
+  };
+
   const compor = async (
     id: string,
     nome: string,
@@ -389,6 +414,9 @@ export default function App() {
                   process: n.data.process,
                   conflito: n.data.conflito,
                 };
+              }
+              if (n.data.tipo === "tarefa") {
+                return { tipo: "tarefa", declaracao: n.data.declaracao };
               }
               return { tipo: "agente", declaracao: n.data.declaracao };
             }),
@@ -573,11 +601,13 @@ export default function App() {
           onAcrescentarRegra={acrescentarRegra}
           onAcrescentarAgente={acrescentarAgente}
           onNovoAgente={novoAgente}
+          onNovaTarefa={novaTarefa}
           onNovoTime={novoTime}
           onMudarTime={mudarTime}
           onRemover={remover}
           onMudarParametro={mudarParametro}
           onMudarAgente={mudarAgente}
+          onMudarTarefa={mudarTarefa}
           onCompor={compor}
           quantasEtapas={quantasEtapas}
           nomeDaEtapa={nomeDaEtapa}

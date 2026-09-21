@@ -245,6 +245,7 @@ export function Paleta({
   onAcrescentarRegra,
   onAcrescentarAgente,
   onNovoAgente,
+  onNovaTarefa,
   onNovoTime,
 }: {
   catalogo: Catalogo | null;
@@ -252,6 +253,7 @@ export function Paleta({
   onAcrescentarRegra: (r: Regra) => void;
   onAcrescentarAgente: (a: AgenteDeclarado) => void;
   onNovoAgente: () => void;
+  onNovaTarefa: () => void;
   onNovoTime: () => void;
 }) {
   // Aberto por default so onde ha bloco utilizavel: a paleta inteira aberta
@@ -344,6 +346,18 @@ export function Paleta({
                   >
                     <span className="w-4 shrink-0 text-center">+</span>
                     <span>New agent</span>
+                  </button>
+                )}
+                {g.id === "AI" && (
+                  <button
+                    type="button"
+                    disabled={!catalogo}
+                    onClick={onNovaTarefa}
+                    title="consome um kind e produz outro: a saida dele vira o item do degrau seguinte"
+                    className="mt-1 flex w-full items-center gap-2 rounded border border-dashed border-borda px-2 py-1.5 text-left text-[12px] text-neutral-500 transition hover:bg-neutral-50 disabled:opacity-40 dark:border-noite-borda dark:text-noite-fraca dark:hover:bg-noite-cartao"
+                  >
+                    <span className="w-4 shrink-0 text-center">⇥</span>
+                    <span>New task</span>
                   </button>
                 )}
                 {g.id === "AI" && (

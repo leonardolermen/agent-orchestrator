@@ -61,6 +61,27 @@ export interface AgenteDeclarado {
   budget_microcents: number;
 }
 
+// Uma TAREFA como dado. O irmão do agente para o bloco que TRANSFORMA.
+//
+// Sem `tipos` e sem `abstem_com`, e a ausência é o contrato: transformar não
+// tem vocabulário de julgamento a rotular — quem não transforma simplesmente
+// não resolve, e o item fica no pool para o degrau seguinte.
+//
+// `produz` é o campo que o agente não tem, e é ele que liga este bloco ao
+// próximo: o texto do modelo vira o payload de um item novo desse kind, no
+// campo com esse mesmo nome — produz `rascunho`, o próximo interpola
+// `{rascunho}`.
+export interface TarefaDeclarada {
+  name: string;
+  system: string;
+  kind: string;
+  produz: string;
+  prompt: string;
+  ferramentas: string[];
+  max_turns: number;
+  budget_microcents: number;
+}
+
 // Tudo que dá para compor, SEM agrupamento. Espelha `CatalogoJSON`.
 //
 // Não há mais partição por domínio: a paleta é o catálogo inteiro, e a garantia
@@ -146,6 +167,9 @@ export interface Receita {
 export type BlocoPedido =
   | { tipo: "regra"; nome: string; parametros: Record<string, ValorParametro> }
   | { tipo: "agente"; declaracao: AgenteDeclarado }
+  // O bloco que TRANSFORMA. `tipo` diz qual CONTRATO ele honra: `agente`
+  // propõe e nunca resolve, `tarefa` resolve e nunca propõe.
+  | { tipo: "tarefa"; declaracao: TarefaDeclarada }
   // Sem `abstem_com`: o servidor o DERIVA dos agentes, que ja o declaram cada
   // um. Mandar daqui seria a segunda fonte de verdade, e o sintoma seria o
   // Crew chamando de desacordo duas abstencoes.
@@ -401,6 +425,25 @@ export function agenteEmBranco(nome: string): AgenteDeclarado {
     prompt: "",
     tipos: [],
     abstem_com: "NAO_SEI",
+    ferramentas: [],
+    max_turns: 3,
+    budget_microcents: 4_000_000,
+  };
+}
+
+/** Uma TAREFA em branco. O espelho de `agenteEmBranco`, sem o vocabulário.
+ *
+ *  `kind` e `produz` nascem VAZIOS pela mesma razão que o `kind` do agente: é
+ *  a pessoa que diz sobre que item o bloco trabalha e o que ele entrega, e é
+ *  por esses dois que o grafo liga um degrau ao outro. Preencher com um chute
+ *  faria a tela decidir o desenho do workflow sem ninguém ver a decisão. */
+export function tarefaEmBranco(nome: string): TarefaDeclarada {
+  return {
+    name: nome,
+    system: "",
+    kind: "",
+    produz: "",
+    prompt: "",
     ferramentas: [],
     max_turns: 3,
     budget_microcents: 4_000_000,
