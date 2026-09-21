@@ -38,7 +38,7 @@
 - Consumes: `CATALOGO` (regras e agentes), `authoring.composicao.{BlocoRegra, BlocoAgente, BlocoTarefa, BlocoCrew, Etapa}`, `agent.declarado.{AgenteDeclarado, TarefaDeclarada}`.
 - Produces: `PropostaBruta(nome: str, justificativa: str, etapas: tuple[Etapa, ...], entrega: tuple[str, ...], max_rondas: int)` — o campo `resolvers` deixa de existir.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Acrescentar a `tests/grill/test_ferramentas.py`:
 
@@ -227,12 +227,12 @@ def test_o_schema_NAO_usa_palavra_fora_da_lista_branca():
 
 Ajustar os testes existentes que falam de `resolvers` (`test_interpretar_proposta`, `test_interpretar_rejeita_parametro_nao_inteiro`, `test_descricao_da_proposta_lista_os_parametros_de_cada_resolver`) para a forma nova — eles medem a MESMA garantia, e reescrevê-los é o preço declarado da mudança de contrato.
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/grill/test_ferramentas.py -q`
 Expected: FAIL — `interpretar` levanta `ValueError: argumento 'resolvers' ausente ou vazio`.
 
-- [ ] **Step 3: Reescrever `PropostaBruta` e `interpretar`**
+- [x] **Step 3: Reescrever `PropostaBruta` e `interpretar`**
 
 Em `src/orchestrator/grill/ferramentas.py`:
 
@@ -382,7 +382,7 @@ e o ramo de `propor_workflow` em `interpretar`:
 
 Imports novos no topo: `from orchestrator.agent.declarado import AgenteDeclarado, TarefaDeclarada, ValorDeParametro` e `from orchestrator.authoring.composicao import Bloco, BlocoAgente, BlocoCrew, BlocoRegra, BlocoTarefa, Etapa`. `ResolverReceita` sai dos imports.
 
-- [ ] **Step 4: Reescrever `esquemas()`**
+- [x] **Step 4: Reescrever `esquemas()`**
 
 Substituir o schema de `propor_workflow` por:
 
@@ -565,12 +565,12 @@ E `_catalogo_em_texto` perde a mentira do `int`:
 
 O laço `for a in CATALOGO.agentes` sai de `_catalogo_em_texto`: agente não é mais item de cardápio.
 
-- [ ] **Step 5: Run to verify they pass**
+- [x] **Step 5: Run to verify they pass**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/grill/test_ferramentas.py -q`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 .venv/Scripts/python.exe -m ruff check src tests
@@ -593,7 +593,7 @@ Corpo: por que o bloco não é união discriminada (a lista branca medida), e po
 - Consumes: `PropostaBruta` da Task 1.
 - Produces: `Proposta(composicao: Composicao, cost: Cost, transcricao: tuple[str, ...])` — o campo `receita` deixa de existir.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Em `tests/grill/test_entrevistador.py` (usar os helpers de cliente falso que o arquivo já tem; se ele monta `ToolCall` de proposta, atualizar aqueles para a forma nova):
 
@@ -733,12 +733,12 @@ def test_o_prompt_manda_PERGUNTAR_os_campos_do_item():
     assert "campos" in SYSTEM.lower()
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/grill -q`
 Expected: FAIL — `Proposta` não tem `composicao`; `SYSTEM` ainda contém "um estágio".
 
-- [ ] **Step 3: Implementar no entrevistador**
+- [x] **Step 3: Implementar no entrevistador**
 
 ```python
 @dataclass(frozen=True)
@@ -786,7 +786,7 @@ e o construtor:
 
 Imports: `from orchestrator.authoring.composicao import Composicao, construir_composicao`; `receita.construir` e `Receita` saem, `validar_id` fica (o id continua sendo validado pela MESMA função que o disco usa).
 
-- [ ] **Step 4: Reescrever o system prompt**
+- [x] **Step 4: Reescrever o system prompt**
 
 Em `src/orchestrator/grill/prompt.py`, trocar a linha da cascata de um estágio por:
 
@@ -804,12 +804,12 @@ Em `src/orchestrator/grill/prompt.py`, trocar a linha da cascata de um estágio 
   de uma etapa é o fim do trabalho, declare esse kind em `entrega`.
 ```
 
-- [ ] **Step 5: Run to verify they pass**
+- [x] **Step 5: Run to verify they pass**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/grill -q`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 .venv/Scripts/python.exe -m ruff check src tests
@@ -830,7 +830,7 @@ git commit -m "feat(grill): a entrevista propoe composicao, nao receita"
 - Consumes: `Proposta.composicao` (Task 2).
 - Produces: mensagem WS `{"tipo": "proposta", "composicao": {...}, "custo_usd": float, "transcricao": [...]}`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Em `tests/api/test_entrevista.py`:
 
@@ -957,12 +957,12 @@ def test_o_chat_RECUSA_id_que_ja_existe_no_registry(com_entrevistador):
 
 A fixture `com_entrevistador` já isola a raiz e devolve o `tmp_path` usado. Se ela ainda apontar só para `workflows/`, estendê-la para servir às duas pastas — é uma linha, e sem ela o primeiro `assert` de arquivo falha por caminho, não por comportamento.
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/api/test_entrevista.py -q`
 Expected: FAIL — a mensagem ainda traz `receita`.
 
-- [ ] **Step 3: Implementar**
+- [x] **Step 3: Implementar**
 
 Em `api/entrevista.py`:
 
@@ -997,12 +997,12 @@ def _gravar_composicao_do_chat(composicao: Composicao) -> None:
 
 e `conduzir(ws, gravar=_gravar_composicao_do_chat)`.
 
-- [ ] **Step 4: Run to verify they pass**
+- [x] **Step 4: Run to verify they pass**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/api -q`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 .venv/Scripts/python.exe -m pytest -q && .venv/Scripts/python.exe -m ruff check src tests
@@ -1022,7 +1022,7 @@ git commit -m "feat(api): o chat entrega composicao pelo websocket"
 - Consumes: `Proposta.composicao` (Task 2).
 - Produces: nenhum símbolo novo; o CLI passa a escrever em `data/composicoes/`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 O helper `_propor()` do arquivo monta a forma antiga. Ele passa a montar etapas:
 
@@ -1059,21 +1059,21 @@ def test_a_cli_grava_COMPOSICAO(capsys, tmp_path):
 
 Os outros testes do arquivo que afirmam `(tmp_path / "workflows" / "<id>.json").exists()` passam a afirmar `composicoes` — medem a mesma garantia, e atualizá-los é o preço declarado da mudança de saída.
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/grill/test_cli.py -q`
 Expected: FAIL — o arquivo foi para `data/receitas/`.
 
-- [ ] **Step 3: Implementar**
+- [x] **Step 3: Implementar**
 
 Trocar `caminho_da_receita`/`gravar_receita` por `caminho`/`gravar` de `authoring.composicao`, `construir` por `construir_composicao` em `_medir`, e `resultado.receita` por `resultado.composicao` nas três linhas que imprimem o desfecho.
 
-- [ ] **Step 4: Run to verify it passes**
+- [x] **Step 4: Run to verify it passes**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/grill -q`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/orchestrator/grill/cli.py tests/grill/test_cli.py
@@ -1096,7 +1096,7 @@ git commit -m "feat(grill): a cli grava composicao — uma saida so"
 
 **Pré-requisito:** `DadosTarefa` precisa existir em `NoResolver.tsx` (a fatia do nó de tarefa no canvas). Sem ela o `tsc` reprova.
 
-- [ ] **Step 1: Tipo novo em `api.ts`**
+- [x] **Step 1: Tipo novo em `api.ts`**
 
 ```ts
 // O que o chat propõe hoje. `Receita` continua existindo para os arquivos em
@@ -1134,7 +1134,7 @@ export interface TarefaDeclarada {
 }
 ```
 
-- [ ] **Step 2: `Chat.tsx` fala composição**
+- [x] **Step 2: `Chat.tsx` fala composição**
 
 `Props.aoPropor` passa a receber `ComposicaoProposta`; o `case "proposta"` lê `m.composicao`, e o resumo passa a ser por etapa:
 
@@ -1148,7 +1148,7 @@ export interface TarefaDeclarada {
           );
 ```
 
-- [ ] **Step 3: `aceitarProposta` pousa por etapa**
+- [x] **Step 3: `aceitarProposta` pousa por etapa**
 
 ```ts
   const aceitarProposta = (composicao: ComposicaoProposta) => {
@@ -1213,7 +1213,7 @@ export interface TarefaDeclarada {
   };
 ```
 
-- [ ] **Step 4: Typecheck, build, bundle**
+- [x] **Step 4: Typecheck, build, bundle**
 
 ```bash
 npx --prefix web-app tsc --noEmit -p web-app/tsconfig.json
@@ -1222,11 +1222,11 @@ git diff --stat web
 ```
 Expected: `tsc` exit 0; o diff de `web/` traz os assets novos.
 
-- [ ] **Step 5: Ver funcionando**
+- [x] **Step 5: Ver funcionando**
 
 Subir o preview (`preview_start`), abrir o canvas, e conferir que uma proposta de duas etapas pousa em DUAS colunas. Sem chave configurada o chat recusa com motivo — nesse caso, exercitar `aceitarProposta` pelo console com um objeto de composição é prova suficiente para esta fatia.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add web-app/src web
@@ -1240,3 +1240,32 @@ git commit -m "feat(canvas): a proposta do chat pousa por etapa"
 - **Sugerir 2 ou 3 automações para comparar por custo.** A entrevista propõe UMA; alternativas lado a lado é outro produto.
 - **Ler os campos do item de uma fonte conectada.** Decidido: o chat pergunta.
 - **Decisão humana genérica.** Continua sendo o degrau HUMANO que não existe.
+
+---
+
+## Executado em 2026-09-21 — e o que o plano errou
+
+Commits: `a8df032` (Tasks 1–4, juntas) e `42d3511` (Task 5).
+
+**A fronteira da Task 1 estava errada.** O plano exigia suíte verde ao fim de
+cada tarefa, e a Task 1 muda um CONTRATO: assim que a ferramenta passou a falar
+etapas, os três consumidores — entrevistador, CLI e WebSocket — ficaram
+vermelhos por construção (23 testes). Não há como fatiar isso em commits verdes
+sem duplicar o formato por um tempo, que é a coisa que este repositório recusa.
+As Tasks 1–4 viraram um commit só.
+
+**Renomear `_nomes_disponiveis` foi erro meu.** `receita.construir` a importa
+para dizer o que HÁ quando uma receita cita um resolver inexistente, e `Receita`
+compõe por nome — agente inclusive. As duas funções ficaram, com a diferença
+escrita no docstring. Descoberto quebrando quatro testes de receita.
+
+**O orçamento da entrevista dobrou, e isso é do desenho.** O schema saiu de
+2430 para 10485 chars porque agora carrega as declarações inteiras; o turno
+passou de 981.000 para 2.082.000 µ¢. `ORCAMENTO_PADRAO` foi para 40.000.000
+(US$ 0,40 de teto por entrevista de até 12 turnos). Quem cobrou a reconta foi
+`test_orcamento_padrao_cobre_uma_entrevista_realista`, que existe exatamente
+para isso.
+
+**O que não foi verificado:** a chegada da proposta na TELA. O servidor local
+não tem `ANTHROPIC_API_KEY` e o chat recusa começar sem ela — corretamente. A
+prova de ponta a ponta exige uma entrevista real contra o modelo.
