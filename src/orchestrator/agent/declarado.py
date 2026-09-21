@@ -35,10 +35,17 @@ from typing import Any
 
 from orchestrator.agent.agent import Agent, AgentSpec, AgentTask
 from orchestrator.agent.llm import LLMClient
+from orchestrator.agent.tarefa import SaidaDaTarefa, Tarefa, TarefaSpec
 from orchestrator.agent.tools.registry import ToolRegistry
 from orchestrator.kernel.cost import Cost, CostClass
-from orchestrator.kernel.resolution import Confidence, Proposal, TraceEvent, TraceKind
-from orchestrator.kernel.work import WorkSet
+from orchestrator.kernel.resolution import (
+    Confidence,
+    Proposal,
+    Resolution,
+    TraceEvent,
+    TraceKind,
+)
+from orchestrator.kernel.work import WorkItem, WorkSet
 
 
 @dataclass(frozen=True)
@@ -196,25 +203,51 @@ def _campos(payload: Any) -> dict[str, Any]:
     )
 
 
+def _prompt_do_item(nome: str, template: str, item: WorkItem) -> str:
+    """O template do autor, preenchido com os campos do item.
+
+    EXTRAÍDO de `_units` em vez de copiado para a tarefa: duas cópias divergem,
+    e a que divergir é a que ninguém testa. A mensagem de campo ausente é a
+    parte que não pode se perder — ela nomeia o campo E lista os disponíveis,
+    que é o que permite corrigir o prompt sem abrir o payload.
+    """
+    campos = _campos(item.payload)
+    try:
+        return template.format_map(campos)
+    except KeyError as erro:
+        # Falha ALTO e nomeia o que falta. A alternativa — um `defaultdict` que
+        # devolve vazio — produziria um prompt com buracos silenciosos, e o
+        # modelo responderia sobre um item que não leu inteiro.
+        raise KeyError(
+            f"{nome!r}: o prompt cita {erro} e o payload de {item.id!r} não tem "
+            f"esse campo. disponíveis: {sorted(campos)}"
+        ) from erro
+
+
+def _ferramentas_de(
+    nome: str, declaradas: tuple[str, ...], registro: ToolRegistry
+) -> ToolRegistry:
+    """As ferramentas que a declaração pede, recortadas do registro.
+
+    `recortar` e NÃO `ToolRegistry([registro.spec(n) for n in ...])`: a segunda
+    forma perde o contexto em silêncio, e como `call` nunca levanta, toda
+    ferramenta volta como erro, o laço continua e a conta cresce.
+    """
+    desconhecidas = sorted(set(declaradas) - set(registro.names()))
+    if desconhecidas:
+        raise ValueError(
+            f"{nome!r} declara ferramenta inexistente: {desconhecidas}. "
+            f"disponíveis: {sorted(registro.names())}"
+        )
+    return registro.recortar(declaradas)
+
+
 def _units(decl: AgenteDeclarado):
     def units(work: WorkSet) -> list[AgentTask]:
-        tarefas = []
-        for item in work.of_kind(decl.kind):
-            campos = _campos(item.payload)
-            try:
-                prompt = decl.prompt.format_map(campos)
-            except KeyError as erro:
-                # Falha ALTO e nomeia o que falta. A alternativa — um
-                # `defaultdict` que devolve vazio — produziria um prompt com
-                # buracos silenciosos, e o modelo responderia sobre um item que
-                # não leu inteiro.
-                raise KeyError(
-                    f"{decl.name!r}: o prompt cita {erro} e o payload de "
-                    f"{item.id!r} não tem esse campo. disponíveis: "
-                    f"{sorted(campos)}"
-                ) from erro
-            tarefas.append(AgentTask(id=item.id, prompt=prompt))
-        return tarefas
+        return [
+            AgentTask(id=item.id, prompt=_prompt_do_item(decl.name, decl.prompt, item))
+            for item in work.of_kind(decl.kind)
+        ]
 
     return units
 
@@ -298,17 +331,7 @@ def construir_agente(
     # voltaria como erro, o laço continuaria e a conta cresceria. Mesma
     # disciplina de `grill.receita.construir`.
     registro = ToolRegistry([]) if ferramentas is None else ferramentas
-    desconhecidas = sorted(set(decl.ferramentas) - set(registro.names()))
-    if desconhecidas:
-        raise ValueError(
-            f"{decl.name!r} declara ferramenta inexistente: {desconhecidas}. "
-            f"disponíveis: {sorted(registro.names())}"
-        )
-    # `recortar` e não `ToolRegistry([registro.spec(n) for n in ...])`: a
-    # segunda forma PERDIA O CONTEXTO. Um agente composto sobre um registro
-    # ligado a dados recebia um registro desligado, e como `call` nunca levanta,
-    # toda ferramenta voltava como erro, o laço continuava e a conta crescia.
-    escolhidas = registro.recortar(decl.ferramentas)
+    escolhidas = _ferramentas_de(decl.name, decl.ferramentas, registro)
 
     return Agent(
         spec=AgentSpec(
@@ -321,6 +344,88 @@ def construir_agente(
             consome=frozenset({decl.kind}),
             parse=_parse(decl),
             abstain=_abstain(decl),
+            max_turns=decl.max_turns,
+            max_format_retries=decl.max_format_retries,
+            budget_microcents=decl.budget_microcents,
+            budget_total_microcents=decl.budget_total_microcents,
+        ),
+        client=client,
+        tools=escolhidas,
+    )
+
+
+def _transformar(decl: TarefaDeclarada):
+    """Como o texto do modelo vira o item do próximo degrau.
+
+    É a MESMA forma que `domains/redacao/_degrau` escreve três vezes à mão —
+    generalizada aqui porque, declarada, ela é sempre esta: o texto final vira
+    o payload de um item novo do kind declarado.
+    """
+
+    def transformar(
+        item_id: str, texto: str, custo: Cost, trace: list[TraceEvent]
+    ) -> SaidaDaTarefa | None:
+        if not texto.strip():
+            # Texto vazio não é transformação. `None` dispara o retry de
+            # formato de `conversar`; esgotado, o item fica no pool para o
+            # próximo degrau.
+            return None
+        rastro = tuple(trace)
+        return SaidaDaTarefa(
+            cost=custo,
+            trace=rastro,
+            resolution=Resolution(
+                item_ids=frozenset({item_id}),
+                produced_by=decl.name,
+                rule=decl.name,
+                # Sem o rastro esta resolução é uma afirmação sem fonte — a
+                # mesma regra que `kernel/resolution.py` aplica à proposta.
+                evidence={"trace": rastro},
+            ),
+            produced=(
+                WorkItem(
+                    id=f"{item_id}+{decl.produz}",
+                    kind=decl.produz,
+                    # Chaveado pelo NOME DO KIND, não por um "texto" fixo: dois
+                    # ramos de um `Parallel` que se reúnem num `Merge` trariam
+                    # `texto` os dois, e quem lê não distinguiria de qual ramo
+                    # veio. E dict, nunca string crua: `_campos` recusa payload
+                    # que não seja dict ou dataclass, então texto cru quebraria
+                    # o bloco seguinte ao montar o prompt — que é exatamente o
+                    # encadeamento que este bloco existe para permitir.
+                    payload={decl.produz: texto.strip()},
+                    origem=decl.name,
+                ),
+            ),
+        )
+
+    return transformar
+
+
+def construir_tarefa(
+    decl: TarefaDeclarada,
+    client: LLMClient,
+    ferramentas: ToolRegistry | None = None,
+) -> Tarefa:
+    """A declaração vira uma `Tarefa` de verdade. VALIDA CONSTRUINDO.
+
+    O espelho de `construir_agente`, e a `Tarefa` resultante é a MESMA que
+    `domains/redacao` monta à mão — mesmo laço, mesmo orçamento em dois níveis,
+    mesmo retry de formato. O que muda é de onde vêm `prompt_de` e
+    `transformar`.
+    """
+    registro = ToolRegistry([]) if ferramentas is None else ferramentas
+    escolhidas = _ferramentas_de(decl.name, decl.ferramentas, registro)
+
+    return Tarefa(
+        spec=TarefaSpec(
+            name=decl.name,
+            system=decl.system,
+            model=decl.model or client.model,
+            prompt_de=lambda item: _prompt_do_item(decl.name, decl.prompt, item),
+            transformar=_transformar(decl),
+            kind=decl.kind,
+            produz=decl.produz,
             max_turns=decl.max_turns,
             max_format_retries=decl.max_format_retries,
             budget_microcents=decl.budget_microcents,

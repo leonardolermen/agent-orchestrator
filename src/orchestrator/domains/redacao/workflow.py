@@ -17,13 +17,22 @@ from orchestrator.agent.llm import LLMClient
 from orchestrator.agent.tarefa import SaidaDaTarefa, Tarefa, TarefaSpec
 from orchestrator.agent.tools.registry import ToolRegistry
 from orchestrator.kernel.cost import Cost
-from orchestrator.kernel.definition import Stage, WorkflowDefinition
+from orchestrator.kernel.definition import (
+    Stage,
+    WorkflowDefinition,
+    consome_de,
+    produz_de,
+)
 from orchestrator.kernel.resolution import Resolution, TraceEvent
 from orchestrator.kernel.work import WorkItem, WorkSet
 
 
 def _degrau(
-    nome: str, system: str, produz_kind: str, instrucao: Callable[[WorkItem], str]
+    nome: str,
+    system: str,
+    consome_kind: str,
+    produz_kind: str,
+    instrucao: Callable[[WorkItem], str],
 ) -> TarefaSpec:
     """Um degrau do pipeline. Os três só diferem no prompt e no kind de saída.
 
@@ -71,6 +80,11 @@ def _degrau(
         model="claude-opus-5",
         prompt_de=instrucao,
         transformar=transformar,
+        # O grafo, dito UMA vez. Antes ele estava aqui (no `produz_kind` que
+        # `transformar` fecha) e de novo no `Stage` — a mesma afirmação em dois
+        # lugares, que é o join frágil de sempre. Agora o `Stage` deriva.
+        kind=consome_kind,
+        produz=produz_kind,
     )
 
 
@@ -78,6 +92,7 @@ def _pesquisador() -> TarefaSpec:
     return _degrau(
         "pesquisador",
         "Você levanta fatos. Responda apenas com os achados, em texto corrido.",
+        "topico",
         "achados",
         lambda item: f"Levante o que se sabe sobre: {item.payload.assunto}",
     )
@@ -87,6 +102,7 @@ def _escritor() -> TarefaSpec:
     return _degrau(
         "escritor",
         "Você escreve a partir de achados. Responda apenas com o texto.",
+        "achados",
         "rascunho",
         lambda item: f"Escreva um texto a partir destes achados:\n{item.payload}",
     )
@@ -96,6 +112,7 @@ def _revisor() -> TarefaSpec:
     return _degrau(
         "revisor",
         "Você revisa texto. Responda apenas com a versão revisada.",
+        "rascunho",
         "texto_final",
         lambda item: f"Revise este rascunho:\n{item.payload}",
     )
@@ -123,28 +140,36 @@ def definition(cliente: LLMClient) -> WorkflowDefinition:
     `consome`/`produz` são o que o motor usa para filtrar e o que o canvas usa
     para desenhar. As duas leituras vêm do MESMO objeto que executa: uma
     declaração paralela permitiria drift entre o desenho e a execução.
+
+    E agora vêm DERIVADAS, por `consome_de`/`produz_de`, em vez de escritas ao
+    lado da cascata: a `TarefaSpec` de cada degrau já declara o que consome e o
+    que produz — é o que uma tarefa COMPOSTA precisa para entrar no grafo —, e
+    repetir aqui deixaria os dois livres para divergir.
     """
+    pesquisador = Tarefa(spec=_pesquisador(), client=cliente, tools=ToolRegistry([]))
+    escritor = Tarefa(spec=_escritor(), client=cliente, tools=ToolRegistry([]))
+    revisor = Tarefa(spec=_revisor(), client=cliente, tools=ToolRegistry([]))
     return WorkflowDefinition(
         id="redacao",
         name="Redação de texto",
         stages=(
             Stage(
                 name="pesquisar",
-                cascade=(Tarefa(spec=_pesquisador(), client=cliente, tools=ToolRegistry([])),),
-                consome=frozenset({"topico"}),
-                produz=frozenset({"achados"}),
+                cascade=(pesquisador,),
+                consome=consome_de((pesquisador,)),
+                produz=produz_de((pesquisador,)),
             ),
             Stage(
                 name="escrever",
-                cascade=(Tarefa(spec=_escritor(), client=cliente, tools=ToolRegistry([])),),
-                consome=frozenset({"achados"}),
-                produz=frozenset({"rascunho"}),
+                cascade=(escritor,),
+                consome=consome_de((escritor,)),
+                produz=produz_de((escritor,)),
             ),
             Stage(
                 name="revisar",
-                cascade=(Tarefa(spec=_revisor(), client=cliente, tools=ToolRegistry([])),),
-                consome=frozenset({"rascunho"}),
-                produz=frozenset({"texto_final"}),
+                cascade=(revisor,),
+                consome=consome_de((revisor,)),
+                produz=produz_de((revisor,)),
             ),
         ),
         entrega=frozenset({"texto_final"}),

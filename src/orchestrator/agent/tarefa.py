@@ -105,6 +105,19 @@ class TarefaSpec:
     # perceber antes de acontecer de novo.
     budget_total_microcents: int = 400_000_000
 
+    # O GRAFO, declarado. Default vazio porque `domains/redacao` escrevia
+    # `consome`/`produz` no `Stage` à mão, e uma spec que não os declara
+    # precisa continuar descrevendo o que descrevia.
+    #
+    # Declarado e não inferido, pela mesma razão que `Stage.produz`: o canvas
+    # desenha a aresta ANTES de rodar, e a recusa de beco sem saída do kernel
+    # depende de saber o que sai daqui sem executar nada. Sem estes dois campos
+    # uma tarefa COMPOSTA entrava no grafo com conjuntos vazios — a composição
+    # passava e a execução recusava, sobre a escolha que a tela acabara de
+    # aceitar.
+    kind: str = ""
+    produz: str = ""
+
 
 def _abster(item_id: str, motivo: str, custo: Cost, trace: list[TraceEvent]) -> SaidaDaTarefa:
     """Não transformou: devolve o item ao pool com o motivo anexado ao rastro.
@@ -169,6 +182,8 @@ class Tarefa:
             name=self.name,
             cost_class=self.cost_class,
             summary=f"tarefa {self.spec.model}",
+            consome=frozenset({self.spec.kind}) if self.spec.kind else frozenset(),
+            produz=frozenset({self.spec.produz}) if self.spec.produz else frozenset(),
         )
 
     def resolve(self, work: WorkSet) -> ResolverOutput:
@@ -178,7 +193,14 @@ class Tarefa:
         `resolutions` não é preenchido, aqui é `proposals`.
         """
         resolucoes, produzidos, total = [], [], Cost.zero()
-        for item in work.items:
+        # O que ESTA tarefa pega. O motor filtra pelo `consome` do STAGE, que é
+        # a UNIÃO dos blocos do degrau: num degrau com dois blocos de kinds
+        # diferentes, iterar `work.items` faria esta tarefa tentar transformar o
+        # item do vizinho — `_campos` estouraria ao montar o prompt, ou o modelo
+        # receberia um item que não é dele e a conta viria igual. É o mesmo
+        # recorte que `_units` faz para o agente, com `work.of_kind`.
+        alvo = work.of_kind(self.spec.kind) if self.spec.kind else work.items
+        for item in alvo:
             if total.microcents(self.client.model) > self.spec.budget_total_microcents:
                 # I1: estourar o teto da EXECUÇÃO pula o restante do lote sem
                 # sequer chamar o modelo. Diferente de `Agent`, não há
