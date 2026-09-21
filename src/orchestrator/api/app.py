@@ -61,7 +61,11 @@ from typing import Literal
 from fastapi import FastAPI, Header, HTTPException, Query, WebSocket
 from fastapi.staticfiles import StaticFiles
 
-from orchestrator.agent.declarado import AgenteDeclarado, RegraDisponivel
+from orchestrator.agent.declarado import (
+    AgenteDeclarado,
+    RegraDisponivel,
+    TarefaDeclarada,
+)
 from orchestrator.agent.teto import ClienteComTeto
 from orchestrator.agent.tools.registry import ToolRegistry
 from orchestrator.api import ambiente as variaveis
@@ -92,6 +96,7 @@ from orchestrator.api.schemas import (
     RunJSON,
     RunRequest,
     RunResumoJSON,
+    TarefaDeclaradaJSON,
     VariavelJSON,
     VariavelRequest,
     WorkflowJSON,
@@ -103,6 +108,7 @@ from orchestrator.authoring.composicao import (
     BlocoAgente,
     BlocoCrew,
     BlocoRegra,
+    BlocoTarefa,
     Composicao,
     Etapa,
     construir_composicao,
@@ -282,6 +288,22 @@ def _declaracao(d: AgenteDeclaradoJSON) -> AgenteDeclarado:
     )
 
 
+def _declaracao_de_tarefa(d: TarefaDeclaradaJSON) -> TarefaDeclarada:
+    """Um `TarefaDeclarada` a partir do JSON. Levanta `ValueError` do DOMÍNIO —
+    prompt que não interpola, `produz` vazio, `produz == kind` —, e é
+    `_blocos_de` quem o transforma em 422 com o texto de lá."""
+    return TarefaDeclarada(
+        name=d.name,
+        system=d.system,
+        kind=d.kind,
+        produz=d.produz,
+        prompt=d.prompt,
+        ferramentas=tuple(d.ferramentas),
+        max_turns=d.max_turns,
+        budget_microcents=d.budget_microcents,
+    )
+
+
 def _blocos_de(pedidos: list[BlocoJSON]) -> list[Bloco]:
     """Os blocos de UMA etapa, do JSON para o domínio.
 
@@ -294,6 +316,12 @@ def _blocos_de(pedidos: list[BlocoJSON]) -> list[Bloco]:
     for b in pedidos:
         if b.tipo == "regra":
             blocos.append(BlocoRegra(nome=b.nome, parametros=dict(b.parametros)))
+            continue
+        if b.tipo == "tarefa":
+            try:
+                blocos.append(BlocoTarefa(declaracao=_declaracao_de_tarefa(b.declaracao)))
+            except ValueError as erro:
+                raise HTTPException(status_code=422, detail=str(erro)) from erro
             continue
         if b.tipo == "crew":
             try:

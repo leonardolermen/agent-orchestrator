@@ -510,6 +510,22 @@ class AgenteDeclaradoJSON(BaseModel):
     budget_microcents: int
 
 
+class TarefaDeclaradaJSON(BaseModel):
+    """Uma tarefa como dado. Sem `tipos` e sem `abstem_com`, e a ausência é o
+    contrato: transformar não tem vocabulário de julgamento a rotular — quem
+    não transforma simplesmente não resolve, e ausência é a mesma em todo
+    domínio."""
+
+    name: str
+    system: str
+    kind: str
+    produz: str
+    prompt: str
+    ferramentas: list[str]
+    max_turns: int
+    budget_microcents: int
+
+
 class RegraJSON(BaseModel):
     """Um bloco determinístico. O que a tela ajusta são os PARÂMETROS.
 
@@ -576,8 +592,17 @@ class BlocoCrewJSON(BaseModel):
     budget_microcents: int = Field(default=20_000_000, ge=0)
 
 
+class BlocoTarefaJSON(BaseModel):
+    """O bloco que TRANSFORMA. O `tipo` é o que separa os dois contratos:
+    `agente` propõe e nunca resolve, `tarefa` resolve e nunca propõe."""
+
+    tipo: Literal["tarefa"]
+    declaracao: TarefaDeclaradaJSON
+
+
 BlocoJSON = Annotated[
-    BlocoRegraJSON | BlocoAgenteJSON | BlocoCrewJSON, Field(discriminator="tipo")
+    BlocoRegraJSON | BlocoAgenteJSON | BlocoCrewJSON | BlocoTarefaJSON,
+    Field(discriminator="tipo"),
 ]
 
 
