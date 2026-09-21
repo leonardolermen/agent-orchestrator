@@ -102,7 +102,10 @@ def test_a_tarefa_declarada_TRANSFORMA_o_item():
     assert saida.proposals == []
     (produzido,) = saida.produced
     assert produzido.kind == "rascunho"
-    assert produzido.payload == {"rascunho": "o rascunho pronto"}
+    # O texto entra sob o nome do KIND produzido — é por ele que o degrau
+    # seguinte interpola (`{rascunho}`). Os campos de ORIGEM vão junto; quem
+    # fixa essa parte é `test_o_item_produzido_CARREGA_os_campos_de_origem`.
+    assert produzido.payload["rascunho"] == "o rascunho pronto"
     assert produzido.id == "i1+rascunho"
 
 
@@ -160,3 +163,83 @@ def test_a_tarefa_so_pega_o_KIND_que_declara():
 
     assert len(saida.resolutions) == 1
     assert len(cliente.chamadas) == 1
+
+
+def test_o_item_produzido_CARREGA_os_campos_de_origem():
+    """O degrau seguinte precisa do original para comparar com a saída.
+
+    Achado num run REAL (2026-09-21): o entrevistador propôs um revisor cujo
+    prompt cita `{titulo}` e `{corpo}` da issue para conferir o resumo contra
+    ela — a coisa certa a pedir. O item produzido carregava só `{resumo}`, e a
+    execução morria com
+
+        KeyError: 'Revisor de resumos': o prompt cita 'titulo' e o payload de
+        '1+resumo' não tem esse campo. disponíveis: ['resumo']
+
+    Não era invenção do modelo: era o formato jogando fora o item de origem. Um
+    degrau que transforma ACRESCENTA — ele não apaga o que veio antes.
+    """
+    from orchestrator.agent.declarado import construir_tarefa
+
+    tarefa = construir_tarefa(_decl(), _fake(["o rascunho pronto"]))
+
+    saida = tarefa.resolve(
+        _pool("achados", {"achados": "tres fatos", "titulo": "login quebra"})
+    )
+
+    (produzido,) = saida.produced
+    assert produzido.payload == {
+        "achados": "tres fatos",
+        "titulo": "login quebra",
+        "rascunho": "o rascunho pronto",
+    }
+
+
+def test_o_bloco_SEGUINTE_interpola_origem_E_saida():
+    """A metade que fecha o defeito: a cadeia escritor→revisor, com o revisor
+    citando os dois. É o caso do run real, reproduzido sem rede."""
+    from orchestrator.agent.declarado import (
+        AgenteDeclarado,
+        construir_agente,
+        construir_tarefa,
+    )
+
+    escritor = construir_tarefa(_decl(), _fake(["um resumo curto"]))
+    produzido = escritor.resolve(
+        _pool("achados", {"achados": "tres fatos", "titulo": "login quebra"})
+    ).produced[0]
+
+    revisor = construir_agente(
+        AgenteDeclarado(
+            name="revisor",
+            system="confira",
+            kind="rascunho",
+            prompt="Original: {titulo}\n\nProposto: {rascunho}",
+            tipos=("APROVADO", "REPROVADO"),
+            abstem_com="NAO_SEI",
+        ),
+        _fake([]),
+    )
+    from orchestrator.kernel.work import WorkSet
+
+    (unidade,) = revisor.spec.units(WorkSet(items=(produzido,)))
+
+    assert unidade.prompt == "Original: login quebra\n\nProposto: um resumo curto"
+
+
+def test_campo_de_ORIGEM_com_o_nome_do_produz_e_SOBRESCRITO():
+    """Colisão tem de ter uma resposta, e é esta: o que o degrau produziu vence.
+
+    O contrário — preservar o de origem — faria a tarefa rodar, gastar, e
+    entregar ao degrau seguinte o valor VELHO sob o nome novo: a saída do
+    modelo sumiria sem uma palavra, que é o pior desfecho possível.
+    """
+    from orchestrator.agent.declarado import construir_tarefa
+
+    tarefa = construir_tarefa(_decl(), _fake(["o novo"]))
+
+    saida = tarefa.resolve(
+        _pool("achados", {"achados": "tres fatos", "rascunho": "o velho"})
+    )
+
+    assert saida.produced[0].payload["rascunho"] == "o novo"

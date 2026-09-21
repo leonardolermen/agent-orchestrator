@@ -11,7 +11,7 @@ dele, é assunto do domínio — e nenhum código deste arquivo consegue pergunt
 """
 
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -19,6 +19,29 @@ if TYPE_CHECKING:
     # deixar explícito que `work.py` não PRECISA de `resolution.py` em tempo de
     # execução — ele só move ids, e `item_ids` é tudo que ele consulta.
     from orchestrator.kernel.resolution import Resolution
+
+
+def campos_de(payload: Any) -> dict[str, Any]:
+    """Os campos de um payload — o que um template `{campo}` pode interpolar.
+
+    Morava em `agent/declarado.py` como `_campos`, servindo só ao prompt de um
+    agente declarado. Subiu para cá quando `agent/tarefa.py` passou a precisar
+    dos mesmos campos para carregar a origem no item produzido: `declarado`
+    importa `tarefa`, então a função não podia ficar lá embaixo sem virar um
+    ciclo — ou uma segunda cópia, que é o que este repositório recusa.
+
+    É conhecimento de KERNEL e não de domínio: ler os campos de um payload não
+    supõe nada sobre o que o payload significa.
+    """
+    if is_dataclass(payload) and not isinstance(payload, type):
+        return asdict(payload)
+    if isinstance(payload, dict):
+        return dict(payload)
+    raise TypeError(
+        f"payload de tipo {type(payload).__name__} não é interpolável: um "
+        f"agente declarado monta o prompt a partir dos CAMPOS do item, então o "
+        f"payload precisa ser um dataclass ou um dict"
+    )
 
 
 @dataclass(frozen=True)

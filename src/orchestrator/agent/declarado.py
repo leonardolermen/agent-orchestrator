@@ -30,7 +30,7 @@ foi descoberta medindo; aqui ela é recusada na construção.
 
 import json
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, is_dataclass
+from dataclasses import dataclass
 from typing import Any
 
 from orchestrator.agent.agent import Agent, AgentSpec, AgentTask
@@ -45,7 +45,7 @@ from orchestrator.kernel.resolution import (
     TraceEvent,
     TraceKind,
 )
-from orchestrator.kernel.work import WorkItem, WorkSet
+from orchestrator.kernel.work import WorkItem, WorkSet, campos_de
 
 
 @dataclass(frozen=True)
@@ -191,18 +191,6 @@ class TarefaDeclarada:
                 raise ValueError(f"{nome} negativo ({valor}) nasceria estourado")
 
 
-def _campos(payload: Any) -> dict[str, Any]:
-    if is_dataclass(payload) and not isinstance(payload, type):
-        return asdict(payload)
-    if isinstance(payload, dict):
-        return dict(payload)
-    raise TypeError(
-        f"payload de tipo {type(payload).__name__} não é interpolável: um "
-        f"agente declarado monta o prompt a partir dos CAMPOS do item, então o "
-        f"payload precisa ser um dataclass ou um dict"
-    )
-
-
 def _prompt_do_item(nome: str, template: str, item: WorkItem) -> str:
     """O template do autor, preenchido com os campos do item.
 
@@ -211,7 +199,7 @@ def _prompt_do_item(nome: str, template: str, item: WorkItem) -> str:
     parte que não pode se perder — ela nomeia o campo E lista os disponíveis,
     que é o que permite corrigir o prompt sem abrir o payload.
     """
-    campos = _campos(item.payload)
+    campos = campos_de(item.payload)
     try:
         return template.format_map(campos)
     except KeyError as erro:
