@@ -214,8 +214,11 @@ não reproduz o que estava escrito.
   `"tarefa"`, e o `else` que recusa tipo desconhecido passa a listar quatro.
 - `api/schemas.py`: `TarefaDeclaradaJSON` + `BlocoTarefaJSON` na união
   discriminada. Nenhum campo opcional novo em bloco existente.
-- `api/app.py`: `_blocos_de` traduz o tipo novo; o catálogo publica que ele
-  existe.
+- `api/app.py`: `_blocos_de` traduz o tipo novo.
+- **`GET /api/catalogo` viaja com o canvas, não com esta fatia.** Quem lê o
+  catálogo é a paleta; sem tela, publicar uma lista de tarefas prontas — que
+  hoje seria vazia, porque nenhum domínio declara tarefa no `registro` — é
+  cerimônia sobre nada.
 - **`digest`**: `Composicao.version` já entra pelo conteúdo dos blocos, então um
   bloco novo muda a versão sem nada a fazer — é o que mantém dois resultados de
   benchmark comparáveis só quando mediram a mesma cascata.
