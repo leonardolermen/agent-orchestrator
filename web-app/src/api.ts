@@ -181,6 +181,18 @@ export type BlocoPedido =
       conflito: string;
     };
 
+// O que o CHAT propõe. `Receita` continua existindo para os arquivos que já
+// estão em disco; o que mudou é o que o entrevistador PRODUZ — etapas, com
+// agente e tarefa declarados na conversa em vez de escolhidos de um cardápio.
+export interface ComposicaoProposta {
+  id: string;
+  nome: string;
+  justificativa: string;
+  etapas: { nome: string; blocos: BlocoPedido[] }[];
+  entrega: string[];
+  max_rondas: number;
+}
+
 export interface ComposicaoResumo {
   id: string;
   nome: string;
