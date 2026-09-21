@@ -112,6 +112,78 @@ class AgenteDeclarado:
         return "|".join(f'"{t}"' for t in (*self.tipos, self.abstem_com))
 
 
+@dataclass(frozen=True)
+class TarefaDeclarada:
+    """Tudo que uma TAREFA é, como dado serializável. O irmão do
+    `AgenteDeclarado` para o resolver que transforma.
+
+    **Por que não um campo `produz` no `AgenteDeclarado`.** Foi o que a §6.2 do
+    spec de 2026-09-17 propôs, e o formato mudou desde então: com `produz`
+    preenchido, `tipos` e `abstem_com` deixam de significar qualquer coisa —
+    uma transformação não tem vocabulário de julgamento a rotular —, e um
+    agente com os três é um dos cruzamentos que a união discriminada de
+    `api/schemas.py` existe para recusar antes do handler rodar. O sintoma
+    seria um bloco onde metade dos campos é ignorada em silêncio conforme
+    outro campo.
+
+    Sem `tipos` e sem `abstem_com`, então, e a ausência é a mesma que
+    `tarefa.py::_abster` já justifica: "não há tipo a escolher: não transformar
+    é a ausência de resolução, e ausência é a mesma em todo domínio".
+    """
+
+    name: str
+    system: str
+    # O que consome. Mesmo papel do `kind` do agente declarado.
+    kind: str
+    # O kind que SAI. É o que liga este bloco ao próximo: o degrau seguinte
+    # declara `consome={produz}` e só roda quando houver item dele.
+    produz: str
+    # Template sobre o payload do item, como no agente declarado.
+    prompt: str
+    ferramentas: tuple[str, ...] = ()
+    model: str = ""
+    max_turns: int = 6
+    max_format_retries: int = 2
+    budget_microcents: int = 4_000_000
+    budget_total_microcents: int = 400_000_000
+
+    def __post_init__(self) -> None:
+        if not self.name.strip():
+            raise ValueError("tarefa sem nome: o trace não teria como atribuí-la")
+        if not self.kind.strip():
+            raise ValueError(
+                f"{self.name!r} não declara `kind`. sem ele a tarefa pegaria o "
+                f"pool inteiro, inclusive itens de outra natureza, e tentaria "
+                f"transformar coisa que não sabe ler"
+            )
+        if not self.produz.strip():
+            raise ValueError(
+                f"{self.name!r}: `produz` vazio. a tarefa consumiria o item sem "
+                f"entregá-lo a ninguém — o item sumiria do run, e para descartar "
+                f"de propósito existe o `filtro`"
+            )
+        if self.produz == self.kind:
+            raise ValueError(
+                f"{self.name!r}: produz o mesmo kind que consome ({self.kind!r}). "
+                f"o ramo alimentaria a si mesmo, e o degrau rodaria sobre a "
+                f"própria saída até o teto de rondas"
+            )
+        if "{" not in self.prompt:
+            raise ValueError(
+                f"{self.name!r}: o prompt não interpola campo nenhum do payload "
+                f"({self.prompt[:40]!r}...). todo item receberia o MESMO texto, "
+                f"e o modelo transformaria sem ler o item"
+            )
+        if self.max_turns < 1:
+            raise ValueError(f"max_turns precisa ser >= 1: {self.max_turns}")
+        for nome, valor in (
+            ("budget_microcents", self.budget_microcents),
+            ("budget_total_microcents", self.budget_total_microcents),
+        ):
+            if valor < 0:
+                raise ValueError(f"{nome} negativo ({valor}) nasceria estourado")
+
+
 def _campos(payload: Any) -> dict[str, Any]:
     if is_dataclass(payload) and not isinstance(payload, type):
         return asdict(payload)
