@@ -60,8 +60,10 @@ from typing import Any
 from orchestrator.agent.declarado import (
     AgenteDeclarado,
     ClienteDeValidacao,
+    TarefaDeclarada,
     ValorDeParametro,
     construir_agente,
+    construir_tarefa,
 )
 from orchestrator.agent.llm import LLMClient
 from orchestrator.domains.reconciliation.revisor import RevisorHumano
@@ -122,7 +124,25 @@ class BlocoCrew:
     budget_microcents: int = 20_000_000
 
 
-Bloco = BlocoRegra | BlocoAgente | BlocoCrew
+@dataclass(frozen=True)
+class BlocoTarefa:
+    """Um agente que TRANSFORMA: consome um kind e produz outro.
+
+    O quarto tipo da união, e não um campo `produz` no `BlocoAgente` — ver o
+    docstring de `TarefaDeclarada` para o porquê. O `tipo` do JSON passa a
+    dizer qual CONTRATO o bloco honra: `agente` propõe e nunca resolve,
+    `tarefa` resolve e nunca propõe.
+
+    É o que torna a cadeia escritor→revisor montável por dado. Medido antes
+    dele, uma composição de duas etapas com dois blocos de modelo fazia a
+    etapa 2 receber os itens ORIGINAIS — 4 chamadas sobre as mesmas issues —,
+    porque um agente declarado propõe e nunca produz.
+    """
+
+    declaracao: TarefaDeclarada
+
+
+Bloco = BlocoRegra | BlocoAgente | BlocoCrew | BlocoTarefa
 
 
 def nome_do_bloco(b: Bloco) -> str:
@@ -136,6 +156,9 @@ def nome_do_bloco(b: Bloco) -> str:
         return b.nome
     if isinstance(b, BlocoCrew):
         return b.nome
+    # `BlocoAgente` e `BlocoTarefa` caem no mesmo `return`: os dois carregam
+    # uma declaração cujo campo de nome se chama `name`. Um ramo a mais para a
+    # tarefa seria uma quarta cópia da mesma leitura.
     return b.declaracao.name
 
 
@@ -456,6 +479,11 @@ def _degrau(
                 resolvers.append(regra.construir(dict(bloco.parametros)))
         elif isinstance(bloco, BlocoCrew):
             resolvers.append(_tripulacao(bloco, cliente, ferramentas))
+        elif isinstance(bloco, BlocoTarefa):
+            # `consome`/`produz` do degrau saem de `describe()` no `return` lá
+            # embaixo, e é a `Tarefa` que os declara — sem isso este bloco
+            # entraria no grafo com conjuntos vazios.
+            resolvers.append(construir_tarefa(bloco.declaracao, cliente, ferramentas))
         else:
             # Sem checagem de `kind` AQUI, de propósito: a composição não
             # conhece a fonte. `Stage.consome` sai de `consome_de` no `return`
@@ -519,6 +547,38 @@ def _agente_de_json(d: dict[str, Any]) -> AgenteDeclarado:
     )
 
 
+def _tarefa_para_json(t: TarefaDeclarada) -> dict[str, Any]:
+    return {
+        "name": t.name,
+        "system": t.system,
+        "kind": t.kind,
+        "produz": t.produz,
+        "prompt": t.prompt,
+        "ferramentas": list(t.ferramentas),
+        "model": t.model,
+        "max_turns": t.max_turns,
+        "max_format_retries": t.max_format_retries,
+        "budget_microcents": t.budget_microcents,
+        "budget_total_microcents": t.budget_total_microcents,
+    }
+
+
+def _tarefa_de_json(d: dict[str, Any]) -> TarefaDeclarada:
+    return TarefaDeclarada(
+        name=d["name"],
+        system=d["system"],
+        kind=d["kind"],
+        produz=d["produz"],
+        prompt=d["prompt"],
+        ferramentas=tuple(d.get("ferramentas", ())),
+        model=d.get("model", ""),
+        max_turns=d.get("max_turns", 6),
+        max_format_retries=d.get("max_format_retries", 2),
+        budget_microcents=d.get("budget_microcents", 4_000_000),
+        budget_total_microcents=d.get("budget_total_microcents", 400_000_000),
+    )
+
+
 def _blocos_para_json(blocos: tuple[Bloco, ...]) -> list[dict[str, Any]]:
     saida = []
     for b in blocos:
@@ -534,6 +594,10 @@ def _blocos_para_json(blocos: tuple[Bloco, ...]) -> list[dict[str, Any]]:
                     "conflito": b.conflito,
                     "budget_microcents": b.budget_microcents,
                 }
+            )
+        elif isinstance(b, BlocoTarefa):
+            saida.append(
+                {"tipo": "tarefa", "declaracao": _tarefa_para_json(b.declaracao)}
             )
         else:
             saida.append(
@@ -583,6 +647,8 @@ def _blocos_de_json(crus: list[dict[str, Any]]) -> tuple[Bloco, ...]:
             blocos.append(BlocoRegra(nome=b["nome"], parametros=dict(b.get("parametros", {}))))
         elif b["tipo"] == "agente":
             blocos.append(BlocoAgente(declaracao=_agente_de_json(b["declaracao"])))
+        elif b["tipo"] == "tarefa":
+            blocos.append(BlocoTarefa(declaracao=_tarefa_de_json(b["declaracao"])))
         elif b["tipo"] == "crew":
             blocos.append(
                 BlocoCrew(
@@ -598,7 +664,7 @@ def _blocos_de_json(crus: list[dict[str, Any]]) -> tuple[Bloco, ...]:
             # cascata, não de um `else` que o ignora em silêncio.
             raise ValueError(
                 f"tipo de bloco desconhecido: {b['tipo']!r}. use 'regra', "
-                f"'agente' ou 'crew'"
+                f"'agente', 'crew' ou 'tarefa'"
             )
     return tuple(blocos)
 
@@ -690,6 +756,7 @@ __all__ = [
     "Bloco",
     "BlocoAgente",
     "BlocoRegra",
+    "BlocoTarefa",
     "Composicao",
     "agora",
     "caminho",
