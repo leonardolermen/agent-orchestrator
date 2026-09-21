@@ -109,6 +109,8 @@ from orchestrator.authoring.composicao import (
     listar,
 )
 from orchestrator.domains.reconciliation import ReconcileResult
+from orchestrator.domains.reconciliation.agent.ferramentas.contexto import ToolContext
+from orchestrator.domains.reconciliation.models import BANCO, CONTABIL, BankEntry, LedgerEntry
 from orchestrator.domains.reconciliation.synth.benchmark import SyntheticSource, build_benchmark
 from orchestrator.domains.reconciliation.synth.dataset import Dataset
 from orchestrator.domains.reconciliation.taxonomy import DivergenceType
@@ -953,6 +955,40 @@ def _semente() -> WorkSet:
     )
 
 
+def _contexto_de(pool: WorkSet) -> ToolContext:
+    """Os dados que as ferramentas deste run podem enxergar: o PRÓPRIO pool.
+
+    **Aqui, e não na composição**, pela mesma razão de `_conferir_kinds`: só a
+    borda tem, juntos, a fonte que vai rodar e o workflow que vai rodar.
+    `construir_composicao` não conhece fonte nenhuma, e por isso o registro
+    saía de lá como CATÁLOGO — que recusa executar, com a conta já paga.
+
+    **Filtra por KIND e por TIPO, e o segundo não é cinto e suspensório.** Um
+    CSV com `kind="banco"` entrega `dict`, não `BankEntry`; `ledger_dict` leria
+    `le.document` e estouraria com `AttributeError` de três camadas abaixo —
+    dentro de `ToolRegistry.call`, que captura e devolve `{"erro": ...}` ao
+    modelo, e o laço continuaria. `_conferir_payload` só pega esse cruzamento
+    quando ALGUM resolver declara o payload que exige, e um agente declarado
+    não declara.
+
+    Pool sem conciliação nenhuma devolve contexto VAZIO, e isso é correto: as
+    ferramentas de outros domínios (`contar_palavras`) ignoram o contexto, e o
+    que importa para elas é o registro estar LIGADO.
+    """
+    return ToolContext(
+        bank=[
+            i.payload
+            for i in pool.items
+            if i.kind == BANCO and isinstance(i.payload, BankEntry)
+        ],
+        ledger=[
+            i.payload
+            for i in pool.items
+            if i.kind == CONTABIL and isinstance(i.payload, LedgerEntry)
+        ],
+    )
+
+
 def _conferir_kinds(definicao: WorkflowDefinition, pool: WorkSet) -> None:
     """Cada resolver que declara o que consome é alimentado por esta fonte?
 
@@ -1105,7 +1141,9 @@ def _executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
     # `WorkflowContext`, e `construir` o traduz em `ClienteAusente` — o
     # sentinela que levanta se algum caminho chegar ao modelo por onde não
     # deveria existir caminho nenhum.
-    definicao = construir_definicao(fabrica, WorkflowContext(fila=fila))
+    definicao = construir_definicao(
+        fabrica, WorkflowContext(fila=fila, contexto=_contexto_de(pool))
+    )
 
     # ANTES da guarda de chave, e a ordem inverteu de propósito nesta fatia.
     #
@@ -1150,7 +1188,8 @@ def _executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
         # cascatas que nunca falam com modelo: mais barato em CPU, e mais caro
         # em tudo que importa aqui.
         definicao = construir_definicao(
-            fabrica, WorkflowContext(fila=fila, cliente=cliente)
+            fabrica,
+            WorkflowContext(fila=fila, cliente=cliente, contexto=_contexto_de(pool)),
         )
 
     # O MESMO modelo que a conversão de custo vai usar, passado explicitamente

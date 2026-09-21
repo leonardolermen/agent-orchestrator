@@ -33,7 +33,7 @@ existir — e cada um deles some do `TypeError` para dentro do type checker.
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from orchestrator.agent.llm import LLMClient
 from orchestrator.authoring.composicao import Composicao, construir_composicao
@@ -68,6 +68,21 @@ class WorkflowContext:
     # definição saía montada com a tranca e o agente levantava ao primeiro
     # turno.
     cliente: "LLMClient | None" = None
+    # Os DADOS que as ferramentas leem. Mesma história do `cliente`, um degrau
+    # adiante: um agente com ferramenta precisa de um registro LIGADO para ser
+    # construído, e `construir_composicao` não tinha por onde recebê-lo daqui.
+    #
+    # O preço de não ter: medido pela borda, um agente que declarava
+    # `contar_palavras` rodava por `/runs`, pedia a ferramenta e recebia
+    # `{"erro": "registro não ligado a dados..."}` — com 200 na resposta,
+    # `falhas: 0` e a conta paga. `ToolRegistry.call` não levanta, por desenho,
+    # então a recusa que ele escreve só é legível dentro da conversa.
+    #
+    # `Any` e não `ToolContext`: o TIPO do contexto é do domínio (o de
+    # conciliação carrega `bank`/`ledger`; as ferramentas de `swe` não leem
+    # nada), e nomeá-lo aqui puxaria `domains` para dentro da assinatura que
+    # vale para todos. É a mesma escolha que `construir_composicao` já faz.
+    contexto: Any = None
 
     @staticmethod
     def vazio() -> "WorkflowContext":
@@ -99,12 +114,17 @@ def _de_receita(receita: Receita) -> WorkflowFactory:
     segunda resposta para a mesma pergunta, e a que divergisse seria a que
     ninguém testa.
 
-    `context` (o `ToolContext` dos dados) continua no default inerte: ele é
-    insumo de FERRAMENTA, não de cliente, e ligá-lo é outra fatia.
+    `ctx.contexto` também VERBATIM, e `None` continua caindo no
+    `ToolContext([], [])` de `construir` — o mesmo default de sempre. O que
+    muda é que quem tem os dados agora tem por onde entregá-los: enquanto não
+    havia, uma receita com ferramenta de conciliação não estourava, ela
+    respondia "não achei nada" sobre listas vazias, que é pior.
     """
 
     def fabrica(ctx: WorkflowContext) -> WorkflowDefinition:
-        return construir(receita, fila=ctx.fila, cliente=ctx.cliente)
+        return construir(
+            receita, fila=ctx.fila, cliente=ctx.cliente, context=ctx.contexto
+        )
 
     return fabrica
 
@@ -117,10 +137,17 @@ def _de_composicao(composicao: Composicao) -> WorkflowFactory:
     — a tranca. O docstring de `construir_composicao` previu esta linha: "para
     que o dia em que uma composição ganhar caminho de execução seja um
     `fila=ctx.fila` a mais, e não uma segunda via de configuração".
+
+    `ctx.contexto` pela mesma regra, e aqui `None` NÃO é a tranca: é o
+    catálogo passando intacto, que recusa executar ferramenta. Quem compõe e
+    valida (`POST /api/composicoes`) quer exatamente isso; quem EXECUTA passa
+    os dados, e a diferença aparece no diff.
     """
 
     def fabrica(ctx: WorkflowContext) -> WorkflowDefinition:
-        return construir_composicao(composicao, fila=ctx.fila, cliente=ctx.cliente)
+        return construir_composicao(
+            composicao, fila=ctx.fila, cliente=ctx.cliente, contexto=ctx.contexto
+        )
 
     return fabrica
 
