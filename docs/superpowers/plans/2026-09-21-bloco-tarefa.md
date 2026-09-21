@@ -34,7 +34,7 @@
 - Consumes: nada de tarefas anteriores.
 - Produces: `TarefaDeclarada(name: str, system: str, kind: str, produz: str, prompt: str, ferramentas: tuple[str, ...] = (), model: str = "", max_turns: int = 6, max_format_retries: int = 2, budget_microcents: int = 4_000_000, budget_total_microcents: int = 400_000_000)` — dataclass frozen, levanta `ValueError` na construção.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Criar `tests/agent/test_tarefa_declarada.py`:
 
@@ -107,12 +107,12 @@ def test_orcamento_negativo_e_recusado():
         _decl(budget_microcents=-1)
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/agent/test_tarefa_declarada.py -q`
 Expected: FAIL na coleta com `ImportError: cannot import name 'TarefaDeclarada'`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Em `src/orchestrator/agent/declarado.py`, logo após a classe `AgenteDeclarado` (antes de `def _campos`):
 
@@ -190,17 +190,17 @@ class TarefaDeclarada:
                 raise ValueError(f"{nome} negativo ({valor}) nasceria estourado")
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/agent/test_tarefa_declarada.py -q`
 Expected: 6 passed.
 
-- [ ] **Step 5: Suíte e lint**
+- [x] **Step 5: Suíte e lint**
 
 Run: `.venv/Scripts/python.exe -m pytest -q && .venv/Scripts/python.exe -m ruff check src tests`
 Expected: tudo verde, `All checks passed!`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/orchestrator/agent/declarado.py tests/agent/test_tarefa_declarada.py
@@ -224,7 +224,7 @@ Corpo do commit: por que não é um campo `produz` no `AgenteDeclarado` (os cruz
   - `_prompt_do_item(nome: str, template: str, item: WorkItem) -> str` (privado, compartilhado com `_units`)
   - `_ferramentas_de(nome: str, declaradas: tuple[str, ...], registro: ToolRegistry) -> ToolRegistry` (privado, compartilhado com `construir_agente`)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Acrescentar a `tests/agent/test_tarefa_declarada.py`:
 
@@ -325,12 +325,12 @@ def test_a_tarefa_so_pega_o_KIND_que_declara():
     assert len(cliente.chamadas) == 1
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/agent/test_tarefa_declarada.py -q`
 Expected: FAIL com `ImportError: cannot import name 'construir_tarefa'`.
 
-- [ ] **Step 3: Extrair o que é comum**
+- [x] **Step 3: Extrair o que é comum**
 
 Em `src/orchestrator/agent/declarado.py`, logo depois de `_campos`:
 
@@ -395,12 +395,12 @@ E em `construir_agente`, as linhas que checam `desconhecidas` e chamam `recortar
 
 Imports a acrescentar no topo do módulo: `WorkItem` em `from orchestrator.kernel.work import WorkItem, WorkSet`.
 
-- [ ] **Step 4: Rodar a suíte para provar que a extração não mudou nada**
+- [x] **Step 4: Rodar a suíte para provar que a extração não mudou nada**
 
 Run: `.venv/Scripts/python.exe -m pytest -q`
 Expected: os testes de `tests/agent/test_declarado.py` continuam passando; só os novos de tarefa falham.
 
-- [ ] **Step 5: Write `construir_tarefa`**
+- [x] **Step 5: Write `construir_tarefa`**
 
 Ainda em `declarado.py`, depois de `construir_agente`:
 
@@ -495,7 +495,7 @@ from orchestrator.kernel.resolution import Resolution
 
 `kind`/`produz` em `TarefaSpec` e o filtro por kind em `Tarefa.resolve` são da Task 3 — os dois testes que dependem deles (`test_a_tarefa_so_pega_o_KIND_que_declara` e a derivação do grafo) só passam lá. Até então, `TarefaSpec(...)` com esses dois argumentos levanta `TypeError`.
 
-- [ ] **Step 6: Rodar — e esperar TypeError, não sucesso**
+- [x] **Step 6: Rodar — e esperar TypeError, não sucesso**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/agent/test_tarefa_declarada.py -q`
 Expected: FAIL com `TypeError: TarefaSpec.__init__() got an unexpected keyword argument 'kind'`. É o handoff para a Task 3; não invente os campos aqui.
@@ -513,7 +513,7 @@ Expected: FAIL com `TypeError: TarefaSpec.__init__() got an unexpected keyword a
 - Consumes: `construir_tarefa` (Task 2).
 - Produces: `TarefaSpec(..., kind: str = "", produz: str = "")`; `Tarefa.describe()` devolvendo `ResolverDescription(consome=frozenset({kind}), produz=frozenset({produz}))` quando declarados.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Acrescentar a `tests/agent/test_tarefa.py`:
 
@@ -574,12 +574,12 @@ def _cliente_falso(textos: list[str]):
     )
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/agent/test_tarefa.py -q`
 Expected: FAIL com `TypeError: TarefaSpec.__init__() got an unexpected keyword argument 'kind'`.
 
-- [ ] **Step 3: Implementar em `tarefa.py`**
+- [x] **Step 3: Implementar em `tarefa.py`**
 
 Em `TarefaSpec`, depois de `transformar`:
 
@@ -621,12 +621,12 @@ Em `TarefaSpec`, depois de `transformar`:
         for item in alvo:
 ```
 
-- [ ] **Step 4: Run to verify they pass**
+- [x] **Step 4: Run to verify they pass**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/agent/test_tarefa.py tests/agent/test_tarefa_declarada.py -q`
 Expected: todos passam, inclusive os cinco da Task 2.
 
-- [ ] **Step 5: `domains/redacao` para de repetir a declaração**
+- [x] **Step 5: `domains/redacao` para de repetir a declaração**
 
 Em `_degrau`, o `return TarefaSpec(...)` ganha os dois campos:
 
@@ -655,12 +655,12 @@ Em `_degrau`, o `return TarefaSpec(...)` ganha os dois campos:
 
 com `from orchestrator.kernel.definition import Stage, WorkflowDefinition, consome_de, produz_de` e cada `Tarefa` atribuída a uma variável antes. **A mesma afirmação em dois lugares é o join frágil de sempre**, e agora um dos dois é derivável.
 
-- [ ] **Step 6: Os testes de `redacao` passam SEM serem tocados**
+- [x] **Step 6: Os testes de `redacao` passam SEM serem tocados**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/domains -q`
 Expected: PASS. Se algum teste de `redacao` precisar de edição, a derivação não reproduz o que estava escrito — volte ao passo 5 em vez de editar o teste.
 
-- [ ] **Step 7: Suíte, lint e commit**
+- [x] **Step 7: Suíte, lint e commit**
 
 ```bash
 .venv/Scripts/python.exe -m pytest -q && .venv/Scripts/python.exe -m ruff check src tests
@@ -682,7 +682,7 @@ Corpo: a lacuna do `describe()` sem `consome`/`produz` (composição passa, exec
 - Consumes: `TarefaDeclarada`, `construir_tarefa` (Tasks 1–2), grafo declarado (Task 3).
 - Produces: `BlocoTarefa(declaracao: TarefaDeclarada)`; `Bloco = BlocoRegra | BlocoAgente | BlocoCrew | BlocoTarefa`; JSON `{"tipo": "tarefa", "declaracao": {...}}`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Criar `tests/authoring/test_bloco_tarefa.py`:
 
@@ -786,12 +786,12 @@ def test_uma_composicao_de_bloco_tarefa_NAO_gasta_ao_ser_validada():
     assert stage.cascade[0].cost_class is CostClass.AGENTE
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/authoring/test_bloco_tarefa.py -q`
 Expected: FAIL na coleta com `ImportError: cannot import name 'BlocoTarefa'`.
 
-- [ ] **Step 3: Implementar em `composicao.py`**
+- [x] **Step 3: Implementar em `composicao.py`**
 
 Depois de `BlocoCrew`:
 
@@ -887,12 +887,12 @@ def _tarefa_de_json(d: dict[str, Any]) -> TarefaDeclarada:
 
 Imports no topo: `TarefaDeclarada` e `construir_tarefa` de `orchestrator.agent.declarado`. E `"BlocoTarefa"` em `__all__`.
 
-- [ ] **Step 4: Run to verify they pass**
+- [x] **Step 4: Run to verify they pass**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/authoring -q`
 Expected: PASS, inclusive `test_tipo_de_bloco_desconhecido_LEVANTA_em_vez_de_sumir` em `tests/authoring/test_composicao.py`.
 
-- [ ] **Step 5: Suíte, lint e commit**
+- [x] **Step 5: Suíte, lint e commit**
 
 ```bash
 .venv/Scripts/python.exe -m pytest -q && .venv/Scripts/python.exe -m ruff check src tests
@@ -913,7 +913,7 @@ git commit -m "feat(authoring): BlocoTarefa — o quarto tipo, e a cadeia por ki
 - Consumes: tudo das Tasks 1–4.
 - Produces: `POST /api/composicoes` aceitando `{"tipo": "tarefa", "declaracao": {...}}`; nenhuma mudança em rota existente.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Criar `tests/api/test_bloco_tarefa.py`:
 
@@ -1063,12 +1063,12 @@ def test_produz_igual_ao_kind_vira_422_com_o_MOTIVO(monkeypatch):
     assert "mesmo kind" in r.json()["detail"]
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/api/test_bloco_tarefa.py -q`
 Expected: FAIL — o Pydantic recusa `"tipo": "tarefa"` na união discriminada, com 422 nomeando os três tipos que ele conhece.
 
-- [ ] **Step 3: Implementar o schema**
+- [x] **Step 3: Implementar o schema**
 
 Em `src/orchestrator/api/schemas.py`, depois de `AgenteDeclaradoJSON`:
 
@@ -1101,7 +1101,7 @@ BlocoJSON = Annotated[
 ]
 ```
 
-- [ ] **Step 4: Implementar a tradução na borda**
+- [x] **Step 4: Implementar a tradução na borda**
 
 Em `src/orchestrator/api/app.py`, ao lado de `_declaracao`:
 
@@ -1135,12 +1135,12 @@ Em `_blocos_de`, antes do trecho que trata o agente:
 
 Imports: `TarefaDeclarada` de `orchestrator.agent.declarado`, `BlocoTarefa` de `orchestrator.authoring.composicao`, `TarefaDeclaradaJSON` do bloco de `orchestrator.api.schemas` (mantendo a lista em ordem alfabética, senão `ruff` reclama de `I001`).
 
-- [ ] **Step 5: Run to verify they pass**
+- [x] **Step 5: Run to verify they pass**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/api/test_bloco_tarefa.py -q`
 Expected: 3 passed.
 
-- [ ] **Step 6: Suíte, lint, número do produto**
+- [x] **Step 6: Suíte, lint, número do produto**
 
 ```bash
 .venv/Scripts/python.exe -m pytest -q
@@ -1149,7 +1149,7 @@ Expected: 3 passed.
 ```
 Expected: suíte verde, lint limpo, `85.3%` com zero falso positivo e zero falso negativo.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/orchestrator/api tests/api/test_bloco_tarefa.py
