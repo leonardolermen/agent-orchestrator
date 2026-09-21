@@ -10,3 +10,14 @@
 # para ler, são para servir.
 web/** -text linguist-generated
 web-app/package-lock.json -text linguist-generated
+
+# O template que o Vite copia VERBATIM para `web/index.html`.
+#
+# `web/** -text` acima guarda o bundle byte a byte — e era metade da garantia.
+# A outra metade é a FONTE: `index.html` é o único arquivo que entra no bundle
+# sem passar pelo esbuild (que normaliza para LF), então ele chegava com a
+# quebra de linha da plataforma de quem buildou. Com `autocrlf=true` no
+# Windows, o bundle commitado saía com CRLF; o CI, em Linux, rebuildava com LF
+# e acusava `web/index.html | 92 +++---` — 46 linhas inseridas e 46 removidas,
+# o arquivo inteiro, sem uma linha de diferença real. Medido no run 35647602836.
+web-app/index.html text eol=lf
