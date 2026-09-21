@@ -299,6 +299,26 @@ class ItemFilaJSON(BaseModel):
     divergiu: bool = False
 
 
+class PropostaJSON(BaseModel):
+    """Uma proposta como o kernel a tem, sem vocabulário de domínio.
+
+    O irmão POBRE de `ItemFilaJSON`, e a pobreza é o ponto: aquele carrega
+    `conciliar_com` e `lancamentos`, que só existem quando o conjunto é um
+    fechamento bancário. Sobre um CSV de issues não há lançamento para casar, e
+    inventar os campos vazios diria que existem.
+
+    `item_id` e não `divergence_id`: é o nome do campo no kernel, e aqui não há
+    a fronteira de tradução que `serial.py` é para a fila de conciliação.
+    """
+
+    item_id: str
+    tipo: str
+    confianca: str
+    explicacao: str
+    evidencia: list[str]
+    acao_sugerida: str
+
+
 class FilaJSON(BaseModel):
     workflow: str
     dataset: str

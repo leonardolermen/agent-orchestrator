@@ -85,6 +85,7 @@ from orchestrator.api.schemas import (
     LancamentoJSON,
     MedidoJSON,
     ParametroJSON,
+    PropostaJSON,
     ReceitaRequest,
     RegraJSON,
     ResolverRunJSON,
@@ -1239,6 +1240,26 @@ def _executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
         # tela mostra é derivado, o que o store guarda é o fato.
         _run_store().save(run)
         _trace_store().save(coletor.trace(run))
+        # E as PROPOSTAS na fila do conjunto — a mesma que o revisor lê.
+        #
+        # Sem isto, o que o agente propôs morria com a requisição: o corpo da
+        # resposta contava (`propostas_por_tipo`) e o `StoredRun` guardava
+        # `proposed=len(...)`, um número. `gravar_proposta` tinha UM chamador em
+        # todo o `src/` — `eval/agent_eval.py`, a avaliação offline —, de modo
+        # que pelo `/runs` a fila era só lida, nunca escrita. O agente rodava,
+        # gastava, e a classificação virava histograma.
+        #
+        # DEPOIS do run e do trace de propósito: aqueles são o fato da
+        # execução, este é o trabalho que sobra para um humano. E TODAS as
+        # propostas, inclusive a abstenção: "o agente não soube" é precisamente
+        # o caso que precisa de gente, e filtrá-la aqui esconderia da fila o
+        # item que mais merece estar nela.
+        #
+        # `gravar_proposta` é first-wins por item, então reexecutar o mesmo
+        # workflow sobre o mesmo conjunto não reescreve o que o revisor já leu
+        # — a política é dela, e repeti-la aqui criaria a segunda.
+        for proposta in run.proposals:
+            fila.gravar_proposta(proposta)
     except Exception as erro:
         raise HTTPException(
             status_code=500,
@@ -1489,6 +1510,45 @@ def _item(proposta, decisao, por_id) -> ItemFilaJSON:
         autor=decisao.autor if decisao else None,
         divergiu=divergiu,
     )
+
+
+@app.get("/api/fila/{workflow_id}/propostas", response_model=list[PropostaJSON])
+def ler_propostas(workflow_id: str, ref: str = Query(...)) -> list[PropostaJSON]:
+    """O que o agente propôs sobre um conjunto, em qualquer domínio.
+
+    **Existe porque `GET /api/fila/{workflow_id}` não serve, e não é defeito
+    dela.** Aquela rota reconstrói o benchmark sintético para enriquecer cada
+    item com os lançamentos de banco e razão, e publica `tipos` de
+    `DivergenceType` — tudo certo para conciliação e sem sentido sobre um CSV
+    de issues. Generalizá-la teria feito o caso que funciona pagar por um
+    `if` a cada campo; esta responde a outra pergunta, com o tipo pobre que
+    ela merece.
+
+    **Chaveada por `ref`, porque é essa a chave do arquivo.** A fila é de
+    `(workflow, conjunto)` — não de run —, e o `ref` é o que `POST /runs`
+    devolve em `input_ref`. Chavear por `run_id` exigiria expô-lo primeiro e
+    traduzir run → ref aqui dentro, inventando uma segunda chave para o mesmo
+    arquivo.
+
+    Só as PENDENTES: decidir, hoje, é `POST /api/fila/{workflow}/{id}/decisao`,
+    que fala `DivergenceType` e `conciliar_com` — vocabulário de conciliação.
+    Enquanto não existir decisão genérica, "decidida" é um estado que só um
+    domínio alcança, e oferecer o filtro sugeriria o contrário.
+    """
+    if workflow_id not in registry(_RAIZ_RECEITAS, _RAIZ_COMPOSICOES):
+        raise HTTPException(status_code=404, detail=f"workflow desconhecido: {workflow_id}")
+    fila, _ = _abrir_fila(workflow_id, ref)
+    return [
+        PropostaJSON(
+            item_id=p.item_id,
+            tipo=str(p.tipo),
+            confianca=p.confianca.value,
+            explicacao=p.explicacao,
+            evidencia=list(p.evidencia),
+            acao_sugerida=p.acao_sugerida,
+        )
+        for p in fila.pendentes()
+    ]
 
 
 @app.get("/api/fila/{workflow_id}", response_model=FilaJSON)
