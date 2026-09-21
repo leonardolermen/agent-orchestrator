@@ -3,11 +3,11 @@ from datetime import UTC, datetime
 
 import pytest
 
+from orchestrator.domains.reconciliation.taxonomy import DivergenceType
 from orchestrator.kernel.resolution import Confidence, Proposal
 from orchestrator.review.decision import Decision, Veredito
 from orchestrator.review.fila import Fila, caminho_da_fila, dataset_id
 from orchestrator.review.serial import decisao_para_dict, proposta_para_dict
-from orchestrator.taxonomy import DivergenceType
 
 
 def _proposta(divergence_id: str, tipo=DivergenceType.DEFASAGEM_TEMPORAL) -> Proposal:
@@ -113,7 +113,10 @@ def test_primeira_proposta_vence_tambem_ao_recarregar_do_arquivo(tmp_path):
 
     f = Fila(caminho)
 
-    assert f.proposta("d-1").tipo is DivergenceType.DEFASAGEM_TEMPORAL
+    # `==` e não `is`: o que volta do arquivo é o `str` cru do JSON. `review/`
+    # deixou de coagir ao enum do domínio — a fila humana não conhece a
+    # taxonomia de conciliação, e quem compara compara por valor.
+    assert f.proposta("d-1").tipo == DivergenceType.DEFASAGEM_TEMPORAL
 
 
 def test_ultima_decisao_vence_tambem_ao_recarregar_do_arquivo(tmp_path):
@@ -200,8 +203,8 @@ def test_a_chave_da_fila_sintetica_nao_mudou():
     na frente: a mesma string. Esta igualdade é o que garante que nenhuma
     decisão humana já gravada em disco deixa de ser encontrada.
     """
+    from orchestrator.domains.reconciliation.synth.benchmark import SyntheticSource
     from orchestrator.review.fila import dataset_de_ref
-    from orchestrator.synth.benchmark import SyntheticSource
 
     assert dataset_de_ref("synth:s1-n300-t0.15") == dataset_id(1, 300, 0.15)
     # E o `ref` de VERDADE, não só a string escrita à mão acima: sem isto, um

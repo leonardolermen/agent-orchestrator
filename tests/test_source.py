@@ -1,6 +1,6 @@
 """`Source`: a origem do trabalho, com identidade reproduzível."""
 
-from orchestrator.synth.benchmark import SyntheticSource, build_benchmark
+from orchestrator.domains.reconciliation.synth.benchmark import SyntheticSource, build_benchmark
 
 
 def test_o_ref_identifica_a_ENTRADA_e_nao_a_execucao():

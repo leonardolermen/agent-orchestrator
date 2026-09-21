@@ -11,13 +11,12 @@ from typing import Any
 from orchestrator.kernel.cost import Cost
 from orchestrator.kernel.resolution import Confidence, Proposal, TraceEvent, TraceKind
 from orchestrator.review.decision import Decision, Veredito
-from orchestrator.taxonomy import DivergenceType
 
 
 def proposta_para_dict(p: Proposal) -> dict[str, Any]:
     return {
         "divergence_id": p.item_id,
-        "tipo": p.tipo.value,
+        "tipo": p.tipo,
         "explicacao": p.explicacao,
         "evidencia": list(p.evidencia),
         "confianca": p.confianca.value,
@@ -38,7 +37,11 @@ def proposta_para_dict(p: Proposal) -> dict[str, Any]:
 def proposta_de_dict(d: dict[str, Any]) -> Proposal:
     return Proposal(
         item_id=d["divergence_id"],
-        tipo=DivergenceType(d["tipo"]),
+        # `Proposal.tipo` é `str` desde o PR #6 — validar contra a taxonomia de
+        # conciliação aqui só reinstalava, na serialização, o acoplamento que a
+        # generalização tirou do tipo. Quem sabe quais valores valem é o
+        # domínio que escreveu a proposta.
+        tipo=d["tipo"],
         explicacao=d["explicacao"],
         evidencia=list(d["evidencia"]),
         confianca=Confidence(d["confianca"]),
@@ -55,7 +58,7 @@ def decisao_para_dict(d: Decision) -> dict[str, Any]:
     return {
         "divergence_id": d.divergence_id,
         "veredito": d.veredito.value,
-        "tipo": d.tipo.value if d.tipo is not None else None,
+        "tipo": d.tipo,
         # Ordenado: o JSONL é append-only e revisado por humano em diff.
         "conciliar_com": sorted(d.conciliar_com),
         "autor": d.autor,
@@ -68,7 +71,7 @@ def decisao_de_dict(d: dict[str, Any]) -> Decision:
     return Decision(
         divergence_id=d["divergence_id"],
         veredito=Veredito(d["veredito"]),
-        tipo=DivergenceType(d["tipo"]) if d["tipo"] is not None else None,
+        tipo=d["tipo"],
         conciliar_com=frozenset(d["conciliar_com"]),
         autor=d["autor"],
         quando=datetime.fromisoformat(d["quando"]),

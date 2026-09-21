@@ -2,17 +2,17 @@ from random import Random
 
 import pytest
 
-from orchestrator.dates import business_days_between
-from orchestrator.models import pool
-from orchestrator.synth.generator import generate_clean_pairs
-from orchestrator.synth.injectors import (
+from orchestrator.domains.reconciliation.dates import business_days_between
+from orchestrator.domains.reconciliation.models import pool
+from orchestrator.domains.reconciliation.synth.generator import generate_clean_pairs
+from orchestrator.domains.reconciliation.synth.injectors import (
     DefasagemTemporal,
     DevolucaoFundos,
     PagamentoAgregado,
     RetencaoImposto,
     calcular_retencao,
 )
-from orchestrator.taxonomy import DivergenceType
+from orchestrator.domains.reconciliation.taxonomy import DivergenceType
 
 
 def _par():
@@ -82,8 +82,8 @@ def test_retencao_sobra_para_o_agente():
     # A guarda que faltava. Sem ela, o injetor produzia um caso que L1 casava
     # em cheio enquanto o gabarito afirmava divergência — dois falsos positivos
     # medidos em benchmark antes de alguém notar.
-    from orchestrator.matching.exact import ExactMatcher
-    from orchestrator.matching.tolerance import ToleranceMatcher
+    from orchestrator.domains.reconciliation.resolvers.exact import ExactMatcher
+    from orchestrator.domains.reconciliation.resolvers.tolerance import ToleranceMatcher
 
     par = _par()
     r = RetencaoImposto().apply(Random(0), par)

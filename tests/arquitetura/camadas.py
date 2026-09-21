@@ -23,7 +23,7 @@ RAIZ = Path(__file__).resolve().parents[2] / "src" / "orchestrator"
 _BORDA = frozenset(
     {
         "kernel", "runtime", "storage", "observability", "agent", "human",
-        "crew", "evaluation", "domains", "authoring", "sources",
+        "crew", "evaluation", "domains", "authoring", "sources", "regras",
     }
 )
 
@@ -37,10 +37,29 @@ PERMITIDO: dict[str, frozenset[str]] = {
     "crew": frozenset({"kernel", "agent"}),
     "evaluation": frozenset({"kernel", "storage", "observability"}),
     "sources": frozenset({"kernel"}),
+    # Regras determinísticas SEM domínio: casam por nome de campo, não por tipo.
+    # Só `kernel`, igual a `sources` — se ela precisasse de `domains`, seria o
+    # defeito que ela existe para corrigir.
+    "regras": frozenset({"kernel"}),
+    # `sources` entrou quando o CATÁLOGO passou a oferecer um bloco de entrada:
+    # quem descreve "este bloco lê de um Postgres" precisa conhecer a família de
+    # fontes, como já conhece a de regras e a de agentes. A seta é do catálogo
+    # para a fonte e nunca ao contrário — `sources` continua importando só
+    # `kernel`, que é o que mantém uma fonte utilizável sem domínio nenhum.
     "domains": frozenset(
-        {"kernel", "runtime", "agent", "human", "crew", "evaluation", "storage"}
+        {"kernel", "runtime", "agent", "human", "crew", "evaluation", "storage",
+         "regras", "sources"}
     ),
-    "authoring": frozenset({"kernel", "runtime", "domains", "agent", "human"}),
+    # `authoring` compõe a partir de TODA família de resolver, então conhece
+    # todas: `agent` para o agente declarado, `regras` para os blocos
+    # determinísticos, `human` para o degrau que fecha, e `crew` desde que uma
+    # tripulação virou bloco componível. A alternativa seria um registro de
+    # fábricas no kernel para `authoring` consultar às cegas — o que troca uma
+    # seta legível por uma indireção, e esconde de quem lê o grafo quem depende
+    # de quem.
+    "authoring": frozenset(
+        {"kernel", "runtime", "domains", "agent", "human", "regras", "crew"}
+    ),
     # Bordas: podem importar tudo. São elas que compõem o produto final.
     "api": _BORDA,
     "cli": _BORDA,
@@ -53,8 +72,8 @@ PERMITIDO: dict[str, frozenset[str]] = {
 # Onde cada módulo de HOJE deveria morar na arquitetura alvo.
 #
 # Esta tabela existe porque a migração ainda não aconteceu: o diretório de hoje
-# (`matching/`, `review/`, `grill/`) não é o diretório alvo (`domains/`,
-# `human/`, `authoring/`). Ela ENCOLHE a cada PR — quando um módulo chega ao
+# (`review/`, `grill/`, `metrics.py`) não é o diretório alvo (`human/`,
+# `authoring/`, `evaluation/`). Ela ENCOLHE a cada PR — quando um módulo chega ao
 # diretório certo, a entrada sai daqui e o nome do diretório passa a responder
 # sozinho (ver `camada_de`).
 #
@@ -78,54 +97,46 @@ DESTINO: dict[str, str] = {
     # entram nesta tabela os dois vizinhos deles que vão para OUTRA camada —
     # `agent.proposal` (kernel, acima) e `agent.tools` (domains, abaixo).
     # --- humano ---
+    # O que sobrou em `review/` é a INFRAESTRUTURA da revisão: a fila
+    # append-only, o veredito e a serialização. Nenhum dos três conhece
+    # conciliação.
+    #
+    # `review.revisor` saiu daqui: `RevisorHumano` conhece divergência, lado
+    # bancário e lado contábil, e o próprio `domains/procurement` já o chamava
+    # de "o `RevisorHumano` DA CONCILIAÇÃO" — tanto que escreveu um resolver
+    # humano próprio em vez de reusá-lo. Ele mora em `domains/reconciliation/`,
+    # e a fila que ele lê continua aqui.
     "review.decision": "human",
     "review.fila": "human",
-    "review.revisor": "human",
     "review.serial": "human",
     # --- avaliação ---
     "metrics": "evaluation",
-    # `replay.py` e `assinatura.py` moram em `eval/` por PROPÓSITO de uso, mas
-    # são implementações de `LLMClient` e de `Resolver` — a camada é dada pelo
-    # que a coisa É, não por quem a usa. Mapeá-las para `evaluation` produziria
-    # violações falsas (`evaluation -> agent`) que nenhum PR deveria fechar,
-    # porque não há nada errado ali.
+    # `replay.py` mora em `eval/` por PROPÓSITO de uso, mas é uma implementação
+    # de `LLMClient` — a camada é dada pelo que a coisa É, não por quem a usa.
+    # Mapeá-lo para `evaluation` produziria uma violação falsa
+    # (`evaluation -> agent`) que nenhum PR deveria fechar, porque não há nada
+    # errado ali.
+    #
+    # `assinatura.py` seguia a mesma regra e estava mapeado para `agent`. Não
+    # era suficiente: ele não é um `Resolver` qualquer, é o investigador de
+    # CONCILIAÇÃO movido a assinatura, e a camada que a coisa É era `domains`
+    # desde sempre. Foi para `domains/reconciliation/agent/`, ao lado do
+    # investigador pago de quem ele reusa prompt e parser — e o diretório
+    # responde por ele agora.
     "eval.replay": "agent",
-    "eval.assinatura": "agent",
     # --- domínios ---
-    # `domains/procurement` e `domains/swe` NÃO aparecem aqui: o diretório
-    # `domains/` já é o nome da camada. A conciliação ainda está espalhada pela
-    # raiz do pacote e por isso precisa das entradas abaixo — ela se muda para
-    # `domains/reconciliation/` num PR próprio, que é rename puro.
+    # NENHUM domínio aparece mais aqui, e é o ponto: `domains/` responde
+    # sozinho por `procurement`, `swe`, `redacao` — e agora por `reconciliation`.
     #
-    # --- conciliação (§1.3: implementação de referência) ---
-    "models": "domains",
-    "money": "domains",
-    "dates": "domains",
-    "tax": "domains",
-    "taxonomy": "domains",
-    # A cascata padrão e a porta do domínio. `conciliacao/workflow.py` é o que
-    # quebrou a circularidade `engine <-> definition`: a definição padrão é
-    # configuração de produto, e só a camada `domains` pode conhecer motor E
-    # resolvers.
+    # A conciliação estava espalhada pela raiz do pacote (`models.py`,
+    # `taxonomy.py`, `money.py`, `dates.py`, `tax.py`, `matching/`, `synth/`,
+    # `conciliacao/`) e tinha 22 entradas nesta tabela. Ela desceu para
+    # `domains/reconciliation/`, na árvore que a §4.1 já desenhava, e a §19.5 já
+    # mandava: "migrada como qualquer outro domínio".
     #
-    # Virou PACOTE no M2: `agent/tools.py` guardava as ferramentas DE
-    # CONCILIAÇÃO dentro do pacote do agente genérico, e ocupava o nome que o
-    # `ToolRegistry` precisava. As duas coisas se resolvem com o mesmo mover.
-    "conciliacao": "domains",
-    "conciliacao.workflow": "domains",
-    "conciliacao.ferramentas": "domains",
-    "conciliacao.politica": "domains",
-    "matching.exact": "domains",
-    "matching.tolerance": "domains",
-    "matching.grouping": "domains",
-    # `build_benchmark` saiu de `cli.py` no PR #9. Nunca foi codigo de CLI: e o
-    # gerador do dataset com gabarito, e morava la so porque a CLI foi o
-    # primeiro chamador. Era a inversao nº 3 do §2.1 — a camada HTTP importando
-    # do ponto de entrada de linha de comando.
-    "synth.benchmark": "domains",
-    "synth.dataset": "domains",
-    "synth.generator": "domains",
-    "synth.injectors": "domains",
+    # O rename NÃO fechou aresta nenhuma — as 13 continuam, com outro nome. É o
+    # que se espera de um mover puro, e separar as duas coisas é o que impede um
+    # PR que só mexe em diretório de parecer que consertou acoplamento.
     # --- autoria de workflow (hoje `grill/`) ---
     # `workflows.py` é o REGISTRO: de um id para uma definição executável.
     # Fica em `authoring` porque precisa conhecer as duas fontes — o embutido

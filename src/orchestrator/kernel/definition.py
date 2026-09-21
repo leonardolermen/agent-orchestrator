@@ -71,6 +71,22 @@ def consome_de(cascade: Iterable[Resolver]) -> frozenset[str]:
     return frozenset().union(*(r.describe().consome for r in cascade))
 
 
+def produz_de(cascade: Iterable[Resolver]) -> frozenset[str]:
+    """A união do que cada resolver da cascata declara produzir.
+
+    O par simétrico de `consome_de`, e ele faltava. `Stage.produz` sempre pôde
+    ser escrito à mão — quem redige a definição em Python sabe o que a cascata
+    cria. Quem COMPÕE na tela não sabe, e por isso `authoring/composicao.py`
+    derivava `consome` dos blocos e deixava `produz` no default.
+
+    Enquanto nenhum bloco do catálogo produzia item, isso era verdade e não
+    custava nada. O bloco `condicao` — que ramifica produzindo o kind que ativa
+    o ramo — acabou com a verdade, e o sintoma sem esta função é uma composição
+    que passa e uma execução que recusa.
+    """
+    return frozenset().union(*(r.describe().produz for r in cascade))
+
+
 def Task(  # noqa: N802 — é um construtor, e o nome é o do conceito
     name: str,
     *,

@@ -1,4 +1,4 @@
-from orchestrator.tax import calcular_retencao
+from orchestrator.domains.reconciliation.tax import calcular_retencao
 
 
 def test_calcular_retencao_iss_cinco_por_cento():

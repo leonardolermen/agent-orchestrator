@@ -1,15 +1,15 @@
 from random import Random
 
-from orchestrator.conciliacao import default_resolvers, reconcile
+from orchestrator.domains.reconciliation import default_resolvers, reconcile
+from orchestrator.domains.reconciliation.models import abstencao, divergencias
+from orchestrator.domains.reconciliation.synth.benchmark import build_benchmark
+from orchestrator.domains.reconciliation.synth.generator import build_dataset, generate_clean_pairs
+from orchestrator.domains.reconciliation.synth.injectors import DefasagemTemporal, DevolucaoFundos
 from orchestrator.kernel.cost import Cost, CostClass
 from orchestrator.kernel.definition import Stage, WorkflowDefinition
 from orchestrator.kernel.resolution import InvestigationOutput, Proposal
 from orchestrator.kernel.resolver import Resolver, ResolverDescription, ResolverOutput
 from orchestrator.kernel.work import WorkSet
-from orchestrator.models import abstencao, divergencias
-from orchestrator.synth.benchmark import build_benchmark
-from orchestrator.synth.generator import build_dataset, generate_clean_pairs
-from orchestrator.synth.injectors import DefasagemTemporal, DevolucaoFundos
 
 # Benchmark pequeno com divergências garantidas: n=60 na semente 1 produz 6
 # divergências, o suficiente para os testes de pool não serem degenerados.
@@ -338,8 +338,8 @@ def test_ordenacao_e_por_stage_nao_global():
 def test_proposta_nao_remove_nada_do_pool():
     # Um resolver que só propõe não pode encolher o pool. Se encolher, o item
     # sai de divergente sem ninguém ter aprovado nada.
+    from orchestrator.domains.reconciliation.taxonomy import DivergenceType
     from orchestrator.kernel.resolution import Confidence
-    from orchestrator.taxonomy import DivergenceType
 
     class _SoPropoe:
         name = "propositor"

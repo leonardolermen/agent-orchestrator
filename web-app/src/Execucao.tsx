@@ -397,7 +397,7 @@ export function Execucao() {
           </div>
           {pago && !executavel && (
             <p className="mt-2 text-[12px] text-lacuna dark:text-noite-crew">
-              {erro ?? "esta cascata tem etapa paga e não é executável neste servidor"}
+              {erro ?? "este workflow tem etapa paga e não é executável neste servidor"}
             </p>
           )}
         </section>

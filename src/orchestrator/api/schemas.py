@@ -8,9 +8,9 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from orchestrator.domains.reconciliation.taxonomy import DivergenceType
 from orchestrator.kernel.definition import Stage, WorkflowDefinition
 from orchestrator.review.decision import Veredito
-from orchestrator.taxonomy import DivergenceType
 
 
 class ResolverJSON(BaseModel):
@@ -299,6 +299,26 @@ class ItemFilaJSON(BaseModel):
     divergiu: bool = False
 
 
+class PropostaJSON(BaseModel):
+    """Uma proposta como o kernel a tem, sem vocabulário de domínio.
+
+    O irmão POBRE de `ItemFilaJSON`, e a pobreza é o ponto: aquele carrega
+    `conciliar_com` e `lancamentos`, que só existem quando o conjunto é um
+    fechamento bancário. Sobre um CSV de issues não há lançamento para casar, e
+    inventar os campos vazios diria que existem.
+
+    `item_id` e não `divergence_id`: é o nome do campo no kernel, e aqui não há
+    a fronteira de tradução que `serial.py` é para a fila de conciliação.
+    """
+
+    item_id: str
+    tipo: str
+    confianca: str
+    explicacao: str
+    evidencia: list[str]
+    acao_sugerida: str
+
+
 class FilaJSON(BaseModel):
     workflow: str
     dataset: str
@@ -376,15 +396,25 @@ def workflow_json(definicao: WorkflowDefinition) -> WorkflowJSON:
 # ---------------------------------------------------------------------------
 
 
+# O que um parametro de regra pode valer, do lado do JSON. Espelha
+# `ValorDeParametro` com `list` no lugar de `tuple`: JSON nao tem tupla, e
+# fingir que tem faria o Pydantic recusar a propria resposta que ele serializou.
+ValorJSON = int | str | list[str]
+
+
 class ParametroJSON(BaseModel):
     nome: str
-    default: int
+    default: ValorJSON
     descricao: str
+    # A tela precisa saber a diferença entre "o default serve" e "sem isto o
+    # bloco não existe". Sem o campo, um bloco genérico apareceria igual a um
+    # já configurado e só recusaria ao compor.
+    obrigatorio: bool = False
 
 
 class ResolverReceitaJSON(BaseModel):
     nome: str
-    parametros: dict[str, int] = Field(default_factory=dict)
+    parametros: dict[str, ValorJSON] = Field(default_factory=dict)
 
 
 class ReceitaRequest(BaseModel):
@@ -410,6 +440,24 @@ class ReceitaRequest(BaseModel):
         # recusada pelo disco.
         validar_id(v)
         return v
+
+
+class VariavelJSON(BaseModel):
+    """Uma variável de ambiente do cliente. SEM o valor.
+
+    Nem mascarado: um valor mascarado ainda vaza o COMPRIMENTO, e o comprimento
+    de um token identifica o provedor. `definida` é o mesmo booleano que
+    `AmbienteJSON.tem_chave` já usa, e pela mesma razão.
+    """
+
+    nome: str
+    definida: bool
+
+
+class VariavelRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    valor: str = Field(min_length=1)
 
 
 class AmbienteJSON(BaseModel):
@@ -462,6 +510,22 @@ class AgenteDeclaradoJSON(BaseModel):
     budget_microcents: int
 
 
+class TarefaDeclaradaJSON(BaseModel):
+    """Uma tarefa como dado. Sem `tipos` e sem `abstem_com`, e a ausência é o
+    contrato: transformar não tem vocabulário de julgamento a rotular — quem
+    não transforma simplesmente não resolve, e ausência é a mesma em todo
+    domínio."""
+
+    name: str
+    system: str
+    kind: str
+    produz: str
+    prompt: str
+    ferramentas: list[str]
+    max_turns: int
+    budget_microcents: int
+
+
 class RegraJSON(BaseModel):
     """Um bloco determinístico. O que a tela ajusta são os PARÂMETROS.
 
@@ -474,6 +538,11 @@ class RegraJSON(BaseModel):
     cost_class: str
     resumo: str
     parametros: list[ParametroJSON]
+    # Como a paleta chama o bloco e em que seção o põe. Vem do catálogo, não de
+    # uma tabela no front: um de-para lá seria a segunda fonte de verdade, e um
+    # bloco novo entraria sem categoria ou com um rótulo velho.
+    rotulo: str = ""
+    categoria: str = "OTHER"
 
 
 # ---------------------------------------------------------------------------
@@ -495,7 +564,7 @@ class RegraJSON(BaseModel):
 class BlocoRegraJSON(BaseModel):
     tipo: Literal["regra"]
     nome: str
-    parametros: dict[str, int] = Field(default_factory=dict)
+    parametros: dict[str, ValorJSON] = Field(default_factory=dict)
 
 
 class BlocoAgenteJSON(BaseModel):
@@ -503,7 +572,83 @@ class BlocoAgenteJSON(BaseModel):
     declaracao: AgenteDeclaradoJSON
 
 
-BlocoJSON = Annotated[BlocoRegraJSON | BlocoAgenteJSON, Field(discriminator="tipo")]
+class BlocoCrewJSON(BaseModel):
+    """Uma TRIPULAÇÃO: vários agentes sobre o mesmo item.
+
+    Sem `abstem_com`: ele é DERIVADO dos agentes, que já o declaram cada um.
+    Aceitá-lo aqui criaria a segunda fonte de verdade, e o sintoma seria o Crew
+    chamando de desacordo duas abstenções — o caso em que ele deveria se calar.
+
+    Sem `manager`/`synthesizer` ainda: `Crew.__post_init__` recusa
+    `hierarchical` sem gerente e `sintetizar` sem sintetizador, com texto
+    escrito para ser lido, e essa recusa atravessa como 422.
+    """
+
+    tipo: Literal["crew"]
+    nome: str
+    agentes: list[AgenteDeclaradoJSON] = Field(min_length=1)
+    process: str = "sequential"
+    conflito: str = "abster"
+    budget_microcents: int = Field(default=20_000_000, ge=0)
+
+
+class BlocoTarefaJSON(BaseModel):
+    """O bloco que TRANSFORMA. O `tipo` é o que separa os dois contratos:
+    `agente` propõe e nunca resolve, `tarefa` resolve e nunca propõe."""
+
+    tipo: Literal["tarefa"]
+    declaracao: TarefaDeclaradaJSON
+
+
+BlocoJSON = Annotated[
+    BlocoRegraJSON | BlocoAgenteJSON | BlocoCrewJSON | BlocoTarefaJSON,
+    Field(discriminator="tipo"),
+]
+
+
+class GatilhoRequest(BaseModel):
+    """Criar um gatilho. O teto é OBRIGATÓRIO e é dito aqui, não no disparo.
+
+    O disparo vem de fora e não é confiável: um teto que viesse nele seria um
+    teto que quem dispara escolhe.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    workflow_id: str = Field(min_length=1)
+    teto_microcents: int = Field(ge=1)
+
+
+class GatilhoJSON(BaseModel):
+    """Um gatilho, SEM o segredo. Ele só existe uma vez, na criação."""
+
+    id: str
+    workflow_id: str
+    teto_microcents: int
+    criado_em: str
+
+
+class GatilhoCriadoJSON(GatilhoJSON):
+    """A ÚNICA resposta que carrega o segredo em claro.
+
+    Um tipo próprio, e não um campo opcional no `GatilhoJSON`: com opcional,
+    esquecer de limpá-lo numa listagem seria um vazamento silencioso. Aqui o
+    tipo da rota é o que garante que a listagem não pode carregá-lo.
+    """
+
+    segredo: str
+
+
+class EtapaJSON(BaseModel):
+    """Um degrau: os blocos que rodam sobre o mesmo pool.
+
+    Dentro dele a ordem é por CUSTO (o motor ordena); entre degraus é por DADO
+    (o kind que um produz é o que ativa o outro). Por isso não há campo de
+    ordem DENTRO da etapa e há ordem ENTRE etapas — a lista é a sequência.
+    """
+
+    nome: str
+    blocos: list[BlocoJSON] = Field(min_length=1)
 
 
 class ComposicaoRequest(BaseModel):
@@ -518,7 +663,20 @@ class ComposicaoRequest(BaseModel):
     id: str
     nome: str
     justificativa: str = ""
-    blocos: list[BlocoJSON] = Field(min_length=1)
+    # `blocos` OU `etapas`, exatamente um — o mesmo açúcar de `Composicao`.
+    # `blocos` continua valendo e é o que a tela manda para um degrau só;
+    # `min_length` saiu dele porque agora a lista pode legitimamente vir vazia,
+    # e quem cobra "pelo menos um bloco" é a composição, com a mensagem certa.
+    blocos: list[BlocoJSON] = Field(default_factory=list)
+    etapas: list[EtapaJSON] = Field(default_factory=list)
+    # Os kinds que SÃO a saída deste workflow — o `Output` da tela. Sem eles, um
+    # bloco que ramifica produz um kind que ninguém consome, e o kernel recusa
+    # por beco sem saída. É declaração e não degrau: nada roda aqui.
+    entrega: list[str] = Field(default_factory=list)
+    # O `Loop`: quantas vezes a sequência de etapas pode rodar. Teto, não
+    # contagem — o motor para sozinho no ponto fixo. `ge=1` porque zero rondas
+    # não roda degrau nenhum.
+    max_rondas: int = Field(default=1, ge=1)
 
     @field_validator("id")
     @classmethod

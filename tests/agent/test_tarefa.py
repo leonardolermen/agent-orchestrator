@@ -196,3 +196,40 @@ def test_custo_de_varios_itens_e_somado():
 
     assert len(saida.resolutions) == 2
     assert saida.cost.output_tokens == 10
+
+
+def test_a_tarefa_DECLARA_o_que_consome_e_o_que_produz():
+    """Sem isto, `consome_de`/`produz_de` derivam conjuntos VAZIOS para uma
+    tarefa composta — e `consome` vazio significa "vejo o pool inteiro". O
+    sintoma seria a composição passar na tela e a execução recusar com
+    "produziu kind não declarado", sobre uma escolha que a tela acabou de
+    aceitar: exatamente o defeito que `produz_de` foi escrita para matar.
+    """
+    from orchestrator.agent.declarado import TarefaDeclarada, construir_tarefa
+
+    tarefa = construir_tarefa(
+        TarefaDeclarada(
+            name="escritor",
+            system="escreva",
+            kind="achados",
+            produz="rascunho",
+            prompt="{achados}",
+        ),
+        FakeLLMClient([_resposta("pronto")]),
+    )
+
+    d = tarefa.describe()
+
+    assert d.consome == frozenset({"achados"})
+    assert d.produz == frozenset({"rascunho"})
+
+
+def test_uma_TarefaSpec_sem_kind_descreve_como_sempre():
+    """Default vazio mantém a mudança retrocompatível: `domains/redacao` e
+    qualquer spec escrita à mão continuam descrevendo o que descreviam."""
+    tarefa = Tarefa(spec=_spec(), client=FakeLLMClient([]), tools=ToolRegistry([]))
+
+    d = tarefa.describe()
+
+    assert d.consome == frozenset()
+    assert d.produz == frozenset()

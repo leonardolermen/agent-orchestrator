@@ -193,10 +193,13 @@ def test_laco_investigador_fala_o_protocolo_de_ferramentas_do_sdk():
     único arquivo do projeto que conhece o SDK, e por isso o único lugar que
     pode checar a forma da mensagem de saída contra o dublê do SDK.
     """
-    from orchestrator.agent.investigator import Investigator
-    from orchestrator.conciliacao.ferramentas import ToolContext
-    from orchestrator.models import Divergence
-    from orchestrator.synth.generator import build_dataset, generate_clean_pairs
+    from orchestrator.domains.reconciliation.agent.ferramentas import ToolContext
+    from orchestrator.domains.reconciliation.agent.investigator import Investigator
+    from orchestrator.domains.reconciliation.models import Divergence
+    from orchestrator.domains.reconciliation.synth.generator import (
+        build_dataset,
+        generate_clean_pairs,
+    )
 
     bloco_ferramenta = SimpleNamespace(
         type="tool_use",

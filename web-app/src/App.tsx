@@ -25,9 +25,16 @@ import {
   type Receita,
   type Regra,
   type WorkflowConstruido,
+  type ValorParametro,
 } from "./api";
 import { Chat } from "./Chat";
-import { NoResolver, classeDo, nomeDo, type DadosDoNo } from "./NoResolver";
+import {
+  NoResolver,
+  classeDo,
+  nomeDo,
+  type DadosCrew,
+  type DadosDoNo,
+} from "./NoResolver";
 import { Painel } from "./Painel";
 import { BotaoDeTema, usarTema } from "./tema";
 
@@ -38,6 +45,10 @@ const TIPOS_DE_NO = { resolver: NoResolver };
 // altura MEDIDA (`node.measured`) e só cai neste chute antes do primeiro render.
 const ESPACO = 56;
 const ALTURA_CHUTE = 150;
+// A largura de uma ETAPA. Generosa de proposito: colunas encostadas leem como
+// uma lista de duas colunas, e o que se quer ler e "primeiro esta etapa,
+// depois aquela".
+const LARGURA_COLUNA = 300;
 
 type NoDoCanvas = Node<DadosDoNo>;
 
@@ -80,17 +91,35 @@ export default function App() {
     [],
   );
 
-  const emOrdem = useMemo(
-    () =>
-      // `Array.prototype.sort` é estável desde o ES2019 e `sorted()` do Python
-      // também é — os dois concordam sem ninguém combinar. Quem GARANTE a ordem
-      // é o servidor; `test_a_ordem_enviada_e_IGNORADA` compara contra o que ele
-      // devolve, nunca contra esta função.
-      [...nos].sort(
-        (a, b) => ORDEM_CLASSE.indexOf(classeDo(a.data)) - ORDEM_CLASSE.indexOf(classeDo(b.data)),
-      ),
+  // Quantas etapas existem: DERIVADO do que os blocos dizem, nunca um estado
+  // proprio. Sem isso haveria "etapa vazia" na tela, que o servidor recusa —
+  // e a tela mostraria um degrau que nao existe na composicao.
+  const quantasEtapas = useMemo(
+    () => Math.max(1, ...nos.map((n) => n.data.etapa + 1)),
     [nos],
   );
+
+  // Os blocos de cada etapa, ordenados por CUSTO dentro dela.
+  //
+  // Os dois eixos do §2 do README, agora na tela: dentro de uma etapa a ordem e
+  // custo (quem tenta primeiro no mesmo trabalho), entre etapas e dado (quem
+  // precisa da saida de quem). Por isso etapa e COLUNA e custo e LINHA.
+  //
+  // `Array.prototype.sort` e estavel desde o ES2019 e `sorted()` do Python
+  // tambem e — os dois concordam sem ninguem combinar. Quem GARANTE a ordem e o
+  // servidor; `test_a_ordem_enviada_e_IGNORADA` compara contra o que ele
+  // devolve, nunca contra esta funcao.
+  const porEtapa = useMemo(() => {
+    const colunas: NoDoCanvas[][] = Array.from({ length: quantasEtapas }, () => []);
+    for (const n of nos) colunas[n.data.etapa]?.push(n);
+    return colunas.map((c) =>
+      [...c].sort(
+        (a, b) => ORDEM_CLASSE.indexOf(classeDo(a.data)) - ORDEM_CLASSE.indexOf(classeDo(b.data)),
+      ),
+    );
+  }, [nos, quantasEtapas]);
+
+  const emOrdem = useMemo(() => porEtapa.flat(), [porEtapa]);
 
   // As arestas ligam cada nó ao PRÓXIMO na ordem de execução, e são derivadas a
   // cada render. Por isso arrastar um nó nunca muda o sentido da seta: ela volta
@@ -99,28 +128,50 @@ export default function App() {
   // O traço da aresta acompanha o tema: `#b3ada3` sobre `#16161a` é quase
   // invisível, e uma seta que não se vê não diz em que sentido a cascata corre.
   const traco = escuro ? "#4a4a56" : "#b3ada3";
-  const arestas: Edge[] = useMemo(
-    () =>
-      emOrdem.slice(0, -1).map((a, i) => {
-        const b = emOrdem[i + 1];
-        const mudaDeClasse = classeDo(a.data) !== classeDo(b.data);
-        return {
+  const arestas: Edge[] = useMemo(() => {
+    const comum = {
+      type: "smoothstep",
+      labelStyle: { fontSize: 10, fill: escuro ? "#9a968f" : "#8f8880" },
+      labelBgStyle: { fill: escuro ? "#16161a" : "#faf9f7" },
+      labelBgPadding: [4, 2] as [number, number],
+      style: { stroke: traco, strokeWidth: 1.6 },
+      markerEnd: { type: "arrowclosed", color: traco, width: 16, height: 16 } as never,
+    };
+    const saida: Edge[] = [];
+
+    porEtapa.forEach((coluna, i) => {
+      // DENTRO da etapa: a cascata de custo. A transicao de classe e o momento
+      // em que ela age; dizer o nome dela na aresta ensina a regra sem legenda.
+      coluna.slice(0, -1).forEach((a, j) => {
+        const b = coluna[j + 1];
+        saida.push({
+          ...comum,
           id: `${a.id}->${b.id}`,
           source: a.id,
           target: b.id,
-          type: "smoothstep",
-          // A transição de classe é o momento em que a cascata age; dizer o
-          // nome dela na aresta ensina a regra sem precisar de legenda.
-          label: mudaDeClasse ? "o que sobrou" : undefined,
-          labelStyle: { fontSize: 10, fill: escuro ? "#9a968f" : "#8f8880" },
-          labelBgStyle: { fill: escuro ? "#16161a" : "#faf9f7" },
-          labelBgPadding: [4, 2] as [number, number],
-          style: { stroke: traco, strokeWidth: 1.6 },
-          markerEnd: { type: "arrowclosed", color: traco, width: 16, height: 16 } as never,
-        };
-      }),
-    [emOrdem, escuro, traco],
-  );
+          label: classeDo(a.data) !== classeDo(b.data) ? "o que sobrou" : undefined,
+        });
+      });
+      // ENTRE etapas: o dado. Sai do ULTIMO da coluna e entra no PRIMEIRO da
+      // seguinte, porque e o pool inteiro que atravessa — nao um bloco
+      // especifico falando com outro.
+      const proxima = porEtapa[i + 1];
+      const ultimo = coluna.at(-1);
+      if (proxima?.length && ultimo) {
+        saida.push({
+          ...comum,
+          id: `${ultimo.id}=>${proxima[0].id}`,
+          source: ultimo.id,
+          target: proxima[0].id,
+          label: "o que a etapa produziu",
+          style: { ...comum.style, strokeDasharray: "5 3" },
+        });
+      }
+    });
+    return saida;
+  }, [porEtapa, escuro, traco]);
+
+  const [nomesEtapa, setNomesEtapa] = useState<string[]>([]);
 
   const invalidar = () => {
     setConstruido(null);
@@ -138,24 +189,37 @@ export default function App() {
   // Arrastar não muda nenhuma das duas, então arrastar continua livre; o
   // próximo bloco acrescentado reempilha tudo, que é o comportamento coerente
   // com "o arranjo é decoração, a ordem é derivada".
-  const chaveDeLayout = nos.map((n) => `${n.id}:${n.measured?.height ?? 0}`).join("|");
+  const chaveDeLayout = nos
+    .map((n) => `${n.id}:${n.data.etapa}:${n.measured?.height ?? 0}`)
+    .join("|");
   useEffect(() => {
     setNos((atuais) => {
       if (!atuais.length) return atuais;
-      const alvo = new Map<string, number>();
-      let y = 0;
-      for (const n of [...atuais].sort(
-        (a, b) => ORDEM_CLASSE.indexOf(classeDo(a.data)) - ORDEM_CLASSE.indexOf(classeDo(b.data)),
-      )) {
-        alvo.set(n.id, y);
-        y += (n.measured?.height ?? ALTURA_CHUTE) + ESPACO;
+      const alvo = new Map<string, { x: number; y: number }>();
+      const quantas = Math.max(1, ...atuais.map((n) => n.data.etapa + 1));
+      for (let etapa = 0; etapa < quantas; etapa++) {
+        let y = 0;
+        const coluna = atuais
+          .filter((n) => n.data.etapa === etapa)
+          .sort(
+            (a, b) =>
+              ORDEM_CLASSE.indexOf(classeDo(a.data)) - ORDEM_CLASSE.indexOf(classeDo(b.data)),
+          );
+        for (const n of coluna) {
+          alvo.set(n.id, { x: etapa * LARGURA_COLUNA, y });
+          y += (n.measured?.height ?? ALTURA_CHUTE) + ESPACO;
+        }
       }
       // Sem esta comparação o efeito se realimenta: ele mudaria o estado a cada
       // render, para o mesmo valor, para sempre.
-      if (atuais.every((n) => n.position.x === 0 && n.position.y === alvo.get(n.id))) {
+      if (
+        atuais.every(
+          (n) => n.position.x === alvo.get(n.id)?.x && n.position.y === alvo.get(n.id)?.y,
+        )
+      ) {
         return atuais;
       }
-      return atuais.map((n) => ({ ...n, position: { x: 0, y: alvo.get(n.id) ?? 0 } }));
+      return atuais.map((n) => ({ ...n, position: alvo.get(n.id) ?? n.position }));
     });
   }, [chaveDeLayout]);
 
@@ -170,14 +234,44 @@ export default function App() {
     invalidar();
   };
 
+  // Bloco novo nasce na etapa do bloco SELECIONADO, ou na primeira.
+  //
+  // Nascer sempre na primeira obrigaria a mover todo bloco depois do primeiro
+  // degrau; nascer numa etapa nova faria cada clique criar um degrau. Herdar a
+  // selecao e o que faz "montar a etapa 2" ser clicar nela e ir acrescentando.
+  // O NOME de cada etapa. Vazio cai no default, e o default e posicional
+  // ("Etapa 2") porque e o que a pessoa acabou de ver na tela. O nome vai para
+  // `Stage.name` e aparece no trace — por isso e editavel, e nao derivado.
+  const nomeDaEtapa = (i: number) => nomesEtapa[i]?.trim() || `Etapa ${i + 1}`;
+  const renomearEtapa = (i: number, nome: string) => {
+    setNomesEtapa((atuais) => {
+      const novo = [...atuais];
+      novo[i] = nome;
+      return novo;
+    });
+    invalidar();
+  };
+
+  const etapaDeNascimento = () => nos.find((n) => n.selected)?.data.etapa ?? 0;
+
   const acrescentarRegra = (r: Regra) => {
-    const parametros: Record<string, number> = {};
+    const parametros: Record<string, ValorParametro> = {};
     for (const p of r.parametros) parametros[p.nome] = p.default;
-    acrescentar({ tipo: "regra", regra: r, parametros });
+    acrescentar({ tipo: "regra", regra: r, parametros, etapa: etapaDeNascimento() });
   };
 
   const acrescentarAgente = (a: AgenteDeclarado) =>
-    acrescentar({ tipo: "agente", declaracao: { ...a } });
+    acrescentar({ tipo: "agente", declaracao: { ...a }, etapa: etapaDeNascimento() });
+
+  /** Move um bloco de degrau. Etapas vazias somem sozinhas: o numero de etapas
+   *  e DERIVADO do que os blocos dizem, entao nao existe estado "etapa vazia"
+   *  para ficar inconsistente com o servidor (que recusa etapa sem bloco). */
+  const mudarEtapa = (id: string, etapa: number) => {
+    setNos((atuais) =>
+      atuais.map((n) => (n.id === id ? { ...n, data: { ...n.data, etapa } } : n)),
+    );
+    invalidar();
+  };
 
   // "Acrescente um agente", que é o que tira a tela de cardápio. O nome nasce
   // livre: `construir_composicao` recusa bloco repetido, e um `agente` chocando
@@ -194,12 +288,45 @@ export default function App() {
     acrescentarAgente(agenteEmBranco(nome));
   };
 
+  /** Uma TRIPULACAO nova, ja valida.
+   *
+   *  Nasce com os DOIS primeiros agentes do catalogo, e nao vazia: `Crew`
+   *  recusa tripulacao vazia e recusa sequencial com um agente so (isso e um
+   *  `Agent`, e pagaria classe CREW por ele). Um time invalido no canvas seria
+   *  um bloco que so diz "nao" na hora de compor — e o painel ja deixa trocar
+   *  quem esta dentro. */
+  const novoTime = () => {
+    if (!catalogo || catalogo.agentes.length < 2) return;
+    const usados = new Set(nos.map((n) => nomeDo(n.data)));
+    let nome = "time";
+    for (let i = 2; usados.has(nome); i++) nome = `time-${i}`;
+    acrescentar({
+      tipo: "crew",
+      nome,
+      agentes: catalogo.agentes.slice(0, 2).map((a) => ({ ...a })),
+      process: "sequential",
+      conflito: "abster",
+      etapa: etapaDeNascimento(),
+    });
+  };
+
+  /** Troca o que muda num time. `Partial` e nao campo a campo, pela mesma razao
+   *  do editor de agente: sao varios campos de naturezas diferentes. */
+  const mudarTime = (id: string, patch: Partial<DadosCrew>) => {
+    setNos((atuais) =>
+      atuais.map((n) =>
+        n.id === id && n.data.tipo === "crew" ? { ...n, data: { ...n.data, ...patch } } : n,
+      ),
+    );
+    invalidar();
+  };
+
   const remover = (id: string) => {
     setNos((atuais) => atuais.filter((n) => n.id !== id));
     invalidar();
   };
 
-  const mudarParametro = (id: string, param: string, valor: number) =>
+  const mudarParametro = (id: string, param: string, valor: ValorParametro) =>
     setNos((atuais) =>
       atuais.map((n) =>
         n.id === id && n.data.tipo === "regra"
@@ -222,7 +349,12 @@ export default function App() {
     invalidar();
   };
 
-  const compor = async (id: string, nome: string) => {
+  const compor = async (
+    id: string,
+    nome: string,
+    entrega: string[],
+    maxRondas: number,
+  ) => {
     setErro(null);
     setAviso(null);
     try {
@@ -234,12 +366,39 @@ export default function App() {
           // A posição no canvas NÃO vai junto: é arranjo visual, não definição.
           // Uma composição que carregasse coordenadas mudaria de versão só
           // porque alguém arrastou um nó.
-          blocos: emOrdem.map(
-            (n): BlocoPedido =>
-              n.data.tipo === "regra"
-                ? { tipo: "regra", nome: n.data.regra.nome, parametros: n.data.parametros }
-                : { tipo: "agente", declaracao: n.data.declaracao },
-          ),
+          // ETAPAS, nao mais uma lista plana. A ordem DENTRO de cada uma
+          // continua sendo ignorada pelo servidor (ele ordena por custo); a
+          // ordem ENTRE elas e significativa, e e a desta lista.
+          etapas: porEtapa.map((coluna, i) => ({
+            nome: nomeDaEtapa(i),
+            blocos: coluna.map((n): BlocoPedido => {
+              if (n.data.tipo === "regra") {
+                return {
+                  tipo: "regra",
+                  nome: n.data.regra.nome,
+                  parametros: n.data.parametros,
+                };
+              }
+              if (n.data.tipo === "crew") {
+                // Sem `abstem_com`: o servidor o deriva dos agentes. Mandar
+                // daqui seria a segunda fonte de verdade.
+                return {
+                  tipo: "crew",
+                  nome: n.data.nome,
+                  agentes: n.data.agentes,
+                  process: n.data.process,
+                  conflito: n.data.conflito,
+                };
+              }
+              return { tipo: "agente", declaracao: n.data.declaracao };
+            }),
+          })),
+          // Os kinds que SÃO a saída. Declaração, não degrau — ver o campo em
+          // `Painel.tsx`. Sem eles, um bloco que ramifica é recusado por beco
+          // sem saída, e a recusa acontece aqui, na composição, em vez de na
+          // execução.
+          entrega,
+          max_rondas: maxRondas,
         }),
       );
     } catch (e) {
@@ -273,11 +432,11 @@ export default function App() {
       const agente = catalogo.agentes.find((x) => x.name === r.nome);
       let dados: DadosDoNo | null = null;
       if (regra) {
-        const parametros: Record<string, number> = {};
+        const parametros: Record<string, ValorParametro> = {};
         for (const p of regra.parametros) parametros[p.nome] = p.default;
-        dados = { tipo: "regra", regra, parametros: { ...parametros, ...(r.parametros ?? {}) } };
+        dados = { tipo: "regra", regra, parametros: { ...parametros, ...(r.parametros ?? {}) }, etapa: 0 };
       } else if (agente) {
-        dados = { tipo: "agente", declaracao: { ...agente } };
+        dados = { tipo: "agente", declaracao: { ...agente }, etapa: 0 };
       }
       if (!dados) {
         naoColocados.push(r.nome);
@@ -309,7 +468,7 @@ export default function App() {
     <div className="flex h-screen flex-col bg-papel font-sans text-tinta dark:bg-noite-fundo dark:text-noite-tinta">
       <header className="flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-borda bg-white px-5 py-3 dark:border-noite-borda dark:bg-noite-painel">
         <div>
-          <h1 className="text-[15px] font-semibold leading-tight">Compor cascata</h1>
+          <h1 className="text-[15px] font-semibold leading-tight">Compor workflow</h1>
           <p className="max-w-[36rem] text-[11.5px] leading-snug text-neutral-500 dark:text-noite-fraca">
             Arraste os nós onde quiser. As <strong className="font-semibold">setas</strong> não são
             suas: elas seguem a classe de custo, do mais barato ao mais caro.
@@ -331,7 +490,7 @@ export default function App() {
             concordarem sobre qual dataset estavam olhando — e o P4.14 do
             DECISOES registra que essa promessa já quebrou. */}
         <a href="/" className="text-[12px] text-humano hover:underline dark:text-noite-humano">
-          ← cascata em execução
+          ← workflow em execução
         </a>
         <a
           href="/?vista=fila"
@@ -387,7 +546,7 @@ export default function App() {
               <p className="mt-1 text-[12px] text-neutral-300 dark:text-noite-fraca/70">
                 {catalogo && catalogo.regras.length === 0
                   ? "O catálogo não tem regra nenhuma: tudo passa pelo modelo."
-                  : "Uma cascata sem bloco não resolve nada."}
+                  : "Um workflow sem bloco não resolve nada."}
               </p>
             </div>
           )}
@@ -414,10 +573,16 @@ export default function App() {
           onAcrescentarRegra={acrescentarRegra}
           onAcrescentarAgente={acrescentarAgente}
           onNovoAgente={novoAgente}
+          onNovoTime={novoTime}
+          onMudarTime={mudarTime}
           onRemover={remover}
           onMudarParametro={mudarParametro}
           onMudarAgente={mudarAgente}
           onCompor={compor}
+          quantasEtapas={quantasEtapas}
+          nomeDaEtapa={nomeDaEtapa}
+          onRenomearEtapa={renomearEtapa}
+          onMudarEtapa={mudarEtapa}
           ambiente={ambiente}
           onMudarAmbiente={setAmbiente}
         />

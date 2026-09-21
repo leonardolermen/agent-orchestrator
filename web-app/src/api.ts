@@ -9,10 +9,19 @@ export type CostClass = "REGRA" | "AGENTE" | "CREW" | "HUMANO";
 // TypeScript não tem o enum, e há teste no servidor garantindo a ordem.
 export const ORDEM_CLASSE: CostClass[] = ["REGRA", "AGENTE", "CREW", "HUMANO"];
 
+// O que um parametro de regra pode valer. Era `number`, e o `number` era o teto
+// de quanto uma regra podia ser configurada: com ele a tela ajusta folga e
+// limite, e nada mais. Um bloco GENERICO recebe NOME DE CAMPO — em quais campos
+// ele casa —, e nome de campo e texto, quando nao uma lista deles.
+export type ValorParametro = number | string | string[];
+
 export interface Parametro {
   nome: string;
-  default: number;
+  default: ValorParametro;
   descricao: string;
+  // Sem isto, um bloco generico apareceria igual a um ja configurado por um
+  // dominio, e so recusaria na hora de compor.
+  obrigatorio: boolean;
 }
 
 export interface Ferramenta {
@@ -20,10 +29,23 @@ export interface Ferramenta {
   descricao: string;
 }
 
+// Uma variavel de ambiente do cliente. SEM o valor — nem mascarado: mascarado
+// ainda vaza o COMPRIMENTO, e o comprimento de um token identifica o provedor.
+export interface Variavel {
+  nome: string;
+  definida: boolean;
+}
+
 export interface Regra {
+  // A IDENTIDADE: e o que a composicao manda e o que o catalogo indexa.
   nome: string;
   cost_class: CostClass;
   resumo: string;
+  // Como a paleta chama o bloco e em que secao o poe. Vem do CATALOGO — um
+  // de-para aqui seria a segunda fonte de verdade, e um bloco novo entraria sem
+  // categoria ou com um rotulo velho.
+  rotulo: string;
+  categoria: string;
   parametros: Parametro[];
 }
 
@@ -114,7 +136,7 @@ export interface Receita {
   id: string;
   nome: string;
   justificativa: string;
-  resolvers: { nome: string; parametros?: Record<string, number> }[];
+  resolvers: { nome: string; parametros?: Record<string, ValorParametro> }[];
 }
 
 // Um bloco de composição, como o servidor o recebe. UNIÃO DISCRIMINADA por
@@ -122,8 +144,18 @@ export interface Receita {
 // `parametros?` ao lado de `declaracao?` aceitaria os quatro cruzamentos, dois
 // dos quais não significam nada.
 export type BlocoPedido =
-  | { tipo: "regra"; nome: string; parametros: Record<string, number> }
-  | { tipo: "agente"; declaracao: AgenteDeclarado };
+  | { tipo: "regra"; nome: string; parametros: Record<string, ValorParametro> }
+  | { tipo: "agente"; declaracao: AgenteDeclarado }
+  // Sem `abstem_com`: o servidor o DERIVA dos agentes, que ja o declaram cada
+  // um. Mandar daqui seria a segunda fonte de verdade, e o sintoma seria o
+  // Crew chamando de desacordo duas abstencoes.
+  | {
+      tipo: "crew";
+      nome: string;
+      agentes: AgenteDeclarado[];
+      process: string;
+      conflito: string;
+    };
 
 export interface ComposicaoResumo {
   id: string;
@@ -181,13 +213,27 @@ export const api = {
   // que obrigava a tela a perguntar o domínio antes de mostrar qualquer bloco.
   catalogo: () => pedir<Catalogo>("/api/catalogo"),
 
+  variaveis: () => pedir<Variavel[]>("/api/ambiente/variaveis"),
+
+  definirVariavel: (nome: string, valor: string) =>
+    pedir<Variavel>(`/api/ambiente/variaveis/${encodeURIComponent(nome)}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ valor }),
+    }),
+
+  removerVariavel: (nome: string) =>
+    pedir<void>(`/api/ambiente/variaveis/${encodeURIComponent(nome)}`, {
+      method: "DELETE",
+    }),
+
   ambiente: () => pedir<Ambiente>("/api/ambiente"),
 
   criarReceita: (corpo: {
     id: string;
     nome: string;
     justificativa: string;
-    resolvers: { nome: string; parametros: Record<string, number> }[];
+    resolvers: { nome: string; parametros: Record<string, ValorParametro> }[];
   }) =>
     pedir<WorkflowConstruido>("/api/receitas", {
       method: "POST",
@@ -205,7 +251,17 @@ export const api = {
     id: string;
     nome: string;
     justificativa: string;
-    blocos: BlocoPedido[];
+    // ETAPAS, nao uma lista plana. A ordem DENTRO de cada uma e ignorada pelo
+    // servidor (ele ordena por custo); a ordem ENTRE elas e significativa.
+    //
+    // `blocos` continua aceito pelo servidor como o acucar de uma etapa so — a
+    // tela nao usa mais, e o grill usa.
+    etapas: { nome: string; blocos: BlocoPedido[] }[];
+    // Os kinds que SAO a saida do workflow. Declaracao, nao degrau.
+    entrega: string[];
+    // O `Loop`: quantas vezes a sequencia de etapas pode rodar. Teto, nao
+    // contagem — o motor para sozinho no ponto fixo.
+    max_rondas: number;
   }) =>
     pedir<WorkflowConstruido>("/api/composicoes", {
       method: "POST",

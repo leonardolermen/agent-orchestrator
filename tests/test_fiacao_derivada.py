@@ -15,7 +15,7 @@ from orchestrator.authoring.composicao import (
     Composicao,
     construir_composicao,
 )
-from orchestrator.conciliacao import default_definition
+from orchestrator.domains.reconciliation import default_definition
 from orchestrator.domains.registro import CATALOGO
 from orchestrator.grill.receita import Receita, ResolverReceita, construir
 from orchestrator.kernel.definition import consome_de

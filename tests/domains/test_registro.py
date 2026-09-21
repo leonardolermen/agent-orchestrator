@@ -119,7 +119,7 @@ def test_as_ferramentas_das_TRES_origens_estao_no_MESMO_registro():
     com o registro do `swe` sozinho somado a qualquer coisa, e o defeito que
     este teste existe para pegar é justamente uma origem PERDIDA na fusão.
     """
-    from orchestrator.conciliacao.ferramentas import catalogo_de_ferramentas
+    from orchestrator.domains.reconciliation.agent.ferramentas import catalogo_de_ferramentas
     from orchestrator.domains.swe.workflow import ferramentas as ferramentas_swe
 
     nomes = set(CATALOGO.ferramentas.names())
@@ -226,7 +226,20 @@ def test_toda_REGRA_do_catalogo_CONSTROI_com_a_classe_declarada():
             with pytest.raises(ValueError, match="fila"):
                 r.construir({})
             continue
-        resolver = r.construir({})
+        if r.obrigatorios:
+            # A SEGUNDA exceção deliberada, e ela tem a mesma forma da primeira:
+            # recusar alto em vez de construir algo que parece funcionar.
+            #
+            # Um bloco genérico (`igualdade`, `tolerancia`) não sabe de que
+            # domínio é o workflow. Construir com `{}` produziria uma regra sem
+            # campo nenhum, que casa zero — indistinguível de "não havia o que
+            # casar", que é a falha silenciosa que este repositório mais teme.
+            # A recusa NOMEIA o que falta, com os nomes que a tela mostra.
+            with pytest.raises(ValueError, match="preenchido"):
+                r.construir({})
+            resolver = r.construir(_EXEMPLOS[r.nome])
+        else:
+            resolver = r.construir({})
         assert resolver.cost_class is r.cost_class, r.nome
 
 
@@ -244,8 +257,8 @@ def test_parametro_INEXISTENTE_no_resolver_explode_NOMEANDO_o_resolver():
     que travava a mesma mensagem em `grill.catalogo._param` — o `_param` que
     esta fatia removeu junto com o cardápio do grill.
     """
+    from orchestrator.domains.reconciliation.resolvers.tolerance import ToleranceMatcher
     from orchestrator.domains.registro import _param
-    from orchestrator.matching.tolerance import ToleranceMatcher
 
     with pytest.raises(ValueError, match="ToleranceMatcher não tem campo"):
         _param(ToleranceMatcher, "campo_que_nao_existe", "x")
@@ -257,8 +270,8 @@ def test_resumo_da_REGRA_bate_com_o_describe_do_resolver():
     literalmente o texto que `grill/ferramentas.py::_catalogo_em_texto` serve
     ao MODELO — um resumo desatualizado é uma instrução errada no prompt.
     """
+    from orchestrator.domains.reconciliation.revisor import RevisorHumano
     from orchestrator.review.fila import Fila
-    from orchestrator.review.revisor import RevisorHumano
 
     for r in CATALOGO.regras:
         if r.cost_class is CostClass.HUMANO:
@@ -267,7 +280,10 @@ def test_resumo_da_REGRA_bate_com_o_describe_do_resolver():
             # fila de verdade, que `describe()` nem olha.
             resolver = RevisorHumano(fila=Fila.vazia())
         else:
-            resolver = r.construir({})
+            # Bloco genérico não constrói vazio — ver `_EXEMPLOS`. O resumo dele
+            # não depende da configuração, mas construir é o único jeito de
+            # perguntar ao `describe()`.
+            resolver = r.construir(_EXEMPLOS[r.nome] if r.obrigatorios else {})
         assert resolver.describe().summary == r.resumo, r.nome
 
 
@@ -290,11 +306,18 @@ _SEM_EXIGENCIA: dict[str, type] = {}
 
 def _exigencias_esperadas() -> dict[str, dict[str, type]]:
     from orchestrator.domains.procurement.workflow import PAYLOADS as COMPRAS
-    from orchestrator.models import PAYLOADS as CONCILIACAO
+    from orchestrator.domains.reconciliation.models import PAYLOADS as CONCILIACAO
 
     return {
         # -- conciliação: leem `banco()`/`contabil()`, que devolvem tipado ----
-        "L1": CONCILIACAO,
+        #
+        # O L1 saiu desta lista, e a saída é o ganho da fatia das regras
+        # genéricas: ele deixou de ser uma classe que lê `be.document` e virou
+        # `regras.Igualdade` configurada com nomes de campo. Não exige tipo
+        # nenhum, então roda sobre o dict de um CSV — e é por isso que
+        # `test_payload_de_dict_contra_resolver_TIPADO_e_422` passou a nomear o
+        # L2 no lugar dele.
+        "L1": _SEM_EXIGENCIA,
         "L2": CONCILIACAO,
         "L3": CONCILIACAO,
         # `revisor` chama `divergencias(work)`, que lê `e.date`/`e.amount`.
@@ -302,6 +325,23 @@ def _exigencias_esperadas() -> dict[str, dict[str, type]]:
         # -- compras: leem `r.payload.item` e `f.payload.preferido` -----------
         "preferido": COMPRAS,
         "anteriores": COMPRAS,
+        # -- genéricas: leem o payload como MAPA DE CAMPOS, então não exigem
+        # tipo nenhum. É o caso que o default de `ResolverDescription.payloads`
+        # documenta, e é o que permite a MESMA regra rodar sobre a dataclass da
+        # fonte sintética e sobre o dict que um CSV entrega. Foi por virar uma
+        # destas que o L1 saiu da recusa de 422.
+        "igualdade": _SEM_EXIGENCIA,
+        "tolerancia": _SEM_EXIGENCIA,
+        # Os tres destinos leem UM campo, pelo nome que a pessoa escolheu. Mesma
+        # razao: quem le campo por nome roda sobre qualquer fonte.
+        "agrupamento": _SEM_EXIGENCIA,
+        "entrada": _SEM_EXIGENCIA,
+        "paralelo": _SEM_EXIGENCIA,
+        "juncao": _SEM_EXIGENCIA,
+        "tabela": _SEM_EXIGENCIA,
+        "filtro": _SEM_EXIGENCIA,
+        "validacao": _SEM_EXIGENCIA,
+        "condicao": _SEM_EXIGENCIA,
         # -- agentes declarados: montam o prompt a partir dos CAMPOS do item, e
         # `agent/declarado.py::_campos` aceita dataclass OU dict. Exigir tipo
         # aqui quebraria o caminho principal desta fatia — um CSV do usuário
@@ -312,11 +352,60 @@ def _exigencias_esperadas() -> dict[str, dict[str, type]]:
     }
 
 
+# Uma configuração VÁLIDA por bloco genérico, para os testes que precisam do
+# `describe()` de um resolver construído.
+#
+# Mora no teste e não no catálogo de propósito: se o catálogo carregasse um
+# exemplo, ele viraria o default na prática — a tela o ofereceria pré-preenchido
+# —, e um default plausível de domínio errado casa zero em silêncio. Que é
+# exatamente o que `ParametroDeRegra.obrigatorio` existe para impedir.
+_EXEMPLOS: dict[str, dict] = {
+    "igualdade": {
+        "esquerda": "banco",
+        "direita": "contabil",
+        "campos": ("document", "amount=net_amount"),
+    },
+    "tolerancia": {
+        "esquerda": "banco",
+        "direita": "contabil",
+        "chave": ("document",),
+        "numerico": "amount=net_amount",
+        "max_diferenca": 5,
+    },
+    # Os tres destinos compartilham o predicado, entao compartilham a forma da
+    # configuracao. So `condicao` pede mais: o kind do ramo.
+    "agrupamento": {
+        "esquerda": "banco",
+        "direita": "contabil",
+        "chave": ("supplier",),
+        "soma": "amount=net_amount",
+    },
+    "entrada": {
+        "tipo": "http",
+        "kind": "pedido",
+        "campo_id": "id",
+        "url": "https://exemplo/api",
+    },
+    "paralelo": {"kind": "banco", "ramos": ("a", "b")},
+    "juncao": {"ramos": ("a", "b"), "produz": "c"},
+    "tabela": {"kind": "banco", "campo": "document", "de_para": ("NF-1=urgente",)},
+    "filtro": {"kind": "banco", "campo": "amount", "teste": "menor", "valor": "0"},
+    "validacao": {"kind": "banco", "campo": "amount", "teste": "maior", "valor": "0"},
+    "condicao": {
+        "kind": "banco",
+        "campo": "amount",
+        "teste": "maior",
+        "valor": "0",
+        "produz": "suspeito",
+    },
+}
+
+
 def _construir(bloco):
     """O resolver de verdade, montado como quem compõe monta."""
     from orchestrator.agent.declarado import ClienteDeValidacao
+    from orchestrator.domains.reconciliation.revisor import RevisorHumano
     from orchestrator.review.fila import Fila
-    from orchestrator.review.revisor import RevisorHumano
 
     if isinstance(bloco, AgenteDeclarado):
         return construir_agente(bloco, ClienteDeValidacao(), CATALOGO.ferramentas)
@@ -324,6 +413,8 @@ def _construir(bloco):
         # `revisor` não constrói por `bloco.construir` — ver
         # `_revisor_precisa_da_fila`. A fila de verdade não muda `describe()`.
         return RevisorHumano(fila=Fila.vazia())
+    if bloco.obrigatorios:
+        return bloco.construir(_EXEMPLOS[bloco.nome])
     return bloco.construir({p.nome: p.default for p in bloco.parametros})
 
 
@@ -367,6 +458,20 @@ def test_a_tabela_de_exigencias_nao_tem_bloco_FANTASMA():
 # ---------------------------------------------------------------------------
 
 CONSOME_ESPERADO: dict[str, frozenset[str]] = {
+    # As genéricas consomem o que a CONFIGURAÇÃO disser — aqui, os kinds de
+    # `_EXEMPLOS`. É a única linha desta tabela que depende de configuração e
+    # não do resolver, e isso é a definição de bloco genérico.
+    "igualdade": frozenset({"banco", "contabil"}),
+    "tolerancia": frozenset({"banco", "contabil"}),
+    # Uma ponta so: consomem o kind que `_EXEMPLOS` configurou.
+    "agrupamento": frozenset({"banco", "contabil"}),
+    "entrada": frozenset({"inicio"}),
+    "paralelo": frozenset({"banco"}),
+    "juncao": frozenset({"a", "b"}),
+    "tabela": frozenset({"banco"}),
+    "filtro": frozenset({"banco"}),
+    "validacao": frozenset({"banco"}),
+    "condicao": frozenset({"banco"}),
     "L1": frozenset({"banco", "contabil"}),
     "L2": frozenset({"banco", "contabil"}),
     "L3": frozenset({"banco", "contabil"}),
@@ -411,11 +516,19 @@ def test_agente_DECLARADO_consome_exatamente_o_kind_que_declara():
 def test_quem_exige_tipo_exige_o_TIPO_certo_e_nao_so_um_kind_qualquer():
     """A tabela compara dicionários inteiros, então um mapeamento trocado
     (`banco -> LedgerEntry`) também morre. Esta asserção explicita isso, porque
-    é a metade da declaração que um leitor distraído ignoraria."""
-    from orchestrator.models import BANCO, CONTABIL, BankEntry, LedgerEntry
+    é a metade da declaração que um leitor distraído ignoraria.
 
-    (_, l1) = next(b for b in _blocos() if b[0] == "L1")
-    payloads = _construir(l1).describe().payloads
+    Era o L1 que servia de exemplo aqui, e não serve mais: ele virou uma regra
+    genérica e não exige tipo nenhum. O L2 assumiu o papel porque continua
+    tipado — ele conta dias úteis, que é conhecimento de domínio e não
+    configuração de campo. Trocar de exemplo é a manutenção certa; o que este
+    teste protege é a exigência de TIPO, e enquanto existir um resolver tipado
+    ela precisa de guarda.
+    """
+    from orchestrator.domains.reconciliation.models import BANCO, CONTABIL, BankEntry, LedgerEntry
+
+    (_, l2) = next(b for b in _blocos() if b[0] == "L2")
+    payloads = _construir(l2).describe().payloads
 
     assert payloads[BANCO] is BankEntry
     assert payloads[CONTABIL] is LedgerEntry

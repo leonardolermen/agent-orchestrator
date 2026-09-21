@@ -58,16 +58,23 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException, Query, WebSocket
+from fastapi import FastAPI, Header, HTTPException, Query, WebSocket
 from fastapi.staticfiles import StaticFiles
 
-from orchestrator.agent.declarado import AgenteDeclarado, RegraDisponivel
+from orchestrator.agent.declarado import (
+    AgenteDeclarado,
+    RegraDisponivel,
+    TarefaDeclarada,
+)
 from orchestrator.agent.teto import ClienteComTeto
 from orchestrator.agent.tools.registry import ToolRegistry
+from orchestrator.api import ambiente as variaveis
+from orchestrator.api import gatilhos
 from orchestrator.api.entrevista import conduzir
 from orchestrator.api.schemas import (
     AgenteDeclaradoJSON,
     AmbienteJSON,
+    BlocoJSON,
     CatalogoJSON,
     ComposicaoRequest,
     ComposicaoResumoJSON,
@@ -75,16 +82,23 @@ from orchestrator.api.schemas import (
     FerramentaJSON,
     FilaJSON,
     GapJSON,
+    GatilhoCriadoJSON,
+    GatilhoJSON,
+    GatilhoRequest,
     ItemFilaJSON,
     LancamentoJSON,
     MedidoJSON,
     ParametroJSON,
+    PropostaJSON,
     ReceitaRequest,
     RegraJSON,
     ResolverRunJSON,
     RunJSON,
     RunRequest,
     RunResumoJSON,
+    TarefaDeclaradaJSON,
+    VariavelJSON,
+    VariavelRequest,
     WorkflowJSON,
     WorkflowResumoJSON,
     workflow_json,
@@ -92,13 +106,21 @@ from orchestrator.api.schemas import (
 from orchestrator.authoring.composicao import (
     Bloco,
     BlocoAgente,
+    BlocoCrew,
     BlocoRegra,
+    BlocoTarefa,
     Composicao,
+    Etapa,
     construir_composicao,
     gravar,
     listar,
 )
-from orchestrator.conciliacao import ReconcileResult
+from orchestrator.domains.reconciliation import ReconcileResult
+from orchestrator.domains.reconciliation.agent.ferramentas.contexto import ToolContext
+from orchestrator.domains.reconciliation.models import BANCO, CONTABIL, BankEntry, LedgerEntry
+from orchestrator.domains.reconciliation.synth.benchmark import SyntheticSource, build_benchmark
+from orchestrator.domains.reconciliation.synth.dataset import Dataset
+from orchestrator.domains.reconciliation.taxonomy import DivergenceType
 from orchestrator.domains.registro import CATALOGO
 from orchestrator.grill.catalogo import MODELO_INERTE
 from orchestrator.grill.receita import Receita, ResolverReceita, construir
@@ -107,22 +129,20 @@ from orchestrator.kernel.cost import Cost, CostClass
 from orchestrator.kernel.definition import WorkflowDefinition
 from orchestrator.kernel.event import EventBus
 from orchestrator.kernel.resolution import TraceKind
-from orchestrator.kernel.run import RunState
-from orchestrator.kernel.work import WorkSet
+from orchestrator.kernel.run import Run, RunState
+from orchestrator.kernel.work import WorkItem, WorkSet
 from orchestrator.metrics import evaluate
 from orchestrator.observability.collector import SpanCollector
 from orchestrator.review.decision import Decision, Veredito, ids_de_conciliar_com
 from orchestrator.review.fila import Fila, caminho_da_fila, dataset_de_ref
 from orchestrator.runtime.engine import execute
 from orchestrator.sources.arquivo import ArquivoSource, RaizViolada
+from orchestrator.sources.bloco import INICIO
 from orchestrator.sources.erros import ErroDeFonte
 from orchestrator.sources.http import HttpSource
 from orchestrator.sources.postgres import PostgresSource
 from orchestrator.storage.jsonl.run_store import JsonlRunStore
 from orchestrator.storage.jsonl.trace_store import JsonlTraceStore
-from orchestrator.synth.benchmark import SyntheticSource, build_benchmark
-from orchestrator.synth.dataset import Dataset
-from orchestrator.taxonomy import DivergenceType
 from orchestrator.workflows import (
     WorkflowContext,
     construir_definicao,
@@ -148,6 +168,27 @@ _RAIZ_COMPOSICOES: Path | None = None
 # consumidor (`Path("data")`), esta é o próprio default. Continua sendo
 # atributo de módulo para o teste trocá-la por um `tmp_path`.
 _RAIZ_ENTRADAS = Path(__file__).resolve().parents[3] / "data" / "entradas"
+
+# Onde os gatilhos moram. `None` cai no default do módulo deles, como as raízes
+# de receita e de composição — e continua sendo atributo de módulo para o teste
+# trocá-lo por um `tmp_path`, porque um teste que gravasse gatilho na raiz de
+# verdade deixaria um SEGREDO utilizável no repositório de quem rodou a suíte.
+_RAIZ_GATILHOS: Path | None = None
+
+# Onde as variáveis do cliente moram. Mesma regra das outras raízes.
+_RAIZ_AMBIENTE: Path | None = None
+
+# As variáveis gravadas entram no ambiente do PROCESSO assim que o módulo sobe.
+#
+# No import e não num hook de startup porque quem lê `os.environ` é o bloco
+# `entrada` durante um run, e um run pode acontecer sem que o ciclo de vida do
+# FastAPI tenha rodado — a suíte usa `TestClient` direto, e a CLI importa este
+# módulo sem servidor nenhum.
+#
+# `carregar` NÃO sobrescreve o que já veio do ambiente de quem hospeda: um
+# `export` antes de subir diz algo mais forte que um arquivo, e um arquivo
+# antigo apagando isso em silêncio seria a pior surpresa possível.
+variaveis.carregar(_RAIZ_AMBIENTE)
 
 
 def _tem_chave() -> bool:
@@ -227,6 +268,88 @@ def _ferramenta_json(ferramentas: ToolRegistry, nome: str) -> FerramentaJSON:
     return FerramentaJSON(nome=nome, descricao=ferramentas.spec(nome).description)
 
 
+def _declaracao(d: AgenteDeclaradoJSON) -> AgenteDeclarado:
+    """Um `AgenteDeclarado` a partir do JSON. Levanta `ValueError` do DOMÍNIO.
+
+    Extraído porque agora há dois lugares que declaram agente — o bloco de
+    agente e o de tripulação —, e duplicar a conversão faria a recusa divergir
+    entre os dois.
+    """
+    return AgenteDeclarado(
+        name=d.name,
+        system=d.system,
+        kind=d.kind,
+        prompt=d.prompt,
+        tipos=tuple(d.tipos),
+        abstem_com=d.abstem_com,
+        ferramentas=tuple(d.ferramentas),
+        max_turns=d.max_turns,
+        budget_microcents=d.budget_microcents,
+    )
+
+
+def _declaracao_de_tarefa(d: TarefaDeclaradaJSON) -> TarefaDeclarada:
+    """Um `TarefaDeclarada` a partir do JSON. Levanta `ValueError` do DOMÍNIO —
+    prompt que não interpola, `produz` vazio, `produz == kind` —, e é
+    `_blocos_de` quem o transforma em 422 com o texto de lá."""
+    return TarefaDeclarada(
+        name=d.name,
+        system=d.system,
+        kind=d.kind,
+        produz=d.produz,
+        prompt=d.prompt,
+        ferramentas=tuple(d.ferramentas),
+        max_turns=d.max_turns,
+        budget_microcents=d.budget_microcents,
+    )
+
+
+def _blocos_de(pedidos: list[BlocoJSON]) -> list[Bloco]:
+    """Os blocos de UMA etapa, do JSON para o domínio.
+
+    Era o corpo do laço da rota, quando havia um degrau só. Virou função porque
+    agora há uma lista de etapas e cada uma tem os seus — e duplicar este
+    tratamento por etapa faria a recusa do agente declarado divergir entre a
+    primeira e as demais.
+    """
+    blocos: list[Bloco] = []
+    for b in pedidos:
+        if b.tipo == "regra":
+            blocos.append(BlocoRegra(nome=b.nome, parametros=dict(b.parametros)))
+            continue
+        if b.tipo == "tarefa":
+            try:
+                blocos.append(BlocoTarefa(declaracao=_declaracao_de_tarefa(b.declaracao)))
+            except ValueError as erro:
+                raise HTTPException(status_code=422, detail=str(erro)) from erro
+            continue
+        if b.tipo == "crew":
+            try:
+                blocos.append(
+                    BlocoCrew(
+                        nome=b.nome,
+                        agentes=tuple(_declaracao(a) for a in b.agentes),
+                        process=b.process,
+                        conflito=b.conflito,
+                        budget_microcents=b.budget_microcents,
+                    )
+                )
+            except ValueError as erro:
+                raise HTTPException(status_code=422, detail=str(erro)) from erro
+            continue
+        d = b.declaracao
+        try:
+            # `AgenteDeclarado.__post_init__` recusa vocabulário vazio, prompt
+            # que não interpola nada e `abstem_com` colidindo com um tipo. São
+            # recusas de DOMÍNIO, com texto escrito para ser lido, e viram o
+            # 422 — não um erro de schema do Pydantic, que diria "field
+            # required" onde a verdade é "isso mediria errado".
+            blocos.append(BlocoAgente(declaracao=_declaracao(d)))
+        except ValueError as erro:
+            raise HTTPException(status_code=422, detail=str(erro)) from erro
+    return blocos
+
+
 def _regra_json(r: RegraDisponivel) -> RegraJSON:
     """Todo campo é lido da `RegraDisponivel`. Nenhum digitado aqui.
 
@@ -239,8 +362,19 @@ def _regra_json(r: RegraDisponivel) -> RegraJSON:
         nome=r.nome,
         cost_class=r.cost_class.name,
         resumo=r.resumo,
+        # `or r.nome`: bloco sem rótulo aparece com o nome de identidade em vez
+        # de aparecer vazio. A tela nunca mostra um botão em branco.
+        rotulo=r.rotulo or r.nome,
+        categoria=r.categoria,
         parametros=[
-            ParametroJSON(nome=p.nome, default=p.default, descricao=p.descricao)
+            ParametroJSON(
+                nome=p.nome,
+                # `list` e não `tuple`: o JSON não tem tupla, e o Pydantic
+                # recusaria a própria resposta que serializou.
+                default=list(p.default) if isinstance(p.default, tuple) else p.default,
+                descricao=p.descricao,
+                obrigatorio=p.obrigatorio,
+            )
             for p in r.parametros
         ],
     )
@@ -287,6 +421,48 @@ def catalogo() -> CatalogoJSON:
         ],
         agentes=[_agente_json(a) for a in CATALOGO.agentes],
     )
+
+
+# -- variáveis do cliente ---------------------------------------------------
+#
+# Ver `api/ambiente.py` para a cerca do prefixo e para o que este desenho NÃO
+# resolve — em uma frase: o servidor não tem autenticação, então quem alcança a
+# porta pode escrever o segredo de qualquer cliente.
+
+
+@app.get("/api/ambiente/variaveis", response_model=list[VariavelJSON])
+def listar_variaveis() -> list[VariavelJSON]:
+    """Os nomes conhecidos e se cada um tem valor. NUNCA os valores."""
+    return [
+        VariavelJSON(nome=n, definida=variaveis.definida(n))
+        for n in variaveis.nomes(_RAIZ_AMBIENTE)
+    ]
+
+
+@app.put("/api/ambiente/variaveis/{nome}", response_model=VariavelJSON)
+def definir_variavel(nome: str, pedido: VariavelRequest) -> VariavelJSON:
+    """Define no processo E no disco.
+
+    No processo porque é o que faz o PRÓXIMO run enxergar; no disco porque um
+    cliente não reconfigura o token a cada restart do servidor.
+    """
+    try:
+        variaveis.definir(nome, pedido.valor, _RAIZ_AMBIENTE)
+    except ValueError as erro:
+        # `NomeRecusado` é `ValueError`: a cerca do prefixo e o valor vazio
+        # chegam pelo mesmo caminho, e os dois são erro de PEDIDO.
+        raise HTTPException(status_code=422, detail=str(erro)) from erro
+    return VariavelJSON(nome=nome, definida=True)
+
+
+@app.delete("/api/ambiente/variaveis/{nome}", status_code=204)
+def remover_variavel(nome: str) -> None:
+    try:
+        existia = variaveis.remover(nome, _RAIZ_AMBIENTE)
+    except ValueError as erro:
+        raise HTTPException(status_code=422, detail=str(erro)) from erro
+    if not existia:
+        raise HTTPException(status_code=404, detail=f"variável desconhecida: {nome}")
 
 
 @app.get("/api/ambiente", response_model=AmbienteJSON)
@@ -400,35 +576,7 @@ def criar_composicao(pedido: ComposicaoRequest) -> WorkflowJSON:
     módulo: compor pela web não gasta dinheiro. (A entrevista gasta, com teto, e
     é a exceção declarada no cabeçalho.)
     """
-    blocos: list[Bloco] = []
-    for b in pedido.blocos:
-        if b.tipo == "regra":
-            blocos.append(BlocoRegra(nome=b.nome, parametros=dict(b.parametros)))
-        else:
-            d = b.declaracao
-            try:
-                # `AgenteDeclarado.__post_init__` recusa vocabulário vazio,
-                # prompt que não interpola nada e `abstem_com` colidindo com um
-                # tipo. São recusas de DOMÍNIO, com texto escrito para ser lido,
-                # e viram o 422 — não um erro de schema do Pydantic, que diria
-                # "field required" onde a verdade é "isso mediria errado".
-                blocos.append(
-                    BlocoAgente(
-                        declaracao=AgenteDeclarado(
-                            name=d.name,
-                            system=d.system,
-                            kind=d.kind,
-                            prompt=d.prompt,
-                            tipos=tuple(d.tipos),
-                            abstem_com=d.abstem_com,
-                            ferramentas=tuple(d.ferramentas),
-                            max_turns=d.max_turns,
-                            budget_microcents=d.budget_microcents,
-                        )
-                    )
-                )
-            except ValueError as erro:
-                raise HTTPException(status_code=422, detail=str(erro)) from erro
+    blocos = _blocos_de(pedido.blocos)
 
     try:
         composicao = Composicao(
@@ -439,7 +587,15 @@ def criar_composicao(pedido: ComposicaoRequest) -> WorkflowJSON:
             # cliente permitiria gravar uma composição "criada" antes de outra
             # que a antecedeu.
             gerado_em=datetime.now(UTC),
-            blocos=tuple(blocos),
+            # `blocos` OU `etapas`, nunca os dois — `Composicao` recusa, e a
+            # recusa chega à tela como o 422 que ela já sabe mostrar.
+            blocos=tuple(blocos) if not pedido.etapas else (),
+            etapas=tuple(
+                Etapa(nome=e.nome, blocos=tuple(_blocos_de(e.blocos)))
+                for e in pedido.etapas
+            ),
+            entrega=tuple(pedido.entrega),
+            max_rondas=pedido.max_rondas,
         )
         definicao = construir_composicao(composicao)
     except ValueError as erro:
@@ -498,6 +654,87 @@ def obter_workflow(workflow_id: str) -> WorkflowJSON:
     # estrutural. A fila vazia é inofensiva aqui — esta rota só descreve a
     # FORMA da cascata, que não muda com o conteúdo da fila.
     return workflow_json(construir_definicao(fabrica, WorkflowContext.vazio()))
+
+
+# -- gatilhos: uma URL que dispara execução ---------------------------------
+#
+# Ver `api/gatilhos.py` para o desenho inteiro e para o que ele NÃO resolve.
+
+
+@app.post("/api/triggers", response_model=GatilhoCriadoJSON, status_code=201)
+def criar_gatilho(pedido: GatilhoRequest) -> GatilhoCriadoJSON:
+    """Cria o gatilho e mostra o segredo UMA vez.
+
+    As duas recusas acontecem aqui, na criação, e não no disparo: um gatilho que
+    existe, parece pronto e falha toda vez que alguém o chama é pior que um
+    gatilho que não nasceu.
+    """
+    fabrica = registry(_RAIZ_RECEITAS, _RAIZ_COMPOSICOES).get(pedido.workflow_id)
+    if fabrica is None:
+        raise HTTPException(
+            status_code=404, detail=f"workflow desconhecido: {pedido.workflow_id}"
+        )
+    forma = construir_definicao(fabrica, WorkflowContext.vazio())
+    if not _carrega_a_propria_entrada(forma):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"o workflow {pedido.workflow_id!r} não carrega a própria "
+                f"entrada: ele espera que quem roda escolha a fonte, e um "
+                f"disparo não tem ninguém para escolher. Acrescente um bloco "
+                f"`entrada` (Input) ao workflow"
+            ),
+        )
+    gatilho, segredo = gatilhos.criar(
+        pedido.workflow_id, pedido.teto_microcents, _RAIZ_GATILHOS
+    )
+    return GatilhoCriadoJSON(**_gatilho_json(gatilho).model_dump(), segredo=segredo)
+
+
+@app.get("/api/triggers", response_model=list[GatilhoJSON])
+def listar_gatilhos() -> list[GatilhoJSON]:
+    return [_gatilho_json(g) for g in gatilhos.listar(_RAIZ_GATILHOS)]
+
+
+@app.delete("/api/triggers/{gatilho_id}", status_code=204)
+def revogar_gatilho(gatilho_id: str) -> None:
+    """Revogar APAGA. Um gatilho inativo no disco é um segredo que continua
+    existindo, e a razão de revogar costuma ser que ele vazou."""
+    if not gatilhos.revogar(gatilho_id, _RAIZ_GATILHOS):
+        raise HTTPException(status_code=404, detail=f"gatilho desconhecido: {gatilho_id}")
+
+
+@app.post("/api/triggers/{gatilho_id}/disparar", response_model=RunJSON)
+def disparar(gatilho_id: str, authorization: str = Header(default="")) -> RunJSON:
+    """O webhook. Sem corpo: tudo que decide o run foi fixado na criação.
+
+    **404 e não 401 para gatilho inexistente**, e a diferença é deliberada: um
+    401 diria "este id existe, o segredo é que está errado", e isso transforma a
+    rota num oráculo para descobrir ids válidos.
+    """
+    gatilho = gatilhos.ler(gatilho_id, _RAIZ_GATILHOS)
+    segredo = authorization.removeprefix("Bearer ").strip()
+    # A leitura acontece antes, mas a RESPOSTA é a mesma para os dois casos —
+    # e `autoriza` roda mesmo com gatilho inexistente para não vazar, pelo
+    # TEMPO, a diferença entre "não existe" e "segredo errado".
+    ok = gatilho is not None and gatilhos.autoriza(gatilho, segredo)
+    if not ok:
+        raise HTTPException(status_code=404, detail="gatilho desconhecido ou segredo inválido")
+    return _executar(
+        gatilho.workflow_id,
+        # Corpo FIXO: o teto vem do gatilho, e a fonte não é lida porque o
+        # workflow carrega a própria entrada — foi isso que a criação exigiu.
+        RunRequest(teto_microcents=gatilho.teto_microcents),
+    )
+
+
+def _gatilho_json(g: "gatilhos.Gatilho") -> GatilhoJSON:
+    return GatilhoJSON(
+        id=g.id,
+        workflow_id=g.workflow_id,
+        teto_microcents=g.teto_microcents,
+        criado_em=g.criado_em.isoformat(),
+    )
 
 
 @app.post("/api/workflows/{workflow_id}/runs", response_model=RunJSON)
@@ -706,6 +943,81 @@ def _conferir_payload(definicao: WorkflowDefinition, pool: WorkSet, tipo_da_font
                 )
 
 
+def _itens_de(run: Run, resolver: str, plantados: set[str]) -> int:
+    """Quantos itens ESTE resolver resolveu, sem contar os que a borda plantou.
+
+    Lê de `run.resolutions` em vez de `resolved_items_by_resolver` porque só as
+    resoluções carregam os IDS — e é por id que a semente se reconhece.
+
+    Por PROVENIÊNCIA (`produced_by`) e não por identidade do resolver na
+    cascata: os dois coincidem hoje (P3.2), e aqui a pergunta é literalmente
+    "quais ids este resolver tirou do pool", que é o que a proveniência responde.
+    """
+    if not plantados:
+        return run.resolved_items_by_resolver.get(resolver, 0)
+    return sum(
+        len(r.item_ids - plantados) for r in run.resolutions if r.produced_by == resolver
+    )
+
+
+def _carrega_a_propria_entrada(definicao: WorkflowDefinition) -> bool:
+    """Algum degrau consome a semente? Então o workflow tem bloco de entrada.
+
+    Pela DECLARAÇÃO e não por `isinstance`: a borda não precisa conhecer a
+    classe `Entrada` para saber que existe uma, e um segundo bloco que leia de
+    outro lugar entra sem tocar nesta função — basta declarar que consome a
+    semente.
+    """
+    return any(INICIO in s.consome for s in definicao.stages)
+
+
+def _semente() -> WorkSet:
+    """O pool de um workflow que carrega a própria entrada: um item só.
+
+    Ele existe para que o degrau de leitura tenha o que consumir. Sem ele o
+    pool começaria vazio, e a borda recusa pool vazio — com razão: "sem item
+    não há execução, e um run concluído com zero itens seria mais um número com
+    cara de medido".
+    """
+    return WorkSet(
+        items=(WorkItem(id="inicio", kind=INICIO, payload=None, origem="borda"),)
+    )
+
+
+def _contexto_de(pool: WorkSet) -> ToolContext:
+    """Os dados que as ferramentas deste run podem enxergar: o PRÓPRIO pool.
+
+    **Aqui, e não na composição**, pela mesma razão de `_conferir_kinds`: só a
+    borda tem, juntos, a fonte que vai rodar e o workflow que vai rodar.
+    `construir_composicao` não conhece fonte nenhuma, e por isso o registro
+    saía de lá como CATÁLOGO — que recusa executar, com a conta já paga.
+
+    **Filtra por KIND e por TIPO, e o segundo não é cinto e suspensório.** Um
+    CSV com `kind="banco"` entrega `dict`, não `BankEntry`; `ledger_dict` leria
+    `le.document` e estouraria com `AttributeError` de três camadas abaixo —
+    dentro de `ToolRegistry.call`, que captura e devolve `{"erro": ...}` ao
+    modelo, e o laço continuaria. `_conferir_payload` só pega esse cruzamento
+    quando ALGUM resolver declara o payload que exige, e um agente declarado
+    não declara.
+
+    Pool sem conciliação nenhuma devolve contexto VAZIO, e isso é correto: as
+    ferramentas de outros domínios (`contar_palavras`) ignoram o contexto, e o
+    que importa para elas é o registro estar LIGADO.
+    """
+    return ToolContext(
+        bank=[
+            i.payload
+            for i in pool.items
+            if i.kind == BANCO and isinstance(i.payload, BankEntry)
+        ],
+        ledger=[
+            i.payload
+            for i in pool.items
+            if i.kind == CONTABIL and isinstance(i.payload, LedgerEntry)
+        ],
+    )
+
+
 def _conferir_kinds(definicao: WorkflowDefinition, pool: WorkSet) -> None:
     """Cada resolver que declara o que consome é alimentado por esta fonte?
 
@@ -837,13 +1149,30 @@ def _executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
     # O `ref` vem ANTES da fila porque a fila depende dele: a chave de
     # `data/fila/**` sai do `ref` da fonte (ver `dataset_de_ref`), e não mais
     # de `(seed, n, taxa)` — que uma fonte de arquivo não tem.
-    ref, pool = _ler(fonte, pedido)
+    # O workflow carrega a PRÓPRIA entrada? Então não se lê fonte nenhuma aqui:
+    # quem lê é o bloco `entrada`, e a borda só planta a semente que o faz
+    # rodar. É o que permite um run sem ninguém para escolher a fonte — o
+    # pré-requisito do `Trigger`.
+    if _carrega_a_propria_entrada(forma):
+        # `workflow:<id>` e não o `ref` da fonte sintética padrão, e a diferença
+        # importa: gravar `synth:1:300:0.15` num run cujo dado veio de uma API
+        # seria uma MENTIRA no rastro de auditoria, e esta é a linha que o
+        # `Run.input_ref` publica. Aqui a entrada é "o que o bloco leu", e o
+        # identificador estável disso é o workflow.
+        #
+        # Também é o que evita gerar 300 itens sintéticos para jogar fora a cada
+        # disparo.
+        ref, pool = f"workflow:{workflow_id}", _semente()
+    else:
+        ref, pool = _ler(fonte, pedido)
     fila, _ = _abrir_fila(workflow_id, ref)
     # A definição com a TRANCA. `cliente=None` é o default de
     # `WorkflowContext`, e `construir` o traduz em `ClienteAusente` — o
     # sentinela que levanta se algum caminho chegar ao modelo por onde não
     # deveria existir caminho nenhum.
-    definicao = construir_definicao(fabrica, WorkflowContext(fila=fila))
+    definicao = construir_definicao(
+        fabrica, WorkflowContext(fila=fila, contexto=_contexto_de(pool))
+    )
 
     # ANTES da guarda de chave, e a ordem inverteu de propósito nesta fatia.
     #
@@ -888,7 +1217,8 @@ def _executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
         # cascatas que nunca falam com modelo: mais barato em CPU, e mais caro
         # em tudo que importa aqui.
         definicao = construir_definicao(
-            fabrica, WorkflowContext(fila=fila, cliente=cliente)
+            fabrica,
+            WorkflowContext(fila=fila, cliente=cliente, contexto=_contexto_de(pool)),
         )
 
     # O MESMO modelo que a conversão de custo vai usar, passado explicitamente
@@ -938,6 +1268,26 @@ def _executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
         # tela mostra é derivado, o que o store guarda é o fato.
         _run_store().save(run)
         _trace_store().save(coletor.trace(run))
+        # E as PROPOSTAS na fila do conjunto — a mesma que o revisor lê.
+        #
+        # Sem isto, o que o agente propôs morria com a requisição: o corpo da
+        # resposta contava (`propostas_por_tipo`) e o `StoredRun` guardava
+        # `proposed=len(...)`, um número. `gravar_proposta` tinha UM chamador em
+        # todo o `src/` — `eval/agent_eval.py`, a avaliação offline —, de modo
+        # que pelo `/runs` a fila era só lida, nunca escrita. O agente rodava,
+        # gastava, e a classificação virava histograma.
+        #
+        # DEPOIS do run e do trace de propósito: aqueles são o fato da
+        # execução, este é o trabalho que sobra para um humano. E TODAS as
+        # propostas, inclusive a abstenção: "o agente não soube" é precisamente
+        # o caso que precisa de gente, e filtrá-la aqui esconderia da fila o
+        # item que mais merece estar nela.
+        #
+        # `gravar_proposta` é first-wins por item, então reexecutar o mesmo
+        # workflow sobre o mesmo conjunto não reescreve o que o revisor já leu
+        # — a política é dela, e repeti-la aqui criaria a segunda.
+        for proposta in run.proposals:
+            fila.gravar_proposta(proposta)
     except Exception as erro:
         raise HTTPException(
             status_code=500,
@@ -958,7 +1308,22 @@ def _executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
 
     # ITENS do pool, não lançamentos bancários. `bank_total` era a unidade de
     # uma fonte só; num CSV de issues não existe "lado bancário".
-    total = len(pool.items)
+    #
+    # **Todo item que EXISTIU, e não só o pool inicial.** Era `len(pool.items)`,
+    # e isso pressupunha que o pool nunca cresce. Com um bloco que produz — a
+    # `entrada` que lê um banco, a `condicao` que roteia — ele cresce: medido,
+    # um run que leu 8 pedidos de um Postgres reportou `resolvidos: -7` e
+    # lacuna de 800%, porque o denominador era 1 (a semente) e sobraram 8.
+    #
+    # A SEMENTE sai da conta, e não é detalhe de apresentação. Ela é máquina, e
+    # quem lê a tela conta PEDIDOS: com ela dentro, um run que não resolveu
+    # nada apareceria como "1 de 9 resolvidos" — um número que não é falso e
+    # também não é sobre nada que a pessoa fez. A borda pode descontá-la porque
+    # foi ela quem a plantou; o motor não tem como saber.
+    # Os ids que a BORDA plantou. Vazio quando o workflow recebe a fonte de
+    # fora, que é o caso de todo workflow anterior a esta fatia.
+    plantados = {i.id for i in pool.items} if _carrega_a_propria_entrada(definicao) else set()
+    total = len(pool.items) + run.produzidos - len(plantados)
     # A lacuna passa a sair do `Run`: o pool que SOBROU, contado, e não
     # inferido da soma das contagens por resolver.
     #
@@ -990,7 +1355,13 @@ def _executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
             # conciliação, onde toda resolução casa ao menos um bancário com um
             # contábil — e o número certo num domínio de um item por resolução.
             matches=run.resolved_by_resolver.get(d.name, 0),
-            rate=run.resolved_items_by_resolver.get(d.name, 0) / total if total else 0.0,
+            # A semente sai daqui também, e não só do total. Sem isto, o bloco
+            # de entrada aparecia com 12,5% num run de 8 pedidos — a fatia de
+            # trabalho que ele fez foi consumir a própria máquina —, e a
+            # invariante que o `RunJSON` declara (`sum(rate) + gap.rate == 1.0`)
+            # fechava em 1,125. Uma taxa que não soma 1 é a lacuna deixando de
+            # ser confiável, que é a única coisa que este relatório promete.
+            rate=_itens_de(run, d.name, plantados) / total if total else 0.0,
             # A mesma guarda de `metrics.evaluate`: um resolver que não gastou
             # token nenhum converte para zero em qualquer modelo, e uma cascata
             # só de regras não deve exigir tabela de preços para ler zero.
@@ -1143,12 +1514,18 @@ def _item(proposta, decisao, por_id) -> ItemFilaJSON:
             continue
         lado, e = par
         lancamentos.append(_do_banco(e) if lado == "banco" else _do_contabil(e))
+    # `!=` e não `is not`: funcionava por identidade porque os dois lados eram
+    # membros do MESMO enum, e enum é singleton. Com `tipo` sendo `str` — que é
+    # o que `Proposal.tipo` e `Decision.tipo` declaram —, `is` passa a depender
+    # de interning do CPython, e o sintoma seria "o humano discordou do agente"
+    # aparecendo para decisões idênticas. Falha silenciosa, na tela, sobre
+    # concordância.
     divergiu = decisao is not None and (
-        decisao.tipo is not proposta.tipo or decisao.conciliar_com != ids
+        decisao.tipo != proposta.tipo or decisao.conciliar_com != ids
     )
     return ItemFilaJSON(
         divergence_id=proposta.item_id,
-        tipo=proposta.tipo.value,
+        tipo=proposta.tipo,
         confianca=proposta.confianca.value,
         explicacao=proposta.explicacao,
         evidencia=list(proposta.evidencia),
@@ -1157,10 +1534,49 @@ def _item(proposta, decisao, por_id) -> ItemFilaJSON:
         lancamentos=lancamentos,
         decidido=decisao is not None,
         veredito=decisao.veredito.value if decisao else None,
-        tipo_decidido=decisao.tipo.value if decisao and decisao.tipo else None,
+        tipo_decidido=decisao.tipo if decisao else None,
         autor=decisao.autor if decisao else None,
         divergiu=divergiu,
     )
+
+
+@app.get("/api/fila/{workflow_id}/propostas", response_model=list[PropostaJSON])
+def ler_propostas(workflow_id: str, ref: str = Query(...)) -> list[PropostaJSON]:
+    """O que o agente propôs sobre um conjunto, em qualquer domínio.
+
+    **Existe porque `GET /api/fila/{workflow_id}` não serve, e não é defeito
+    dela.** Aquela rota reconstrói o benchmark sintético para enriquecer cada
+    item com os lançamentos de banco e razão, e publica `tipos` de
+    `DivergenceType` — tudo certo para conciliação e sem sentido sobre um CSV
+    de issues. Generalizá-la teria feito o caso que funciona pagar por um
+    `if` a cada campo; esta responde a outra pergunta, com o tipo pobre que
+    ela merece.
+
+    **Chaveada por `ref`, porque é essa a chave do arquivo.** A fila é de
+    `(workflow, conjunto)` — não de run —, e o `ref` é o que `POST /runs`
+    devolve em `input_ref`. Chavear por `run_id` exigiria expô-lo primeiro e
+    traduzir run → ref aqui dentro, inventando uma segunda chave para o mesmo
+    arquivo.
+
+    Só as PENDENTES: decidir, hoje, é `POST /api/fila/{workflow}/{id}/decisao`,
+    que fala `DivergenceType` e `conciliar_com` — vocabulário de conciliação.
+    Enquanto não existir decisão genérica, "decidida" é um estado que só um
+    domínio alcança, e oferecer o filtro sugeriria o contrário.
+    """
+    if workflow_id not in registry(_RAIZ_RECEITAS, _RAIZ_COMPOSICOES):
+        raise HTTPException(status_code=404, detail=f"workflow desconhecido: {workflow_id}")
+    fila, _ = _abrir_fila(workflow_id, ref)
+    return [
+        PropostaJSON(
+            item_id=p.item_id,
+            tipo=str(p.tipo),
+            confianca=p.confianca.value,
+            explicacao=p.explicacao,
+            evidencia=list(p.evidencia),
+            acao_sugerida=p.acao_sugerida,
+        )
+        for p in fila.pendentes()
+    ]
 
 
 @app.get("/api/fila/{workflow_id}", response_model=FilaJSON)

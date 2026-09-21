@@ -23,7 +23,7 @@ from orchestrator.authoring.composicao import (
     listar,
     para_json,
 )
-from orchestrator.conciliacao.ferramentas import ToolContext
+from orchestrator.domains.reconciliation.agent.ferramentas import ToolContext
 
 AGORA = datetime(2026, 9, 16, 12, 0, tzinfo=UTC)
 
@@ -238,7 +238,11 @@ def test_tipo_de_bloco_desconhecido_LEVANTA_em_vez_de_sumir():
     """Um tipo novo precisa de uma decisão sobre o que ele significa na
     cascata, não de um `else` que o ignora em silêncio."""
     d = para_json(_comp([BlocoAgente(declaracao=_agente())]))
-    d["blocos"][0]["tipo"] = "futuro"
+    # Dentro da ETAPA: é o único lugar onde o bloco mora no arquivo gravado.
+    # Enquanto `para_json` também escrevia `blocos` achatado, corromper um dos
+    # dois passava batido — a leitura preferia o outro, e a guarda deixava de
+    # valer para metade do arquivo.
+    d["etapas"][0]["blocos"][0]["tipo"] = "futuro"
 
     with pytest.raises(ValueError, match="tipo de bloco desconhecido"):
         de_json(d)

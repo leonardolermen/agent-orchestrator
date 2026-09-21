@@ -1,9 +1,9 @@
 from random import Random
 
-from orchestrator.matching.grouping import GroupingMatcher
-from orchestrator.models import lados, pool
-from orchestrator.synth.generator import generate_clean_pairs
-from orchestrator.synth.injectors import DevolucaoFundos, PagamentoAgregado
+from orchestrator.domains.reconciliation.models import lados, pool
+from orchestrator.domains.reconciliation.resolvers.grouping import GroupingMatcher
+from orchestrator.domains.reconciliation.synth.generator import generate_clean_pairs
+from orchestrator.domains.reconciliation.synth.injectors import DevolucaoFundos, PagamentoAgregado
 
 
 def test_casa_pagamento_agregado_de_tres_notas():

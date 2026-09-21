@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 
+from orchestrator.domains.reconciliation.taxonomy import DivergenceType
 from orchestrator.kernel.cost import Cost
 from orchestrator.kernel.resolution import Confidence, Proposal, TraceEvent, TraceKind
 from orchestrator.review.decision import Decision, Veredito
@@ -9,7 +10,6 @@ from orchestrator.review.serial import (
     proposta_de_dict,
     proposta_para_dict,
 )
-from orchestrator.taxonomy import DivergenceType
 
 
 def _proposta() -> Proposal:
@@ -79,18 +79,24 @@ def test_ids_saem_ordenados_para_o_arquivo_ser_diffavel():
     assert decisao_para_dict(d)["conciliar_com"] == ["a", "m", "z"]
 
 
-def test_ida_e_volta_coage_o_tipo_ao_enum_do_dominio():
-    """A invariante de P2.6, agora garantida pela FRONTEIRA e não pelo kernel.
+def test_ida_e_volta_preserva_o_tipo_sem_conhecer_a_taxonomia():
+    """A invariante de P2.6, agora garantida por IGUALDADE e não por coerção.
 
-    Até o PR #6, `Proposal.__post_init__` coagia `tipo` a `DivergenceType`, o
-    que tornava seguro construir uma proposta a partir de JSON cru. Com
-    `Proposal` genérica, o kernel não pode fazer isso — e a garantia passou a
-    depender de `proposta_de_dict` coagir explicitamente.
+    Este teste já exigiu o contrário: que `proposta_de_dict` coagisse o `tipo`
+    a `DivergenceType`, porque todo o projeto comparava por identidade
+    (`p.tipo is DivergenceType.X`) e um `str` cru não casava com nada — a
+    precisão do agente era contada como zero em silêncio.
 
-    Este teste é o que impede essa coerção de sumir num refactor. Sem ele, um
-    `tipo` voltando como `str` cru passaria batido por toda comparação por
-    identidade do projeto (`p.tipo is DivergenceType.X`, em `metrics.evaluate`),
-    e a precisão do agente seria contada como zero em silêncio.
+    A coerção custava uma dependência inteira na direção errada: `review/`, que
+    é a camada `human`, tinha de importar a taxonomia de CONCILIAÇÃO para
+    desserializar a fila. Uma proposta de qualquer outro domínio passando por
+    ali levantaria `ValueError` num vocabulário que não é o dela.
+
+    Quem compara passou a comparar por valor (`metrics.evaluate`), e aí a
+    coerção deixou de ser necessária: `DivergenceType` é `StrEnum`, então o
+    `str` que volta do JSON compara igual ao membro do enum. O que este teste
+    protege agora é isso — o valor sobrevive à ida e volta, e continua casando
+    com a taxonomia do domínio **sem** que a fronteira precise conhecê-la.
     """
     bruto = {
         "divergence_id": "d-b-b1",
@@ -111,4 +117,8 @@ def test_ida_e_volta_coage_o_tipo_ao_enum_do_dominio():
 
     p = proposta_de_dict(bruto)
 
-    assert p.tipo is DivergenceType.RETENCAO_IMPOSTO
+    assert p.tipo == DivergenceType.RETENCAO_IMPOSTO
+    # E a fronteira não coage: o que volta é o `str` do JSON. Afirmar isso é o
+    # que impede alguém de "consertar" o teste acima reintroduzindo o import da
+    # taxonomia em `review/`.
+    assert type(p.tipo) is str

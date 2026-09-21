@@ -170,6 +170,46 @@ Anti-escopo vale tanto quanto escopo:
   teto agregado/auth/rate limit em `/runs` — o teto é por requisição, por
   decisão do dono.
 
+- **Gatilho: uma URL que dispara execução, com segredo e teto próprios.**
+  `POST /api/triggers` cria um disparador para um workflow e mostra o segredo
+  UMA vez — o disco guarda só o sha256. `POST /api/triggers/{id}/disparar` com
+  `Authorization: Bearer <segredo>` executa. Duas recusas acontecem na CRIAÇÃO,
+  não no disparo: o teto é obrigatório (o disparo vem de fora e não é confiável,
+  então um teto que viesse nele seria um teto que o atacante escolhe), e o
+  workflow precisa carregar a própria entrada — um bloco `Input`, porque um
+  disparo não tem ninguém para escolher a fonte. Gatilho inexistente e segredo
+  errado respondem o MESMO 404, para a rota não virar um oráculo de ids
+  válidos; revogar APAGA, porque a razão de revogar costuma ser que o segredo
+  vazou.
+
+  **O que ele NÃO resolve, e é o mesmo buraco de cima com mais peso:** quem tem
+  o segredo pode disparar em laço. Cada disparo respeita o teto dele; nada
+  limita quantos disparos acontecem por minuto, e dez mil chamadas são dez mil
+  tetos. Limite de frequência exige estado compartilhado que este servidor não
+  guarda. A diferença para o `/runs` é que ninguém descobre o `/runs` por
+  acaso, e uma URL de webhook circula.
+
+- **Variáveis do cliente: o outro lado da indireção.** Um bloco `Input` recebe
+  `token_env`/`dsn_env` — o NOME de uma variável — e nunca o segredo, porque o
+  workflow é gravado, versionado e mostrado na tela. Faltava quem DEFINE essas
+  variáveis: `PUT /api/ambiente/variaveis/{nome}` grava no processo e em
+  `data/ambiente/`, e `GET` lista só os nomes e se cada um tem valor. O valor
+  não volta por rota nenhuma, **nem mascarado** — mascarado ainda vaza o
+  comprimento, e o comprimento de um token identifica o provedor.
+
+  Só nomes com prefixo `WF_`. Sem a cerca, a rota trocaria `ANTHROPIC_API_KEY`
+  por outra chave, apontaria o `PATH` para outro binário, e a listagem
+  revelaria que variáveis existem na máquina.
+
+  **O que isso NÃO resolve.** O arquivo guarda segredo em claro; cifrar não
+  ajuda sozinho, porque a chave para decifrar ficaria do lado. A permissão é
+  pedida (`0600`) e **o Windows a ignora** — lá quem manda é a ACL do NTFS, e o
+  arquivo sai `644`; quem hospeda em Windows precisa fechar `data/` por fora. E
+  o buraco maior: **este servidor não tem autenticação**. Quem alcança a porta
+  não LÊ segredo nenhum, mas ESCREVE — e escrever já basta para apontar o
+  workflow de um cliente para o servidor de outra pessoa. Enquanto for assim,
+  este servidor é de uso próprio ou de rede confiável.
+
 ### A invariante mais cara, e o limite dela
 
 **Uma proposta não resolve.** Um `Agent` devolve `proposals` e nunca

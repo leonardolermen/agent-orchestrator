@@ -9,11 +9,11 @@ gabarito — ver `proposals_correct` e `agent_cost_microcents`.
 from collections import Counter
 from dataclasses import dataclass
 
-from orchestrator.conciliacao import ReconcileResult
+from orchestrator.domains.reconciliation import ReconcileResult
+from orchestrator.domains.reconciliation.money import format_brl
+from orchestrator.domains.reconciliation.synth.dataset import Dataset
+from orchestrator.domains.reconciliation.taxonomy import DivergenceType
 from orchestrator.kernel.cost import Cost, CostClass
-from orchestrator.money import format_brl
-from orchestrator.synth.dataset import Dataset
-from orchestrator.taxonomy import DivergenceType
 
 
 @dataclass(frozen=True)
@@ -188,15 +188,29 @@ def evaluate(
 
     divergencia_por_id = {d.id: (d.bank_ids | d.ledger_ids) for d in result.divergences}
     corretas = abstencoes = 0
+    # `==` e não `is`. A identidade só valia enquanto TODO `p.tipo` fosse
+    # garantidamente um membro do enum, e era `review/serial.py` — na camada
+    # `human` — quem garantia isso, coagindo com `DivergenceType(...)` ao
+    # desserializar. Era esse o preço: a fila humana precisava conhecer a
+    # taxonomia de conciliação para que a avaliação de conciliação medisse
+    # certo, e uma proposta de qualquer outro domínio passando por ali seria
+    # recusada por um vocabulário que não é o dela.
+    #
+    # Comparar por valor tira a exigência sem perder nada: `DivergenceType` é
+    # `StrEnum`, então o membro e a string comparam iguais. E o modo de falha
+    # melhora — com `is`, um `tipo` que chegasse como `str` cru não casava com
+    # nada e a precisão do agente era contada como ZERO, em silêncio (é o que
+    # o docstring de `test_ida_e_volta_...` em `tests/review/test_serial.py`
+    # descreve). Com `==`, ele casa.
     for p in result.proposals:
-        if p.tipo is DivergenceType.NAO_IDENTIFICADO:
+        if p.tipo == DivergenceType.NAO_IDENTIFICADO:
             abstencoes += 1
             continue
         # Nome diferente da função `ids` acima de propósito: a mesma
         # divergência aqui não é o `gt` que a função recebe, e reusar o nome
         # sombreava a função dentro deste laço.
         ids_tocados = divergencia_por_id.get(p.item_id, frozenset())
-        if any(tipo_por_id.get(i) is p.tipo for i in ids_tocados):
+        if any(tipo_por_id.get(i) == p.tipo for i in ids_tocados):
             corretas += 1
 
     # Zero custo não precisa de preço: um resolver que não gastou token

@@ -1,4 +1,4 @@
-from orchestrator.taxonomy import DivergenceType
+from orchestrator.domains.reconciliation.taxonomy import DivergenceType
 
 
 def test_tipos_confirmados_existem():

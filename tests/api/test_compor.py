@@ -76,7 +76,7 @@ def test_o_catalogo_traz_os_parametros_com_DEFAULT_do_proprio_resolver():
     """
     import dataclasses
 
-    from orchestrator.matching.tolerance import ToleranceMatcher
+    from orchestrator.domains.reconciliation.resolvers.tolerance import ToleranceMatcher
 
     dados = cliente.get("/api/catalogo").json()
     l2 = next(r for r in dados["regras"] if r["nome"] == "L2")
@@ -539,8 +539,26 @@ def test_a_tela_de_execucao_oferece_postgres_e_api_http():
     assert "nome da variável de ambiente no servidor" in js
 
 
-def test_a_tela_de_execucao_NAO_tem_campo_de_senha():
-    """O segredo é um NOME. Um `type="password"` ensinaria a pessoa a colar o
-    valor — e é a única forma de um segredo entrar pela tela."""
+def test_o_UNICO_campo_de_senha_e_o_das_variaveis():
+    """A regra mudou, de propósito, e esta é a regra nova.
+
+    A antiga era "a tela NÃO tem campo de senha": o segredo era um NOME, e o
+    valor vinha do `export` de quem hospeda. Ela assumia que só o hospedeiro
+    configura — o que serve para um servidor próprio e não serve para um
+    CLIENTE configurando o token do ERP dele.
+
+    Então existe um campo de senha, e exatamente UM: o da seção Variáveis, que
+    manda o valor para uma rota dedicada (`PUT /api/ambiente/variaveis/{nome}`)
+    e o apaga do campo em seguida. O que continua PROIBIDO é o que a regra
+    antiga realmente protegia: um segredo entrando pelo caminho da EXECUÇÃO —
+    na fonte, no pedido de run, no `ref` ou no log. Por isso a segunda
+    asserção: a configuração de fonte continua pedindo `token_env`, que é um
+    NOME.
+
+    Se este teste falhar com DOIS campos de senha, a pergunta não é "como faço
+    passar" — é "qual dos dois está coletando segredo no caminho errado".
+    """
     js = _bundle()
-    assert 'type:"password"' not in js and 'type="password"' not in js
+
+    assert js.count('type:"password"') + js.count('type="password"') == 1
+    assert "token_env" in js

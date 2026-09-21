@@ -1,6 +1,6 @@
 import pytest
 
-from orchestrator.money import format_brl, parse_brl
+from orchestrator.domains.reconciliation.money import format_brl, parse_brl
 
 
 def test_parse_brl_com_separador_de_milhar():

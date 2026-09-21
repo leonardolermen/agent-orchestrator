@@ -1,7 +1,7 @@
+from orchestrator.domains.reconciliation.models import abstencao, divergencias
 from orchestrator.eval.agent_eval import avaliar
 from orchestrator.kernel.cost import CostClass
 from orchestrator.kernel.resolver import ResolverDescription, ResolverOutput
-from orchestrator.models import abstencao, divergencias
 from orchestrator.review.fila import Fila, caminho_da_fila, dataset_id
 
 

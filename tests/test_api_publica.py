@@ -13,7 +13,7 @@ def test_todo_nome_de___all___existe():
 
 def test_a_fachada_NAO_exporta_conciliacao():
     """Ela é a implementação de referência (§1.3), mora em
-    `orchestrator.conciliacao`, e exportá-la daqui faria todo usuário do
+    `orchestrator.domains.reconciliation`, e exportá-la daqui faria todo usuário do
     framework carregar a taxonomia de divergência fiscal brasileira."""
     proibidos = {"DivergenceType", "BankEntry", "LedgerEntry", "Divergence", "reconcile"}
 

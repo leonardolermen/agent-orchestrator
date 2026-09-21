@@ -1,4 +1,4 @@
-from orchestrator.synth.generator import build_dataset, generate_clean_pairs
+from orchestrator.domains.reconciliation.synth.generator import build_dataset, generate_clean_pairs
 
 
 def test_gera_a_quantidade_pedida():
@@ -55,8 +55,8 @@ def test_build_dataset_remove_originais_em_fan_out():
     # novos. Se o original sobreviver, vira divergência sem gabarito.
     from dataclasses import replace
 
-    from orchestrator.synth.dataset import GroundTruth, InjectionResult
-    from orchestrator.taxonomy import DivergenceType
+    from orchestrator.domains.reconciliation.synth.dataset import GroundTruth, InjectionResult
+    from orchestrator.domains.reconciliation.taxonomy import DivergenceType
 
     pares = generate_clean_pairs(seed=8, n=3)
     p = pares[0]
@@ -83,8 +83,8 @@ def test_build_dataset_rejeita_pares_sobrepostos_entre_injecoes():
     # Duas injeções declarando o mesmo par consumido duplicariam a entrada no
     # dataset final — a mesma classe de "dinheiro que não existe" que
     # `consumed` foi desenhado para prevenir, um nível acima.
-    from orchestrator.synth.dataset import GroundTruth, InjectionResult
-    from orchestrator.taxonomy import DivergenceType
+    from orchestrator.domains.reconciliation.synth.dataset import GroundTruth, InjectionResult
+    from orchestrator.domains.reconciliation.taxonomy import DivergenceType
 
     pares = generate_clean_pairs(seed=8, n=3)
     p = pares[0]
@@ -119,8 +119,8 @@ def test_build_dataset_rejeita_par_consumido_estranho_ao_dataset():
     # nenhuma chamada de `pares`.
     from dataclasses import replace
 
-    from orchestrator.synth.dataset import GroundTruth, InjectionResult, Pair
-    from orchestrator.taxonomy import DivergenceType
+    from orchestrator.domains.reconciliation.synth.dataset import GroundTruth, InjectionResult, Pair
+    from orchestrator.domains.reconciliation.taxonomy import DivergenceType
 
     pares = generate_clean_pairs(seed=8, n=3)
     base = pares[0]
@@ -152,8 +152,8 @@ def test_build_dataset_remove_originais_em_fan_in():
     # outros dois sobreviverem, o dataset soma dinheiro que não existe.
     from dataclasses import replace
 
-    from orchestrator.synth.dataset import GroundTruth, InjectionResult
-    from orchestrator.taxonomy import DivergenceType
+    from orchestrator.domains.reconciliation.synth.dataset import GroundTruth, InjectionResult
+    from orchestrator.domains.reconciliation.taxonomy import DivergenceType
 
     pares = generate_clean_pairs(seed=8, n=3)
     total = sum(p.ledger.net_amount for p in pares)

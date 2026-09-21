@@ -4,10 +4,20 @@ import {
   type Ambiente,
   type AgenteDeclarado,
   type Catalogo,
+  type Parametro,
   type Regra,
+  type ValorParametro,
   type WorkflowConstruido,
 } from "./api";
-import { classeDo, nomeDo, type DadosAgente, type DadosDoNo } from "./NoResolver";
+import {
+  classeDo,
+  nomeDo,
+  type DadosAgente,
+  type DadosCrew,
+  type DadosDoNo,
+} from "./NoResolver";
+import { Paleta } from "./Paleta";
+import { Variaveis } from "./Variaveis";
 
 /** Um nó, do ponto de vista do painel. Estrutural, para não importar o React
  *  Flow aqui só por causa de um tipo. */
@@ -26,10 +36,17 @@ interface Props {
   onAcrescentarRegra: (r: Regra) => void;
   onAcrescentarAgente: (a: AgenteDeclarado) => void;
   onNovoAgente: () => void;
+  onNovoTime: () => void;
+  onMudarTime: (id: string, patch: Partial<DadosCrew>) => void;
   onRemover: (id: string) => void;
-  onMudarParametro: (id: string, param: string, valor: number) => void;
+  onMudarParametro: (id: string, param: string, valor: ValorParametro) => void;
   onMudarAgente: (id: string, patch: Partial<AgenteDeclarado>) => void;
-  onCompor: (id: string, nome: string) => void;
+  onCompor: (id: string, nome: string, entrega: string[], maxRondas: number) => void;
+  // Quantas etapas existem, como se chamam, e como mover um bloco entre elas.
+  quantasEtapas: number;
+  nomeDaEtapa: (i: number) => string;
+  onRenomearEtapa: (i: number, nome: string) => void;
+  onMudarEtapa: (id: string, etapa: number) => void;
   onMudarAmbiente: (a: Ambiente) => void;
 }
 
@@ -37,76 +54,269 @@ const CAMPO =
   "w-full rounded border border-borda bg-papel px-2 py-1.5 text-[12px] " +
   "dark:border-noite-borda dark:bg-noite-fundo dark:text-noite-tinta";
 
+/** O editor de UM parametro, escolhido pelo TIPO do valor.
+ *
+ *  Um so `<input type="number">` servia enquanto todo bloco vinha de um dominio
+ *  ja configurado — o L2 sabe que casa por documento, e o que restava ajustar
+ *  era a folga. Um bloco generico ("igualdade") recebe NOME DE CAMPO, e nome de
+ *  campo e texto, quando nao uma lista deles.
+ *
+ *  O tipo vem do `default` e nao de um campo `tipo` ao lado: dois campos
+ *  descrevendo a mesma coisa divergiriam no primeiro parametro novo, que e a
+ *  razao que `ParametroDeRegra` ja da no servidor.
+ *
+ *  Lista entra separada por virgula. E o editor mais simples que existe e o
+ *  servidor valida a forma de cada campo ("valor=total") com mensagem propria —
+ *  um editor de linhas com botao de adicionar viria depois, sem mudar o
+ *  contrato. */
+function CampoDeParametro({
+  spec,
+  valor,
+  onMudar,
+}: {
+  spec: Parametro;
+  valor: ValorParametro;
+  onMudar: (v: ValorParametro) => void;
+}) {
+  const lista = Array.isArray(spec.default);
+  const texto = typeof spec.default === "string";
+  // Obrigatorio ainda vazio: o bloco NAO existe sem isto, e o servidor recusa
+  // ao compor. Dizer aqui poupa a viagem — e a borda vermelha e o unico jeito
+  // de a pessoa ver qual dos campos falta sem ler a mensagem de erro inteira.
+  const faltando =
+    spec.obrigatorio &&
+    (Array.isArray(valor) ? valor.length === 0 : !String(valor ?? "").trim());
+  const borda = faltando ? " border-red-400 dark:border-red-500" : "";
+
+  return (
+    <label className="mb-2.5 block">
+      <span className="flex items-center gap-2">
+        <span className="text-[11.5px] text-neutral-600 dark:text-noite-fraca">
+          {spec.nome}
+          {spec.obrigatorio && <span className="ml-0.5 text-red-500">*</span>}
+        </span>
+        {lista || texto ? (
+          <input
+            type="text"
+            value={Array.isArray(valor) ? valor.join(", ") : String(valor ?? "")}
+            placeholder={lista ? "documento, valor=total" : ""}
+            onChange={(ev) =>
+              onMudar(
+                lista
+                  ? ev.target.value
+                      .split(",")
+                      .map((s) => s.trim())
+                      .filter(Boolean)
+                  : ev.target.value,
+              )
+            }
+            className={`ml-auto w-44 font-mono ${CAMPO}${borda}`}
+          />
+        ) : (
+          <input
+            type="number"
+            value={typeof valor === "number" ? valor : ""}
+            onChange={(ev) =>
+              // `parseInt` e nao `Number`: campo vazio vira NaN e o servidor
+              // recusa. Um 0 silencioso viraria `max_cents=0`, que e workflow
+              // legitimo e nao o que a pessoa quis.
+              onMudar(parseInt(ev.target.value, 10))
+            }
+            className={`ml-auto w-24 text-right font-mono ${CAMPO}${borda}`}
+          />
+        )}
+      </span>
+      <span className="mt-0.5 block text-[10.5px] leading-snug text-neutral-400 dark:text-noite-fraca">
+        {spec.descricao}
+      </span>
+    </label>
+  );
+}
+
+/** Em qual degrau este bloco roda, e o botao que abre o proximo.
+ *
+ *  "+ etapa" move o bloco para um degrau NOVO — ele nao cria etapa vazia,
+ *  porque o numero de etapas e derivado do que os blocos dizem. Sem isso
+ *  haveria um estado "etapa vazia" na tela que o servidor recusa, e a pessoa
+ *  veria um degrau que a composicao nao tem. */
+function SeletorDeEtapa({
+  atual,
+  quantas,
+  nomeDaEtapa,
+  onEscolher,
+}: {
+  atual: number;
+  quantas: number;
+  nomeDaEtapa: (i: number) => string;
+  onEscolher: (i: number) => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {Array.from({ length: quantas }, (_, i) => (
+        <button
+          key={i}
+          type="button"
+          onClick={() => onEscolher(i)}
+          className={[
+            "rounded border px-2 py-1 text-[11.5px] transition",
+            i === atual
+              ? "border-tinta bg-tinta text-white dark:border-noite-tinta dark:bg-noite-cartao dark:text-noite-tinta"
+              : "border-borda hover:bg-neutral-50 dark:border-noite-borda dark:hover:bg-noite-cartao",
+          ].join(" ")}
+        >
+          {nomeDaEtapa(i)}
+        </button>
+      ))}
+      <button
+        type="button"
+        onClick={() => onEscolher(quantas)}
+        title="move este bloco para um degrau novo"
+        className="rounded border border-dashed border-borda px-2 py-1 text-[11.5px] text-neutral-500 transition hover:bg-neutral-50 dark:border-noite-borda dark:text-noite-fraca dark:hover:bg-noite-cartao"
+      >
+        + etapa
+      </button>
+    </div>
+  );
+}
+
+/** Quem esta no time, como ele roda, e o que fazer quando discordam.
+ *
+ *  O `abstem_com` NAO aparece aqui: ele sai dos agentes escolhidos, e oferece-lo
+ *  seria oferecer um campo que o servidor ignora. */
+function EditorDeTime({
+  time,
+  catalogo,
+  onMudar,
+  onRemover,
+}: {
+  time: DadosCrew;
+  catalogo: Catalogo;
+  onMudar: (patch: Partial<DadosCrew>) => void;
+  onRemover: () => void;
+}) {
+  const dentro = new Set(time.agentes.map((a) => a.name));
+  const alternar = (nome: string) => {
+    const novo = dentro.has(nome)
+      ? time.agentes.filter((a) => a.name !== nome)
+      : [...time.agentes, catalogo.agentes.find((a) => a.name === nome)!];
+    onMudar({ agentes: novo });
+  };
+
+  return (
+    <Secao titulo={time.nome} ajuda="Vários agentes sobre o MESMO item, e uma política para o desacordo.">
+      <label className="mb-2.5 block">
+        <span className="text-[11px] text-neutral-500 dark:text-noite-fraca">nome</span>
+        <input
+          value={time.nome}
+          onChange={(e) => onMudar({ nome: e.target.value })}
+          className={`mt-1 ${CAMPO}`}
+        />
+      </label>
+
+      <span className="mb-1 block text-[11px] text-neutral-500 dark:text-noite-fraca">
+        quem está no time
+      </span>
+      <div className="mb-2.5 grid gap-1">
+        {catalogo.agentes.map((a) => (
+          <label key={a.name} className="flex items-center gap-2 text-[12px]">
+            <input
+              type="checkbox"
+              checked={dentro.has(a.name)}
+              onChange={() => alternar(a.name)}
+            />
+            <span>{a.name}</span>
+            <span className="ml-auto font-mono text-[10px] text-neutral-400 dark:text-noite-fraca">
+              {a.abstem_com}
+            </span>
+          </label>
+        ))}
+      </div>
+      {/* A recusa de verdade e do servidor — `Crew.__post_init__` explica por que
+          um time de um agente so nao e um time. Isto aqui so poupa a viagem. */}
+      {time.agentes.length < 2 && (
+        <p className="mb-2.5 rounded bg-lacuna-fundo px-2 py-1.5 text-[11px] leading-snug text-lacuna dark:bg-noite-lacuna-fundo dark:text-noite-crew">
+          Um time sequencial com um agente só É um agente — e pagaria classe CREW
+          por isso. Escolha pelo menos dois.
+        </p>
+      )}
+
+      <label className="mb-2 block">
+        <span className="text-[11px] text-neutral-500 dark:text-noite-fraca">processo</span>
+        <select
+          value={time.process}
+          onChange={(e) => onMudar({ process: e.target.value })}
+          className={`mt-1 ${CAMPO}`}
+        >
+          <option value="sequential">sequential — todos opinam</option>
+          <option value="hierarchical">hierarchical — precisa de gerente</option>
+        </select>
+      </label>
+
+      <label className="mb-2.5 block">
+        <span className="text-[11px] text-neutral-500 dark:text-noite-fraca">
+          quando discordam
+        </span>
+        <select
+          value={time.conflito}
+          onChange={(e) => onMudar({ conflito: e.target.value })}
+          className={`mt-1 ${CAMPO}`}
+        >
+          <option value="abster">abster — o desacordo vira informação</option>
+          <option value="maioria">maioria — precisa de 3+</option>
+          <option value="sintetizar">sintetizar — precisa de sintetizador</option>
+        </select>
+      </label>
+
+      <Remover onClick={onRemover} />
+    </Secao>
+  );
+}
+
 export function Painel(p: Props) {
   const [id, setId] = useState("");
   const [nome, setNome] = useState("");
+  const [entrega, setEntrega] = useState("");
+  const [rondas, setRondas] = useState(1);
 
   const usados = new Set(p.escolhidos.map((n) => nomeDo(n.data)));
   const temAgente = p.escolhidos.some((n) => classeDo(n.data) === "AGENTE");
 
   return (
     <aside className="overflow-y-auto border-l border-borda bg-white px-4 py-4 dark:border-noite-borda dark:bg-noite-painel">
-      {/* A PALETA, e a assimetria que a plataforma tem por dentro aparece aqui:
+      {/* A PALETA. A assimetria que a plataforma tem por dentro continua aqui:
           regra é código com parâmetros expostos — você escolhe QUAL entra;
-          agente é dado — você CRIA um. */}
-      <Secao
-        titulo="Regras"
-        ajuda={
-          p.catalogo?.regras.length
-            ? "Determinísticas e grátis. Rodam antes de qualquer modelo."
-            : undefined
-        }
-      >
-        {p.catalogo && p.catalogo.regras.length === 0 ? (
-          // A lacuna DECLARADA. Um catálogo sem regra é uma cascata que começa
-          // direto no modelo — caro por construção, e é exatamente onde há
-          // mais a ganhar promovendo trabalho para baixo.
-          <p className="rounded-md bg-lacuna-fundo px-2.5 py-2 text-[11px] leading-snug text-lacuna dark:bg-noite-lacuna-fundo dark:text-noite-crew">
-            O catálogo não declara regra nenhuma: 100% do trabalho passa pelo modelo.
-          </p>
-        ) : (
-          <ul className="grid gap-1.5">
-            {p.catalogo?.regras.map((r) => (
-              <li key={r.nome}>
-                <BotaoDePaleta
-                  nome={r.nome}
-                  resumo={r.resumo}
-                  classe={r.cost_class}
-                  usado={usados.has(r.nome)}
-                  onClick={() => p.onAcrescentarRegra(r)}
-                />
-              </li>
-            ))}
-          </ul>
-        )}
-      </Secao>
+          agente é dado — você CRIA um, e por isso "New agent" fica em AI. */}
+      <Paleta
+        catalogo={p.catalogo}
+        usados={usados}
+        onAcrescentarRegra={p.onAcrescentarRegra}
+        onAcrescentarAgente={p.onAcrescentarAgente}
+        onNovoAgente={p.onNovoAgente}
+        onNovoTime={p.onNovoTime}
+      />
 
-      <Secao
-        titulo="Agentes"
-        ajuda="Um agente é DADO: prompt, vocabulário e ferramentas são campos. Crie um."
-      >
-        <ul className="mb-2 grid gap-1.5">
-          {p.catalogo?.agentes.map((a) => (
-            <li key={a.name}>
-              <BotaoDePaleta
-                nome={a.name}
-                resumo={`${a.tipos.join(", ")} · ${a.ferramentas.length} ferramenta(s)`}
-                classe="AGENTE"
-                usado={usados.has(a.name)}
-                onClick={() => p.onAcrescentarAgente(a)}
-              />
-            </li>
-          ))}
-        </ul>
-        <button
-          type="button"
-          disabled={!p.catalogo}
-          onClick={p.onNovoAgente}
-          className="w-full rounded-md border border-dashed border-borda px-2.5 py-2 text-[12px] text-neutral-500 transition hover:bg-neutral-50 disabled:opacity-40 dark:border-noite-borda dark:text-noite-fraca dark:hover:bg-noite-cartao"
-        >
-          + agente em branco
-        </button>
-      </Secao>
+      {/* A ETAPA do bloco selecionado. Vale para regra E para agente, entao
+          mora fora dos dois blocos de edicao abaixo. */}
+      {p.selecionado && (
+        <Secao titulo="Etapa" ajuda="Dentro de uma etapa a ordem e por CUSTO; entre etapas, por DADO.">
+          <SeletorDeEtapa
+            atual={p.selecionado.data.etapa}
+            quantas={p.quantasEtapas}
+            nomeDaEtapa={p.nomeDaEtapa}
+            onEscolher={(i) => p.onMudarEtapa(p.selecionado!.id, i)}
+          />
+          <label className="mt-2 block">
+            <span className="text-[11px] text-neutral-500 dark:text-noite-fraca">
+              nome desta etapa
+            </span>
+            <input
+              value={p.nomeDaEtapa(p.selecionado.data.etapa)}
+              onChange={(e) => p.onRenomearEtapa(p.selecionado!.data.etapa, e.target.value)}
+              className={`mt-1 ${CAMPO}`}
+            />
+          </label>
+        </Secao>
+      )}
 
       {p.selecionado?.data.tipo === "regra" && (
         <Secao
@@ -119,39 +329,30 @@ export function Painel(p: Props) {
             </p>
           ) : (
             p.selecionado.data.regra.parametros.map((spec) => (
-              <label key={spec.nome} className="mb-2.5 block">
-                <span className="flex items-center gap-2">
-                  <span className="text-[11.5px] text-neutral-600 dark:text-noite-fraca">
-                    {spec.nome}
-                  </span>
-                  <input
-                    type="number"
-                    value={
-                      (p.selecionado!.data as { parametros: Record<string, number> }).parametros[
-                        spec.nome
-                      ]
-                    }
-                    onChange={(ev) =>
-                      // `parseInt` e não `Number`: campo vazio vira NaN e o
-                      // servidor recusa. Um 0 silencioso viraria `max_cents=0`,
-                      // que é cascata legítima e não o que a pessoa quis.
-                      p.onMudarParametro(
-                        p.selecionado!.id,
-                        spec.nome,
-                        parseInt(ev.target.value, 10),
-                      )
-                    }
-                    className={`ml-auto w-24 text-right font-mono ${CAMPO}`}
-                  />
-                </span>
-                <span className="mt-0.5 block text-[10.5px] leading-snug text-neutral-400 dark:text-noite-fraca">
-                  {spec.descricao}
-                </span>
-              </label>
+              <CampoDeParametro
+                key={spec.nome}
+                spec={spec}
+                valor={
+                  (p.selecionado!.data as { parametros: Record<string, ValorParametro> })
+                    .parametros[spec.nome]
+                }
+                onMudar={(valor) =>
+                  p.onMudarParametro(p.selecionado!.id, spec.nome, valor)
+                }
+              />
             ))
           )}
           <Remover onClick={() => p.onRemover(p.selecionado!.id)} />
         </Secao>
+      )}
+
+      {p.selecionado?.data.tipo === "crew" && p.catalogo && (
+        <EditorDeTime
+          time={p.selecionado.data}
+          catalogo={p.catalogo}
+          onMudar={(patch) => p.onMudarTime(p.selecionado!.id, patch)}
+          onRemover={() => p.onRemover(p.selecionado!.id)}
+        />
       )}
 
       {p.selecionado?.data.tipo === "agente" && p.catalogo && (
@@ -185,6 +386,13 @@ export function Painel(p: Props) {
           recebe. O modelo aparece porque decide o preço; a chave aparece como
           SIM/NÃO porque a tela precisa saber se o chat funciona e nunca precisa
           do valor. */}
+      {/* As VARIAVEIS do cliente, antes do Ambiente: a secao de baixo diz o que
+          o SERVIDOR tem (modelo, chave); esta diz o que o CLIENTE configurou
+          para o workflow dele alcancar os sistemas dele. */}
+      <Secao titulo="Variáveis" ajuda="O que um bloco Input usa para alcançar o sistema do cliente.">
+        <Variaveis />
+      </Secao>
+
       {p.ambiente && (
         <Secao titulo="Ambiente" ajuda="O que uma execução usa.">
           <div className="mb-2 flex items-center gap-2 text-[11.5px]">
@@ -247,13 +455,61 @@ export function Painel(p: Props) {
           value={nome}
           onChange={(e) => setNome(e.target.value)}
           placeholder="nome (opcional)"
-          className={`mb-2.5 ${CAMPO}`}
+          className={`mb-2 ${CAMPO}`}
         />
+        {/* A ENTREGA. Nao e um no do canvas de proposito: nada roda aqui, e um
+            no que nao executa sugere que executa. E uma afirmacao sobre o
+            workflow — "estes kinds SAO a saida" —, e o kernel exige que ela
+            seja escrita: sem ela, um bloco que ramifica produz um kind que
+            ninguem consome e a composicao e recusada por beco sem saida. */}
+        <input
+          value={entrega}
+          onChange={(e) => setEntrega(e.target.value)}
+          placeholder="entrega: suspeito, aprovado"
+          spellCheck={false}
+          className={`mb-1 font-mono ${CAMPO}`}
+        />
+        <p className="mb-2.5 text-[10.5px] leading-snug text-neutral-400 dark:text-noite-fraca">
+          os kinds que SÃO a saída. Um bloco que ramifica precisa declarar aqui
+          o ramo que ninguém mais consome — senão o item ficaria no pool para
+          sempre.
+        </p>
+        {/* O LOOP. Tambem nao e um no: nada roda "dentro" dele. E quantas vezes
+            a SEQUENCIA de etapas pode rodar, e existe para ARESTA DE VOLTA — o
+            revisor reprova e o rascunho volta ao escritor. E TETO, nao
+            contagem: o motor para sozinho no ponto fixo. */}
+        <label className="mb-1 flex items-center gap-2">
+          <span className="text-[11.5px] text-neutral-600 dark:text-noite-fraca">
+            rondas
+          </span>
+          <input
+            type="number"
+            min={1}
+            value={rondas}
+            onChange={(e) => setRondas(Math.max(1, parseInt(e.target.value, 10) || 1))}
+            className={`ml-auto w-20 text-right font-mono ${CAMPO}`}
+          />
+        </label>
+        <p className="mb-2.5 text-[10.5px] leading-snug text-neutral-400 dark:text-noite-fraca">
+          quantas vezes a sequência de etapas pode rodar. 1 é uma passada; mais
+          existe para aresta de volta — o revisor reprova e o item volta. É teto:
+          o motor para sozinho quando uma ronda não muda nada.
+        </p>
         <div className="flex gap-2">
           <button
             type="button"
             disabled={p.escolhidos.length === 0 || !id.trim()}
-            onClick={() => p.onCompor(id.trim(), nome.trim())}
+            onClick={() =>
+              p.onCompor(
+                id.trim(),
+                nome.trim(),
+                entrega
+                  .split(",")
+                  .map((s) => s.trim())
+                  .filter(Boolean),
+                rondas,
+              )
+            }
             className="flex-1 rounded border border-tinta bg-tinta px-3 py-1.5 text-[12.5px] text-white transition disabled:cursor-not-allowed disabled:border-neutral-300 disabled:bg-neutral-300 dark:border-noite-borda dark:bg-noite-cartao dark:text-noite-tinta dark:disabled:bg-noite-fundo dark:disabled:text-noite-fraca"
           >
             Compor e validar
@@ -315,51 +571,6 @@ export function Painel(p: Props) {
 
 // ---------------------------------------------------------------------------
 
-function BotaoDePaleta({
-  nome,
-  resumo,
-  classe,
-  usado,
-  onClick,
-}: {
-  nome: string;
-  resumo: string;
-  classe: keyof typeof CORES;
-  usado: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      disabled={usado}
-      onClick={onClick}
-      // O motivo de estar desabilitado fica no próprio botão:
-      // `construir_composicao` recusa bloco repetido porque o segundo rodaria
-      // sobre o pool que o primeiro esvaziou.
-      title={
-        usado
-          ? "já está na cascata; o segundo rodaria sobre o pool que o primeiro esvaziou"
-          : `acrescentar ${nome}`
-      }
-      className={[
-        "w-full rounded-md border border-borda border-l-[3px] px-2.5 py-1.5 text-left transition",
-        "dark:border-noite-borda",
-        CORES[classe].bordaEsq,
-        usado ? "cursor-not-allowed opacity-40" : "hover:bg-neutral-50 dark:hover:bg-noite-cartao",
-      ].join(" ")}
-    >
-      <span className="flex items-baseline gap-2">
-        <span className="text-[12.5px] font-medium">{nome}</span>
-        <span className={`ml-auto text-[9.5px] tracking-wider ${CORES[classe].texto}`}>
-          {classe}
-        </span>
-      </span>
-      <span className="mt-0.5 block text-[11px] leading-snug text-neutral-500 dark:text-noite-fraca">
-        {resumo}
-      </span>
-    </button>
-  );
-}
 
 /**
  * O editor do agente. É esta caixa que tira a tela de cardápio.
@@ -586,7 +797,7 @@ function Remover({ onClick }: { onClick: () => void }) {
       onClick={onClick}
       className="text-[11.5px] text-red-700 underline hover:text-red-800 dark:text-red-400"
     >
-      remover da cascata
+      remover do workflow
     </button>
   );
 }

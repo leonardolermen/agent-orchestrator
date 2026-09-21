@@ -27,27 +27,28 @@ o barato (regra) é código porque é onde a lógica do negócio realmente mora.
 """
 
 from dataclasses import dataclass
-from typing import NoReturn
+from typing import Any, NoReturn
 
 from orchestrator.agent.declarado import (
     AgenteDeclarado,
     ClienteDeValidacao,
     ParametroDeRegra,
     RegraDisponivel,
+    ValorDeParametro,
     construir_agente,
 )
 from orchestrator.agent.tools.registry import ToolRegistry
-from orchestrator.conciliacao.ferramentas import catalogo_de_ferramentas
 from orchestrator.domains.procurement.workflow import (
     ComprasAnteriores,
     FornecedorPreferido,
 )
+from orchestrator.domains.reconciliation.agent.ferramentas import catalogo_de_ferramentas
+from orchestrator.domains.reconciliation.resolvers.grouping import GroupingMatcher
+from orchestrator.domains.reconciliation.resolvers.tolerance import ToleranceMatcher
+from orchestrator.domains.reconciliation.workflow import l1_exato
 from orchestrator.domains.swe.workflow import ISSUE, PROMPT
 from orchestrator.domains.swe.workflow import ferramentas as ferramentas_swe
 from orchestrator.kernel.cost import CostClass
-from orchestrator.matching.exact import ExactMatcher
-from orchestrator.matching.grouping import GroupingMatcher
-from orchestrator.matching.tolerance import ToleranceMatcher
 
 
 @dataclass(frozen=True)
@@ -143,7 +144,7 @@ def _todas_as_ferramentas() -> ToolRegistry:
     return junto
 
 
-def _revisor_precisa_da_fila(parametros: dict[str, int]) -> NoReturn:
+def _revisor_precisa_da_fila(parametros: dict[str, ValorDeParametro]) -> NoReturn:
     """`revisor` não constrói por esta via — e é ERRO, não decoração.
 
     `RegraDisponivel.construir` tem assinatura uniforme `(parametros) ->
@@ -210,18 +211,434 @@ Não saber é resposta válida: responda NAO_SEI com confiança BAIXA."""
 # `docs/superpowers/DECISOES.md`.
 # ---------------------------------------------------------------------------
 
+def _lista(valor: ValorDeParametro | None) -> tuple[str, ...]:
+    """A lista de campos como o construtor a quer.
+
+    O JSON transporta `list`, o dataclass declara `tuple`, e a tela manda o que
+    a pessoa digitou. Coagir AQUI, na borda entre os dois, em vez de aceitar os
+    dois lá dentro: um `Igualdade` com `campos` ora tupla ora lista deixaria de
+    ser hasheável pela metade, e o erro apareceria longe da causa.
+    """
+    if valor is None or valor == "":
+        return ()
+    if isinstance(valor, str):
+        return (valor,)
+    return tuple(str(v) for v in valor)
+
+
+def _exige(bloco: str, p: dict[str, ValorDeParametro], nomes: tuple[str, ...]) -> None:
+    """Recusa ANTES de construir, nomeando o que a pessoa não preencheu.
+
+    As regras genéricas já recusariam sozinhas — `Igualdade` levanta com
+    `campos` vazio. O que elas não sabem é como a TELA chama as coisas: a
+    mensagem delas fala de argumento de construtor, e quem lê está olhando um
+    formulário. Esta recusa usa os nomes do catálogo, que são os nomes que a
+    pessoa acabou de ver.
+    """
+    faltam = [n for n in nomes if not p.get(n)]
+    if faltam:
+        raise ValueError(
+            f"{bloco!r} precisa de {faltam} preenchido(s). este é um bloco "
+            f"genérico: ele não sabe de que domínio é o seu workflow, então "
+            f"quem diz em quais campos ele casa é você"
+        )
+
+
+def _igualdade(p: dict[str, ValorDeParametro]) -> Any:
+    from orchestrator.regras import Igualdade
+
+    _exige("igualdade", p, ("esquerda", "direita", "campos"))
+    return Igualdade(
+        esquerda=str(p.get("esquerda", "")),
+        direita=str(p.get("direita", "")),
+        campos=_lista(p.get("campos")),
+        modulo=_lista(p.get("modulo")),
+    )
+
+
+# Os testes que um predicado aceita, na descrição que a tela mostra. Derivado do
+# enum e não escrito à mão: um teste novo aparece na tela sozinho, e um removido
+# some — a lista digitada aqui seria a segunda fonte de verdade que envelheceria
+# na primeira mudança.
+def _testes_disponiveis() -> str:
+    from orchestrator.regras import Comparacao
+
+    return " | ".join(c.value for c in Comparacao)
+
+
+def _predicado_params(obrigatorio_kind: str) -> tuple[ParametroDeRegra, ...]:
+    """Os três parâmetros que os blocos de uma ponta só compartilham.
+
+    Escritos uma vez porque são o MESMO eixo: "limiar" e "padrão" não são dois
+    blocos, são este parâmetro com um `teste` diferente. Repeti-los por bloco
+    faria a descrição divergir entre filtro, validação e condição.
+    """
+    return (
+        ParametroDeRegra("kind", "", obrigatorio_kind, obrigatorio=True),
+        ParametroDeRegra("campo", "", "o campo sobre o qual perguntar", obrigatorio=True),
+        ParametroDeRegra("teste", "", f"a pergunta: {_testes_disponiveis()}", obrigatorio=True),
+        ParametroDeRegra(
+            "valor",
+            "",
+            "com o que comparar. vazio só para os testes `vazio` e `preenchido`",
+        ),
+    )
+
+
+def _filtro(p: dict[str, ValorDeParametro]) -> Any:
+    from orchestrator.regras import Filtro
+
+    _exige("filtro", p, ("kind", "campo", "teste"))
+    return Filtro(
+        kind=str(p.get("kind", "")),
+        campo=str(p.get("campo", "")),
+        teste=str(p.get("teste", "")),
+        valor=str(p.get("valor", "")),
+        motivo=str(p.get("motivo") or "descartado por filtro"),
+    )
+
+
+def _validacao(p: dict[str, ValorDeParametro]) -> Any:
+    from orchestrator.regras import Validacao
+
+    _exige("validacao", p, ("kind", "campo", "teste"))
+    return Validacao(
+        kind=str(p.get("kind", "")),
+        campo=str(p.get("campo", "")),
+        teste=str(p.get("teste", "")),
+        valor=str(p.get("valor", "")),
+        tipo=str(p.get("tipo") or "FORA_DA_POLITICA"),
+    )
+
+
+def _condicao(p: dict[str, ValorDeParametro]) -> Any:
+    from orchestrator.regras import Condicao
+
+    _exige("condicao", p, ("kind", "campo", "teste", "produz"))
+    return Condicao(
+        kind=str(p.get("kind", "")),
+        campo=str(p.get("campo", "")),
+        teste=str(p.get("teste", "")),
+        valor=str(p.get("valor", "")),
+        produz=str(p.get("produz", "")),
+    )
+
+
+def _agrupamento(p: dict[str, ValorDeParametro]) -> Any:
+    from orchestrator.regras import Agrupamento
+
+    _exige("agrupamento", p, ("esquerda", "direita", "chave", "soma"))
+    return Agrupamento(
+        esquerda=str(p.get("esquerda", "")),
+        direita=str(p.get("direita", "")),
+        chave=_lista(p.get("chave")),
+        soma=str(p.get("soma", "")),
+        max_itens=int(p.get("max_itens", 4) or 4),
+        max_diferenca=int(p.get("max_diferenca", 0) or 0),
+        max_candidatos=int(p.get("max_candidatos", 24) or 24),
+    )
+
+
+def _entrada(p: dict[str, ValorDeParametro]) -> Any:
+    """O bloco de ENTRADA: uma fonte que vira degrau.
+
+    A fonte não é lida aqui — `Entrada.resolve` lê. Compor não pode tocar em
+    banco nem em rede: `/api/composicoes` valida sem executar.
+    """
+    from orchestrator.sources.bloco import Entrada
+    from orchestrator.sources.fabrica import fonte_de_parametros
+
+    _exige("entrada", p, ("tipo", "kind"))
+    return Entrada(fonte=fonte_de_parametros(dict(p)), produz=(str(p["kind"]),))
+
+
+def _paralelo(p: dict[str, ValorDeParametro]) -> Any:
+    from orchestrator.regras import Paralelo
+
+    _exige("paralelo", p, ("kind", "ramos"))
+    return Paralelo(kind=str(p.get("kind", "")), ramos=_lista(p.get("ramos")))
+
+
+def _juncao(p: dict[str, ValorDeParametro]) -> Any:
+    from orchestrator.regras import Juncao
+
+    _exige("juncao", p, ("ramos", "produz"))
+    return Juncao(ramos=_lista(p.get("ramos")), produz=str(p.get("produz", "")))
+
+
+def _tabela(p: dict[str, ValorDeParametro]) -> Any:
+    from orchestrator.regras import Tabela
+
+    _exige("tabela", p, ("kind", "campo", "de_para"))
+    return Tabela(
+        kind=str(p.get("kind", "")),
+        campo=str(p.get("campo", "")),
+        de_para=_lista(p.get("de_para")),
+    )
+
+
+def _tolerancia(p: dict[str, ValorDeParametro]) -> Any:
+    from orchestrator.regras import Tolerancia
+
+    _exige("tolerancia", p, ("esquerda", "direita", "chave", "numerico"))
+    return Tolerancia(
+        esquerda=str(p.get("esquerda", "")),
+        direita=str(p.get("direita", "")),
+        chave=_lista(p.get("chave")),
+        numerico=str(p.get("numerico", "")),
+        max_diferenca=int(p.get("max_diferenca", 0) or 0),
+        data=str(p.get("data", "")),
+        max_dias=int(p.get("max_dias", 0) or 0),
+    )
+
+
 CATALOGO = Catalogo(
     ferramentas=_todas_as_ferramentas(),
     regras=(
+        # -- genéricas: servem a qualquer domínio ----------------------------
+        #
+        # Estas duas não pertencem a domínio nenhum: elas casam por NOME DE
+        # CAMPO, e quem diz os nomes é quem monta o workflow na tela. É a
+        # diferença entre um catálogo que oferece "L1, L2, L3" — que só
+        # significam alguma coisa para quem concilia extrato bancário — e um que
+        # oferece peças com as quais se monta o L1.
+        #
+        # Nascem SEM default utilizável de propósito. "banco" e "contabil" como
+        # default seriam conciliação vazando para dentro da peça que existe para
+        # não ter domínio, e um campo pré-preenchido com o nome errado casa zero
+        # em silêncio — que é pior do que recusar dizendo o que falta.
+        RegraDisponivel(
+            nome="igualdade",
+            rotulo="Exact match",
+            categoria="MATCHING",
+            cost_class=CostClass.REGRA,
+            resumo="os campos escolhidos coincidem exatamente nos dois lados",
+            parametros=(
+                ParametroDeRegra("esquerda", "", "o kind de um lado", obrigatorio=True),
+                ParametroDeRegra("direita", "", "o kind do outro lado", obrigatorio=True),
+                ParametroDeRegra(
+                    "campos",
+                    (),
+                    "campos que precisam bater. 'documento' quando os dois lados "
+                    "chamam igual; 'valor=total' quando não",
+                    obrigatorio=True,
+                ),
+                ParametroDeRegra(
+                    "modulo",
+                    (),
+                    "campos comparados por módulo, para quando um lado registra "
+                    "com sinal invertido",
+                ),
+            ),
+            construir=lambda p: _igualdade(p),
+        ),
+        RegraDisponivel(
+            nome="tolerancia",
+            rotulo="Tolerance",
+            categoria="MATCHING",
+            cost_class=CostClass.REGRA,
+            resumo="chave exata, com folga de valor e de dias corridos",
+            parametros=(
+                ParametroDeRegra("esquerda", "", "o kind de um lado", obrigatorio=True),
+                ParametroDeRegra("direita", "", "o kind do outro lado", obrigatorio=True),
+                ParametroDeRegra(
+                    "chave", (), "campos que precisam bater exatamente", obrigatorio=True
+                ),
+                ParametroDeRegra(
+                    "numerico", "", "o campo cuja diferença tem folga", obrigatorio=True
+                ),
+                ParametroDeRegra("max_diferenca", 0, "folga máxima desse campo"),
+                ParametroDeRegra("data", "", "o campo de data, ou vazio para ignorar"),
+                ParametroDeRegra("max_dias", 0, "folga máxima entre as datas, em dias corridos"),
+            ),
+            construir=lambda p: _tolerancia(p),
+        ),
+        RegraDisponivel(
+            nome="agrupamento",
+            rotulo="Grouping",
+            categoria="MATCHING",
+            cost_class=CostClass.REGRA,
+            resumo="um item de um lado cobrindo N do outro, pela soma",
+            parametros=(
+                ParametroDeRegra("esquerda", "", "o kind do lado que tem UM", obrigatorio=True),
+                ParametroDeRegra("direita", "", "o kind do lado que tem N", obrigatorio=True),
+                ParametroDeRegra(
+                    "chave", (), "campos que agrupam os candidatos", obrigatorio=True
+                ),
+                ParametroDeRegra(
+                    "soma", "", "o campo que precisa somar (ex.: valor=total)", obrigatorio=True
+                ),
+                ParametroDeRegra("max_itens", 4, "quantos itens no máximo por grupo"),
+                ParametroDeRegra("max_diferenca", 0, "folga aceita na soma"),
+                ParametroDeRegra(
+                    "max_candidatos", 24, "teto de combinações testadas; a busca é combinatória"
+                ),
+            ),
+            construir=lambda p: _agrupamento(p),
+        ),
+        RegraDisponivel(
+            nome="tabela",
+            rotulo="Switch",
+            categoria="CONTROL",
+            cost_class=CostClass.REGRA,
+            resumo="o valor do campo escolhe o ramo",
+            parametros=(
+                ParametroDeRegra("kind", "", "o kind que entra neste bloco", obrigatorio=True),
+                ParametroDeRegra("campo", "", "o campo cujo valor decide", obrigatorio=True),
+                ParametroDeRegra(
+                    "de_para",
+                    (),
+                    "uma rota por valor: PJ=empresa, PF=pessoa. valor fora da "
+                    "tabela não é tocado",
+                    obrigatorio=True,
+                ),
+            ),
+            construir=lambda p: _tabela(p),
+        ),
+        # A ENTRADA: a fonte como degrau.
+        #
+        # Enquanto a fonte era escolhida na hora de rodar, o workflow não sabia
+        # de onde vinha o dado — e um run disparado por webhook não tem ninguém
+        # para escolher. Este bloco é o que torna um workflow autossuficiente.
+        RegraDisponivel(
+            nome="entrada",
+            cost_class=CostClass.REGRA,
+            resumo="lê a fonte e põe o trabalho no pool",
+            rotulo="Input",
+            categoria="WORKFLOW",
+            parametros=(
+                ParametroDeRegra(
+                    "tipo", "", "de onde vem: postgres | http", obrigatorio=True
+                ),
+                ParametroDeRegra(
+                    "kind", "", "que tipo de item esta fonte entrega", obrigatorio=True
+                ),
+                ParametroDeRegra("campo_id", "", "o campo que identifica cada item"),
+                ParametroDeRegra("url", "", "http: o endereço da API"),
+                ParametroDeRegra(
+                    "token_env", "", "http: o NOME da variável de ambiente com o token"
+                ),
+                ParametroDeRegra("caminho", "", "http: onde a lista está no corpo"),
+                ParametroDeRegra(
+                    "dsn_env", "", "postgres: o NOME da variável com a string de conexão"
+                ),
+                ParametroDeRegra("query", "", "postgres: a consulta"),
+            ),
+            construir=lambda p: _entrada(p),
+        ),
+        # ABRIR e REUNIR — o que rotear NÃO faz.
+        #
+        # `condicao` e `tabela` escolhem UM ramo por item. O caso mais comum de
+        # paralelismo é o oposto: toda transação passa pela checagem de fraude E
+        # pela de KYC, e depois as duas se reencontram. Nenhum roteador faz
+        # isso, porque roteador escolhe.
+        RegraDisponivel(
+            nome="paralelo",
+            cost_class=CostClass.REGRA,
+            resumo="todo item segue por todos os ramos ao mesmo tempo",
+            rotulo="Parallel",
+            categoria="CONTROL",
+            parametros=(
+                ParametroDeRegra("kind", "", "o kind que entra neste bloco", obrigatorio=True),
+                ParametroDeRegra(
+                    "ramos",
+                    (),
+                    "os kinds dos ramos, pelo menos dois: fraude, kyc",
+                    obrigatorio=True,
+                ),
+            ),
+            construir=lambda p: _paralelo(p),
+        ),
+        RegraDisponivel(
+            nome="juncao",
+            cost_class=CostClass.REGRA,
+            resumo="reúne os ramos de um mesmo item num só",
+            rotulo="Merge",
+            categoria="CONTROL",
+            parametros=(
+                ParametroDeRegra(
+                    "ramos", (), "os kinds a reunir, pelo menos dois", obrigatorio=True
+                ),
+                ParametroDeRegra(
+                    "produz",
+                    "",
+                    "o kind que sai da junção. Só junta quando TODOS os ramos chegaram",
+                    obrigatorio=True,
+                ),
+            ),
+            construir=lambda p: _juncao(p),
+        ),
+        # Os TRÊS DESTINOS de um item que passa num teste. O que muda entre eles
+        # não é a pergunta — é o que acontece com o item, e são três verbos
+        # diferentes no pool:
+        #
+        #   filtro     RESOLVE  o item sai do pool, com o motivo no trace
+        #   validacao  PROPÕE   o item fica, e um humano decide
+        #   condicao   ROTEIA   o item sai como um kind e volta como outro
+        #
+        # Um bloco só com um parâmetro "o que fazer" esconderia qual dos três
+        # aconteceu — e os três mexem no pool de maneiras que não se confundem.
+        RegraDisponivel(
+            nome="filtro",
+            rotulo="Filter",
+            categoria="COMPUTE",
+            cost_class=CostClass.REGRA,
+            resumo="descarta do pool o item que passa no teste",
+            parametros=(
+                *_predicado_params("o kind que este bloco filtra"),
+                ParametroDeRegra("motivo", "", "o que o trace vai dizer sobre o descarte"),
+            ),
+            construir=lambda p: _filtro(p),
+        ),
+        RegraDisponivel(
+            nome="validacao",
+            rotulo="Validate",
+            categoria="COMPUTE",
+            cost_class=CostClass.REGRA,
+            resumo="quem falha o teste vira proposta para revisão humana",
+            parametros=(
+                *_predicado_params("o kind que este bloco confere"),
+                ParametroDeRegra(
+                    "tipo", "", "o rótulo que o humano lê na fila (ex.: FORA_DA_POLITICA)"
+                ),
+            ),
+            construir=lambda p: _validacao(p),
+        ),
+        RegraDisponivel(
+            nome="condicao",
+            rotulo="Condition",
+            categoria="CONTROL",
+            cost_class=CostClass.REGRA,
+            resumo="quem passa no teste segue por outro ramo",
+            parametros=(
+                *_predicado_params("o kind que entra neste bloco"),
+                ParametroDeRegra(
+                    "produz",
+                    "",
+                    "o kind do ramo. o degrau que o consome só roda quando houver item dele",
+                    obrigatorio=True,
+                ),
+            ),
+            construir=lambda p: _condicao(p),
+        ),
         # -- conciliação: a implementação de referência (§1.3) --------------
         RegraDisponivel(
             nome="L1",
+            rotulo="Exact (L1)",
+            categoria="DOMAIN",
             cost_class=CostClass.REGRA,
             resumo="documento, valor e data coincidem exatamente",
-            construir=lambda p: ExactMatcher(),
+            # `l1_exato()` e não `ExactMatcher()`: o L1 executado É a regra
+            # genérica configurada, e o bloco que a tela oferece tem de ser o
+            # mesmo objeto. Duas construções diferentes com o mesmo nome fariam
+            # a composição rodar algo que o catálogo não descreve — e o único
+            # sintoma seria um número diferente do relatório.
+            construir=lambda p: l1_exato(),
         ),
         RegraDisponivel(
             nome="L2",
+            rotulo="Tolerance (L2)",
+            categoria="DOMAIN",
             cost_class=CostClass.REGRA,
             resumo="mesmo documento, com folga de valor e dias úteis",
             parametros=(
@@ -236,6 +653,8 @@ CATALOGO = Catalogo(
         ),
         RegraDisponivel(
             nome="L3",
+            rotulo="Grouping (L3)",
+            categoria="DOMAIN",
             cost_class=CostClass.REGRA,
             resumo="um lançamento bancário cobrindo N contábeis do mesmo fornecedor",
             parametros=(
@@ -248,6 +667,8 @@ CATALOGO = Catalogo(
         # -- compras --------------------------------------------------------
         RegraDisponivel(
             nome="preferido",
+            rotulo="Preferred supplier",
+            categoria="DOMAIN",
             cost_class=CostClass.REGRA,
             # Igual a `FornecedorPreferido.describe().summary`, verbatim — ver
             # `test_resumo_da_REGRA_bate_com_o_describe_do_resolver`. Achado
@@ -258,6 +679,8 @@ CATALOGO = Catalogo(
         ),
         RegraDisponivel(
             nome="anteriores",
+            rotulo="Past purchases",
+            categoria="DOMAIN",
             cost_class=CostClass.REGRA,
             # Igual a `ComprasAnteriores.describe().summary`, verbatim —
             # mesmo motivo da entrada acima.
@@ -267,6 +690,8 @@ CATALOGO = Catalogo(
         # -- o degrau HUMANO que FECHA a cascata. Ver o docstring de `Catalogo`.
         RegraDisponivel(
             nome="revisor",
+            rotulo="Approval",
+            categoria="HUMAN",
             cost_class=CostClass.HUMANO,
             # Igual a `RevisorHumano.describe().summary`, verbatim — ver
             # `test_resumo_da_REGRA_bate_com_o_describe_do_resolver`. Mesma

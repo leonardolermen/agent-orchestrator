@@ -1,17 +1,17 @@
 """As políticas de conciliação — e a unidade que quase passou batido."""
 
-from orchestrator.conciliacao.politica import (
+from orchestrator.domains.reconciliation.models import BANCO, CONTABIL, pool
+from orchestrator.domains.reconciliation.politica import (
     MICROCENTS_POR_CENTAVO_BRL,
     POLITICA_ATUAL,
     POLITICA_ECONOMICA,
     POLITICA_ENSAIO,
     valor_em_risco,
 )
+from orchestrator.domains.reconciliation.synth.generator import generate_clean_pairs
 from orchestrator.kernel.cost import CostClass
 from orchestrator.kernel.policy import Autonomy
 from orchestrator.kernel.work import WorkItem
-from orchestrator.models import BANCO, CONTABIL, pool
-from orchestrator.synth.generator import generate_clean_pairs
 
 
 def _par():

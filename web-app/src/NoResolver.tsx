@@ -1,5 +1,11 @@
 import { Handle, Position, type NodeProps } from "@xyflow/react";
-import { CORES, type AgenteDeclarado, type CostClass, type Regra } from "./api";
+import {
+  CORES,
+  type AgenteDeclarado,
+  type CostClass,
+  type Regra,
+  type ValorParametro,
+} from "./api";
 
 /**
  * Um nó do canvas. Duas naturezas, e a assimetria é a tese do produto.
@@ -19,18 +25,56 @@ import { CORES, type AgenteDeclarado, type CostClass, type Regra } from "./api";
 export interface DadosRegra extends Record<string, unknown> {
   tipo: "regra";
   regra: Regra;
-  parametros: Record<string, number>;
+  parametros: Record<string, ValorParametro>;
+  // Em qual ETAPA este bloco roda. Indice, nao nome: renomear uma etapa nao
+  // pode mover bloco nenhum.
+  //
+  // Mora no no e nao numa tabela `Map<noId, etapa>` ao lado porque a segunda
+  // ficaria dessincronizada no dia em que um no fosse removido — e o sintoma
+  // seria um bloco numa etapa que nao existe mais.
+  etapa: number;
 }
 
 export interface DadosAgente extends Record<string, unknown> {
   tipo: "agente";
   declaracao: AgenteDeclarado;
+  etapa: number;
 }
 
-export type DadosDoNo = DadosRegra | DadosAgente;
+/** Uma TRIPULACAO: varios agentes sobre o mesmo item, com politica de conflito.
+ *
+ *  Como `DadosAgente`, ela e DADO — o time e criado na tela, nao escolhido de
+ *  um cardapio. Sem `abstem_com`: ele sai dos agentes, que ja o declaram cada
+ *  um, e perguntar de novo faria o Crew chamar de desacordo duas abstencoes. */
+export interface DadosCrew extends Record<string, unknown> {
+  tipo: "crew";
+  nome: string;
+  agentes: AgenteDeclarado[];
+  process: string;
+  conflito: string;
+  etapa: number;
+}
+
+export type DadosDoNo = DadosRegra | DadosAgente | DadosCrew;
+
+/** O que se LE no no. Diferente de `nomeDo`, que e IDENTIDADE.
+ *
+ *  A paleta chama o bloco de "Condition" e o no do canvas o chamava de
+ *  "condicao" — o mesmo bloco com dois nomes na mesma tela. Duas funcoes
+ *  separadas porque as duas perguntas sao diferentes: `usados` precisa saber se
+ *  este bloco JA ESTA no workflow (identidade), e o no precisa saber como
+ *  escreve-lo (rotulo). Uma funcao so, usada nos dois lugares, faria o
+ *  `usados` comparar rotulos e deixaria passar o mesmo bloco duas vezes. */
+export function rotuloDo(d: DadosDoNo): string {
+  if (d.tipo === "regra") return d.regra.rotulo || d.regra.nome;
+  if (d.tipo === "crew") return d.nome;
+  return d.declaracao.name;
+}
 
 export function nomeDo(d: DadosDoNo): string {
-  return d.tipo === "regra" ? d.regra.nome : d.declaracao.name;
+  if (d.tipo === "regra") return d.regra.nome;
+  if (d.tipo === "crew") return d.nome;
+  return d.declaracao.name;
 }
 
 // A classe de custo de um agente é sempre AGENTE — `RegraDisponivel` RECUSA
@@ -38,7 +82,12 @@ export function nomeDo(d: DadosDoNo): string {
 // um nó de agente. Isto ordena a PRÉVIA; quem decide de verdade é
 // `Stage.ordered()`, e o painel mostra a resposta do servidor ao lado.
 export function classeDo(d: DadosDoNo): CostClass {
-  return d.tipo === "regra" ? d.regra.cost_class : "AGENTE";
+  if (d.tipo === "regra") return d.regra.cost_class;
+  // CREW e MAIS caro que AGENTE, e por isso roda depois: sao varios agentes
+  // sobre o mesmo item. Dizer "AGENTE" aqui poria a tripulacao antes de um
+  // agente sozinho na previa, contradizendo o servidor.
+  if (d.tipo === "crew") return "CREW";
+  return "AGENTE";
 }
 
 const PONTA =
@@ -76,7 +125,7 @@ export function NoResolver({ data, selected }: NodeProps) {
       <div className="px-3 pt-2.5 pb-2">
         <div className="flex items-baseline gap-2">
           <span className="text-[13px] font-semibold text-tinta dark:text-noite-tinta">
-            {nomeDo(d)}
+            {rotuloDo(d)}
           </span>
           <span className={`ml-auto text-[10px] font-medium tracking-wider ${cor.texto}`}>
             {classe}
@@ -93,11 +142,21 @@ export function NoResolver({ data, selected }: NodeProps) {
           ].join(" ")}
           title={d.tipo === "agente" ? d.declaracao.system : undefined}
         >
-          {d.tipo === "regra" ? d.regra.resumo : d.declaracao.system || "sem instrução ainda"}
+          {d.tipo === "regra"
+            ? d.regra.resumo
+            : d.tipo === "crew"
+              ? `${d.agentes.length} agente(s) sobre o mesmo item`
+              : d.declaracao.system || "sem instrução ainda"}
         </p>
       </div>
 
-      {d.tipo === "regra" ? <CorpoRegra d={d} /> : <CorpoAgente d={d} />}
+      {d.tipo === "regra" ? (
+        <CorpoRegra d={d} />
+      ) : d.tipo === "crew" ? (
+        <CorpoCrew d={d} />
+      ) : (
+        <CorpoAgente d={d} />
+      )}
 
       <Handle type="source" position={Position.Bottom} isConnectable={false} className={PONTA} />
     </div>
@@ -117,6 +176,17 @@ function CorpoRegra({ d }: { d: DadosRegra }) {
           <span className="ml-auto text-tinta dark:text-noite-tinta">{d.parametros[p.nome]}</span>
         </div>
       ))}
+    </div>
+  );
+}
+
+function CorpoCrew({ d }: { d: DadosCrew }) {
+  return (
+    <div className="border-t border-neutral-100 px-3 py-1.5 text-[10.5px] leading-snug text-neutral-500 dark:border-noite-borda dark:text-noite-fraca">
+      <div>{d.agentes.map((a) => a.name).join(", ") || "sem agente"}</div>
+      <div className="mt-0.5 font-mono text-[10px]">
+        {d.process} · conflito: {d.conflito}
+      </div>
     </div>
   );
 }

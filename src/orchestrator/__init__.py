@@ -37,7 +37,7 @@ decide, por item, até onde subir — e registra por quê.
 
 **O que este `__init__` NÃO exporta, de propósito:** nada do domínio de
 conciliação. Ela é a implementação de referência (§1.3), mora em
-`orchestrator.conciliacao`, e importá-la daqui faria todo usuário do framework
+`orchestrator.domains.reconciliation`, e importá-la daqui faria todo usuário do framework
 carregar a taxonomia de divergência fiscal brasileira.
 
 **Estabilidade.** `0.x`: estes nomes podem mudar até o teste de generalidade

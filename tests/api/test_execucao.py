@@ -5,7 +5,7 @@ pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient
 
 from orchestrator.api.app import app
-from orchestrator.models import banco, conciliacao, contabil
+from orchestrator.domains.reconciliation.models import banco, conciliacao, contabil
 
 cliente = TestClient(app)
 
@@ -705,13 +705,21 @@ def test_o_run_de_um_CSV_e_PERSISTIDO_com_o_ref_do_arquivo(tmp_path, monkeypatch
 def test_payload_de_dict_contra_resolver_TIPADO_e_422_e_nao_500(tmp_path, monkeypatch):
     """A combinação que estourava.
 
-    `ArquivoSource` entrega dicionário; `ExactMatcher` lê `be.document`. Com
+    `ArquivoSource` entrega dicionário; um resolver TIPADO lê `be.document`. Com
     `kind="banco"` o CSV cai direto no `banco()` da conciliação e o resultado
     era um 500 de `AttributeError`, vindo de três camadas abaixo de quem
     escolheu as duas pontas.
 
     A recusa nomeia o RESOLVER e o KIND, porque é a combinação que está errada
     e não nenhuma das duas escolhas sozinha.
+
+    **Quem é nomeado mudou, e a mudança é o ganho.** Era o `L1`, e hoje é o
+    `L2`: o L1 virou `regras.Igualdade` configurada com nomes de campo, então
+    ele não exige tipo nenhum e passa a rodar sobre o dicionário do CSV. Quem
+    ainda recusa é o L2, que continua tipado porque conta dias úteis. A
+    asserção abaixo cobra as duas metades — o L2 recusando E o L1 não
+    aparecendo —, porque só a primeira deixaria passar uma regressão que
+    retipasse o L1.
     """
     import orchestrator.api.app as api_app
 
@@ -728,7 +736,8 @@ def test_payload_de_dict_contra_resolver_TIPADO_e_422_e_nao_500(tmp_path, monkey
 
     assert r.status_code == 422, r.text
     detalhe = r.json()["detail"]
-    assert "L1" in detalhe
+    assert "L2" in detalhe
+    assert "L1" not in detalhe
     assert "banco" in detalhe
     assert "BankEntry" in detalhe
     assert "dict" in detalhe
@@ -816,7 +825,7 @@ def test_uma_falha_da_fonte_SINTETICA_sobe_como_erro_de_SERVIDOR(monkeypatch):
     errado sobre um bug que não é dele — um erro confiante, que é pior que o
     500 honesto.
     """
-    from orchestrator.synth.benchmark import SyntheticSource
+    from orchestrator.domains.reconciliation.synth.benchmark import SyntheticSource
 
     def _explode(self):
         raise ValueError("defeito do gerador, não do pedido")
@@ -833,12 +842,12 @@ def _transformador():
     `produced` e `WorkSet.com()` existem desde a fatia do grafo: um resolver
     pode criar itens de outro `kind`, e o stage seguinte os consome.
     """
+    from orchestrator.domains.reconciliation.resolvers.exact import ExactMatcher
     from orchestrator.kernel.cost import CostClass
     from orchestrator.kernel.definition import Stage, WorkflowDefinition
     from orchestrator.kernel.resolution import Resolution
     from orchestrator.kernel.resolver import ResolverDescription, ResolverOutput
     from orchestrator.kernel.work import WorkItem
-    from orchestrator.matching.exact import ExactMatcher
 
     class Transforma:
         name = "transforma"
@@ -1366,9 +1375,9 @@ def test_o_422_de_PAYLOAD_vem_ANTES_do_409_de_chave(tmp_path, monkeypatch):
     """
     import orchestrator.api.app as api_app
     from orchestrator.agent.declarado import construir_agente
+    from orchestrator.domains.reconciliation.resolvers.exact import ExactMatcher
     from orchestrator.grill.catalogo import ClienteAusente
     from orchestrator.kernel.definition import Stage, WorkflowDefinition
-    from orchestrator.matching.exact import ExactMatcher
 
     raiz = tmp_path / "entradas"
     raiz.mkdir()

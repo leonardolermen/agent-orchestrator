@@ -10,15 +10,25 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from orchestrator.agent.declarado import AgenteDeclarado, RegraDisponivel, construir_agente
+from orchestrator.agent.declarado import (
+    AgenteDeclarado,
+    RegraDisponivel,
+    ValorDeParametro,
+    construir_agente,
+)
 from orchestrator.agent.llm import LLMClient
-from orchestrator.conciliacao.ferramentas import ToolContext
+from orchestrator.domains.reconciliation.agent.ferramentas import ToolContext
+from orchestrator.domains.reconciliation.revisor import RevisorHumano
 from orchestrator.domains.registro import CATALOGO
 from orchestrator.grill.catalogo import ClienteAusente
 from orchestrator.kernel.cost import CostClass
-from orchestrator.kernel.definition import Stage, WorkflowDefinition, consome_de
+from orchestrator.kernel.definition import (
+    Stage,
+    WorkflowDefinition,
+    consome_de,
+    produz_de,
+)
 from orchestrator.review.fila import Fila
-from orchestrator.review.revisor import RevisorHumano
 
 PADRAO_ID = re.compile(r"^[a-z][a-z0-9-]{2,39}$")
 ID_RESERVADOS = frozenset({"conciliacao"})
@@ -44,7 +54,7 @@ def validar_id(workflow_id: str) -> None:
 @dataclass(frozen=True)
 class ResolverReceita:
     nome: str
-    parametros: dict[str, int] = field(default_factory=dict)
+    parametros: dict[str, ValorDeParametro] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -134,7 +144,7 @@ def construir(
             )
         if item.nome in vistos:
             raise ValueError(
-                f"resolver repetido na cascata: {item.nome!r}. o segundo rodaria "
+                f"resolver repetido no workflow: {item.nome!r}. o segundo rodaria "
                 f"sobre o pool que o primeiro já esvaziou e casaria zero"
             )
         vistos.add(item.nome)
@@ -187,6 +197,10 @@ def construir(
                 name="conciliar lançamentos",
                 cascade=tuple(resolvers),
                 consome=consome_de(resolvers),
+                # Mesma razão da composição pelo canvas: um bloco que ramifica
+                # precisa declarar o kind do ramo AQUI, senão a receita salva e
+                # a execução recusa.
+                produz=produz_de(resolvers),
             ),
         ),
     )

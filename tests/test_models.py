@@ -2,8 +2,7 @@ from datetime import date
 
 import pytest
 
-from orchestrator.kernel.work import WorkSet
-from orchestrator.models import (
+from orchestrator.domains.reconciliation.models import (
     BankEntry,
     LedgerEntry,
     conciliacao,
@@ -11,6 +10,7 @@ from orchestrator.models import (
     lados,
     pool,
 )
+from orchestrator.kernel.work import WorkSet
 
 
 def _bank(id_: str = "b1", amount: int = -10000) -> BankEntry:
