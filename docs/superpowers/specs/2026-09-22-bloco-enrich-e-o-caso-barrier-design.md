@@ -267,3 +267,40 @@ com o modelo em Haiku ou gravado, não em Opus.
 3. `pytest` verde nas duas instalações; `ruff` limpo; bundle de `web/` batendo.
 4. `orchestrator --seed 1 --n 500` continua em `85.3%`, zero falso positivo,
    zero falso negativo — o bloco novo não toca o caminho do golden.
+
+---
+
+## Executado em 2026-09-22 — o que rodou e o que ele achou
+
+Commits: `902de40` (o resolver), `9682c8c` (catálogo), `6067456` e `a651b05`
+(os dois defeitos que o run ao vivo expôs).
+
+**A parte determinística funcionou contra o Barrier de verdade.** Risk Engine
+por container na rede do compose, dois casos semeados com os CPFs da collection
+(um PEP, um de divergência de bureau), e o run:
+
+```
+entrada      REGRA  matches=1  0µ¢    puxou a fila da mesa
+enriquecer   REGRA  matches=2  0µ¢    buscou o detalhe dos dois casos
+itens: 4   resolvidos: 2
+```
+
+**O `caminho` ficou vazio, e isso é a §4.2 satisfeita pela API do parceiro.**
+`AssessmentResponse` traz `id`, `status`, `riskLevel`, `decision`, `factors[]`
+e datas — nenhum nome, nenhum documento. Não houve o que minimizar porque o
+Barrier já não entrega dado pessoal nessa rota.
+
+**O agente não completou, e o motivo virou duas correções.** Ele rodou em Opus,
+gastou 3.863.500 µ¢ (US$ 0,039) e abstém nos dois itens por orçamento. Duas
+causas, as duas consertadas:
+
+1. `contra_gabarito` vinha preenchido com `bank_total: 302` e
+   `deterministic_rate: 0.0` — números do benchmark de conciliação, numa
+   triagem de KYC que nunca o tocou (`6067456`).
+2. Não havia como dizer "este bloco é Haiku": `AgenteDeclarado.model` existia no
+   dataclass e não no schema da API, então toda composição herdava o modelo do
+   cliente, que é o mais caro da tabela (`a651b05`).
+
+**Pendente:** rodar o caso em Haiku — a composição `mesa-barrier-haiku` já está
+gravada, com `model: claude-haiku-4-5` e teto de 1.000.000 µ¢ por item. É o
+único passo que gasta, e por isso espera decisão explícita.
