@@ -276,3 +276,105 @@ def test_compor_uma_cascata_PAGA_nao_gasta_nada():
 
     assert r.status_code == 201
     assert any(x["cost_class"] == "AGENTE" for x in r.json()["stages"][0]["cascade"])
+
+
+def test_o_MODELO_do_bloco_atravessa_a_borda_e_e_gravado(composicoes_em_tmp):
+    """A alavanca de 5x, e ela existia no dado sem alcançar a tela.
+
+    `AgenteDeclarado.model` é campo desde sempre e `AnthropicClient` o honra —
+    mas `AgenteDeclaradoJSON` não o tinha, então toda composição herdava o
+    modelo do cliente. Medido num run real: um triador de vocabulário fechado
+    rodou em Opus, gastou US$ 0,039 e abstém por orçamento, porque não havia
+    como dizer "este bloco é Haiku".
+    """
+    corpo = {
+        "id": "com-modelo",
+        "nome": "com modelo",
+        "blocos": [
+            {
+                "tipo": "agente",
+                "declaracao": {
+                    "name": "triador-barato",
+                    "system": "classifique",
+                    "kind": "issue",
+                    "prompt": "{titulo}",
+                    "tipos": ["BUG", "FEATURE"],
+                    "abstem_com": "NAO_SEI",
+                    "ferramentas": [],
+                    "max_turns": 1,
+                    "budget_microcents": 4_000_000,
+                    "model": "claude-haiku-4-5",
+                },
+            }
+        ],
+    }
+
+    assert cliente.post("/api/composicoes", json=corpo).status_code == 201
+
+    from orchestrator.authoring.composicao import ler
+
+    bloco = ler("com-modelo", composicoes_em_tmp).blocos[0]
+    assert bloco.declaracao.model == "claude-haiku-4-5"
+
+
+def test_modelo_SEM_PRECO_e_recusado_com_o_motivo():
+    """Sem preço não há custo, e custo é o que este produto mede. Aceitar um
+    nome qualquer faria a coluna de µ¢ estourar no meio da execução, com a
+    conta já correndo."""
+    corpo = {
+        "id": "modelo-ruim",
+        "nome": "modelo ruim",
+        "blocos": [
+            {
+                "tipo": "agente",
+                "declaracao": {
+                    "name": "triador",
+                    "system": "classifique",
+                    "kind": "issue",
+                    "prompt": "{titulo}",
+                    "tipos": ["BUG"],
+                    "abstem_com": "NAO_SEI",
+                    "ferramentas": [],
+                    "max_turns": 1,
+                    "budget_microcents": 4_000_000,
+                    "model": "gpt-inventado",
+                },
+            }
+        ],
+    }
+
+    r = cliente.post("/api/composicoes", json=corpo)
+
+    assert r.status_code == 422, r.text
+    assert "preço" in r.json()["detail"] or "preco" in r.json()["detail"]
+
+
+def test_modelo_VAZIO_continua_valendo_e_significa_o_do_cliente(composicoes_em_tmp):
+    """O default de todo chamador de hoje. Exigir o campo obrigaria quem monta
+    a escolher modelo antes de saber que essa escolha existe."""
+    corpo = {
+        "id": "sem-modelo",
+        "nome": "sem modelo",
+        "blocos": [
+            {
+                "tipo": "agente",
+                "declaracao": {
+                    "name": "triador",
+                    "system": "classifique",
+                    "kind": "issue",
+                    "prompt": "{titulo}",
+                    "tipos": ["BUG"],
+                    "abstem_com": "NAO_SEI",
+                    "ferramentas": [],
+                    "max_turns": 1,
+                    "budget_microcents": 4_000_000,
+                },
+            }
+        ],
+    }
+
+    assert cliente.post("/api/composicoes", json=corpo).status_code == 201
+
+    from orchestrator.authoring.composicao import ler
+
+    assert ler("sem-modelo", composicoes_em_tmp).blocos[0].declaracao.model == ""

@@ -373,3 +373,53 @@ def test_parametro_BOOLEANO_continua_recusado():
                 },
             )
         )
+
+
+def test_o_chat_pode_escolher_o_MODELO_e_so_entre_os_precificados():
+    """O `enum` sai de `modelos_precificados()`, a mesma fronteira que o
+    servidor usa para aceitar — uma lista literal aqui ofereceria ao modelo um
+    nome que `Cost.microcents` recusa, e o erro só apareceria rodando."""
+    from orchestrator.kernel.cost import modelos_precificados
+
+    agente = _bloco_do_schema()["properties"]["agente"]
+    tarefa = _bloco_do_schema()["properties"]["tarefa"]
+
+    assert agente["properties"]["model"]["enum"] == modelos_precificados()
+    assert tarefa["properties"]["model"]["enum"] == modelos_precificados()
+    # NÃO é obrigatório: omitir significa "o modelo do cliente", que é o
+    # default de todo workflow de hoje.
+    assert "model" not in agente["required"]
+
+
+def test_o_modelo_escolhido_pelo_chat_chega_na_declaracao():
+    bruta = interpretar(
+        ToolCall(
+            id="t",
+            name="propor_workflow",
+            arguments={
+                "nome": "x",
+                "justificativa": "y",
+                "etapas": [
+                    {
+                        "nome": "e1",
+                        "blocos": [
+                            {
+                                "tipo": "agente",
+                                "agente": {
+                                    "name": "triador",
+                                    "system": "s",
+                                    "kind": "issue",
+                                    "prompt": "{titulo}",
+                                    "tipos": ["A"],
+                                    "abstem_com": "NAO_SEI",
+                                    "model": "claude-haiku-4-5",
+                                },
+                            }
+                        ],
+                    }
+                ],
+            },
+        )
+    )
+
+    assert bruta.etapas[0].blocos[0].declaracao.model == "claude-haiku-4-5"

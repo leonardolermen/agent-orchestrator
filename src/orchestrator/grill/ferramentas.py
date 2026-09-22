@@ -24,6 +24,7 @@ from orchestrator.authoring.composicao import (
     Etapa,
 )
 from orchestrator.domains.registro import CATALOGO
+from orchestrator.kernel.cost import modelos_precificados
 
 NOMES = ("perguntar", "propor_workflow", "fora_do_catalogo")
 
@@ -150,6 +151,16 @@ _DECL_AGENTE = {
             "description": "o rótulo de 'não sei'. NUNCA um dos `tipos`",
         },
         "ferramentas": {"type": "array", "items": {"type": "string"}},
+        "model": {
+            "type": "string",
+            "enum": modelos_precificados(),
+            "description": (
+                "qual modelo este bloco usa. OMITA para usar o do cliente. "
+                "Bloco de vocabulário fechado ou transformação curta cabe num "
+                "modelo barato; julgamento difícil pede o caro — e a diferença "
+                "de preço entre eles é de 5x"
+            ),
+        },
     },
     "required": ["name", "system", "kind", "prompt", "tipos", "abstem_com"],
 }
@@ -174,6 +185,16 @@ _DECL_TAREFA = {
         },
         "prompt": {"type": "string", "description": "template sobre os campos do item"},
         "ferramentas": {"type": "array", "items": {"type": "string"}},
+        "model": {
+            "type": "string",
+            "enum": modelos_precificados(),
+            "description": (
+                "qual modelo este bloco usa. OMITA para usar o do cliente. "
+                "Bloco de vocabulário fechado ou transformação curta cabe num "
+                "modelo barato; julgamento difícil pede o caro — e a diferença "
+                "de preço entre eles é de 5x"
+            ),
+        },
     },
     "required": ["name", "system", "kind", "produz", "prompt"],
 }
@@ -378,6 +399,7 @@ def _agente_de(d: dict[str, Any]) -> AgenteDeclarado:
         tipos=tuple(d.get("tipos") or ()),
         abstem_com=_texto(d, "abstem_com"),
         ferramentas=tuple(d.get("ferramentas") or ()),
+        model=str(d.get("model") or ""),
     )
 
 
@@ -389,6 +411,7 @@ def _tarefa_de(d: dict[str, Any]) -> TarefaDeclarada:
         produz=_texto(d, "produz"),
         prompt=_texto(d, "prompt"),
         ferramentas=tuple(d.get("ferramentas") or ()),
+        model=str(d.get("model") or ""),
     )
 
 

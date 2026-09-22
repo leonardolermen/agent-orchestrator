@@ -125,7 +125,12 @@ from orchestrator.domains.registro import CATALOGO
 from orchestrator.grill.catalogo import MODELO_INERTE
 from orchestrator.grill.receita import Receita, ResolverReceita, construir
 from orchestrator.grill.registro import gravar_receita, listar_receitas
-from orchestrator.kernel.cost import Cost, CostClass
+from orchestrator.kernel.cost import (
+    Cost,
+    CostClass,
+    modelo_precificado,
+    modelos_precificados,
+)
 from orchestrator.kernel.definition import WorkflowDefinition
 from orchestrator.kernel.event import EventBus
 from orchestrator.kernel.resolution import TraceKind
@@ -268,6 +273,26 @@ def _ferramenta_json(ferramentas: ToolRegistry, nome: str) -> FerramentaJSON:
     return FerramentaJSON(nome=nome, descricao=ferramentas.spec(nome).description)
 
 
+def _modelo(nome: str) -> str:
+    """O modelo do bloco, conferido contra a TABELA DE PREÇOS.
+
+    Vazio passa: significa "o modelo do cliente da execução", que é o default
+    de todo workflow de hoje.
+
+    Um nome fora da tabela é recusado AQUI, na composição, e não na execução:
+    sem preço não há custo, e custo é o que este produto mede. `AnthropicClient`
+    também recusa — mas ali a recusa chega com a cascata montada e, pela web,
+    depois de a pessoa clicar em rodar.
+    """
+    if nome and not modelo_precificado(nome):
+        raise ValueError(
+            f"modelo sem preço conhecido: {nome!r}. sem preço não há custo, e "
+            f"custo é o que este produto mede. use um de "
+            f"{modelos_precificados()}"
+        )
+    return nome
+
+
 def _declaracao(d: AgenteDeclaradoJSON) -> AgenteDeclarado:
     """Um `AgenteDeclarado` a partir do JSON. Levanta `ValueError` do DOMÍNIO.
 
@@ -285,6 +310,7 @@ def _declaracao(d: AgenteDeclaradoJSON) -> AgenteDeclarado:
         ferramentas=tuple(d.ferramentas),
         max_turns=d.max_turns,
         budget_microcents=d.budget_microcents,
+        model=_modelo(d.model),
     )
 
 
@@ -301,6 +327,7 @@ def _declaracao_de_tarefa(d: TarefaDeclaradaJSON) -> TarefaDeclarada:
         ferramentas=tuple(d.ferramentas),
         max_turns=d.max_turns,
         budget_microcents=d.budget_microcents,
+        model=_modelo(d.model),
     )
 
 
@@ -480,6 +507,7 @@ def ambiente() -> AmbienteJSON:
     """
     return AmbienteJSON(
         modelo_padrao=MODELO_INERTE,
+        modelos=modelos_precificados(),
         # A MESMA leitura que a guarda 3 de `_executar` usa para recusar. Duas
         # leituras divergiriam no dia em que uma das duas mudasse de critério, e
         # o sintoma seria a tela anunciar que dá para rodar o que a rota recusa.

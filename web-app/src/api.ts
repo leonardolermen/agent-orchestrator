@@ -59,6 +59,10 @@ export interface AgenteDeclarado {
   ferramentas: string[];
   max_turns: number;
   budget_microcents: number;
+  // Vazio = o modelo do cliente da execução. É a alavanca de custo por BLOCO:
+  // a tabela de preços do servidor diz que o mais barato é 5x menos que o mais
+  // caro, na entrada e na saída.
+  model: string;
 }
 
 // Uma TAREFA como dado. O irmão do agente para o bloco que TRANSFORMA.
@@ -80,6 +84,8 @@ export interface TarefaDeclarada {
   ferramentas: string[];
   max_turns: number;
   budget_microcents: number;
+  // Mesma história do agente: vazio = o modelo do cliente.
+  model: string;
 }
 
 // Tudo que dá para compor, SEM agrupamento. Espelha `CatalogoJSON`.
@@ -205,6 +211,8 @@ export interface ComposicaoResumo {
 
 export interface Ambiente {
   modelo_padrao: string;
+  // O que o servidor sabe cobrar. O `<select>` do painel sai daqui.
+  modelos: string[];
   // Booleano de propósito. A tela precisa saber se a entrevista vai funcionar,
   // e não precisa — nunca — do valor da chave.
   tem_chave: boolean;
@@ -440,6 +448,8 @@ export function agenteEmBranco(nome: string): AgenteDeclarado {
     ferramentas: [],
     max_turns: 3,
     budget_microcents: 4_000_000,
+    // Vazio: quem monta escolhe, e até escolher vale o modelo do cliente.
+    model: "",
   };
 }
 
@@ -459,6 +469,8 @@ export function tarefaEmBranco(nome: string): TarefaDeclarada {
     ferramentas: [],
     max_turns: 3,
     budget_microcents: 4_000_000,
+    // Vazio: quem monta escolhe, e até escolher vale o modelo do cliente.
+    model: "",
   };
 }
 

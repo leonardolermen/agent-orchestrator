@@ -365,6 +365,7 @@ export function Painel(p: Props) {
           key={p.selecionado.id}
           no={{ id: p.selecionado.id, data: p.selecionado.data }}
           catalogo={p.catalogo}
+          ambiente={p.ambiente}
           onMudar={p.onMudarTarefa}
           onRemover={p.onRemover}
         />
@@ -375,6 +376,7 @@ export function Painel(p: Props) {
           key={p.selecionado.id}
           no={{ id: p.selecionado.id, data: p.selecionado.data }}
           catalogo={p.catalogo}
+          ambiente={p.ambiente}
           onMudar={p.onMudarAgente}
           onRemover={p.onRemover}
         />
@@ -608,11 +610,13 @@ export function Painel(p: Props) {
 function EditorDeTarefa({
   no,
   catalogo,
+  ambiente,
   onMudar,
   onRemover,
 }: {
   no: { id: string; data: DadosTarefa };
   catalogo: Catalogo;
+  ambiente: Ambiente | null;
   onMudar: (id: string, patch: Partial<TarefaDeclarada>) => void;
   onRemover: (id: string) => void;
 }) {
@@ -729,6 +733,29 @@ function EditorDeTarefa({
         </div>
       </Campo>
 
+      {/* O MODELO, e ele é a alavanca de custo por bloco: a tabela de preços do
+          servidor diz que o mais barato é 5x menos que o mais caro, na entrada
+          e na saída. A lista vem de `/api/ambiente` — a tela oferece
+          exatamente o que o servidor aceita, e uma lista literal aqui
+          ofereceria um modelo que `Cost.microcents` recusa. */}
+      <Campo
+        rotulo="modelo"
+        dica="vazio = o modelo padrão do servidor; vocabulário fechado costuma caber no mais barato"
+      >
+        <select
+          value={t.model}
+          onChange={(e) => mudar({ model: e.target.value })}
+          className={CAMPO}
+        >
+          <option value="">padrão do servidor</option>
+          {(ambiente?.modelos ?? []).map((m) => (
+            <option key={m} value={m}>
+              {m}
+            </option>
+          ))}
+        </select>
+      </Campo>
+
       <Campo rotulo="teto por item (µ¢)" dica={`≈ US$ ${(t.budget_microcents / 1e8).toFixed(4)}`}>
         <input
           type="number"
@@ -755,11 +782,13 @@ function EditorDeTarefa({
 function EditorDeAgente({
   no,
   catalogo,
+  ambiente,
   onMudar,
   onRemover,
 }: {
   no: { id: string; data: DadosAgente };
   catalogo: Catalogo;
+  ambiente: Ambiente | null;
   onMudar: (id: string, patch: Partial<AgenteDeclarado>) => void;
   onRemover: (id: string) => void;
 }) {
@@ -904,6 +933,29 @@ function EditorDeAgente({
       {/* O TETO, em duas escalas. `budget_microcents` é o campo porque a
           constraint de dinheiro do projeto proíbe float acumulando; o dólar ao
           lado é derivado, só para leitura. */}
+      {/* O MODELO, e ele é a alavanca de custo por bloco: a tabela de preços do
+          servidor diz que o mais barato é 5x menos que o mais caro, na entrada
+          e na saída. A lista vem de `/api/ambiente` — a tela oferece
+          exatamente o que o servidor aceita, e uma lista literal aqui
+          ofereceria um modelo que `Cost.microcents` recusa. */}
+      <Campo
+        rotulo="modelo"
+        dica="vazio = o modelo padrão do servidor; vocabulário fechado costuma caber no mais barato"
+      >
+        <select
+          value={a.model}
+          onChange={(e) => mudar({ model: e.target.value })}
+          className={CAMPO}
+        >
+          <option value="">padrão do servidor</option>
+          {(ambiente?.modelos ?? []).map((m) => (
+            <option key={m} value={m}>
+              {m}
+            </option>
+          ))}
+        </select>
+      </Campo>
+
       <Campo rotulo="teto por item (µ¢)" dica={`≈ US$ ${(a.budget_microcents / 1e8).toFixed(4)}`}>
         <input
           type="number"
