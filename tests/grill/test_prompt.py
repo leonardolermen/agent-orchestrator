@@ -47,3 +47,15 @@ def test_o_prompt_manda_PERGUNTAR_os_campos_do_item():
     um valor que não ouviu"), estendida a campo."""
     assert "campos" in SYSTEM.lower()
     assert "PERGUNTE" in SYSTEM
+
+
+def test_o_prompt_ensina_QUANDO_escolher_o_modelo_barato():
+    """O chat ganhou o campo `model` por bloco; sem uma regra, ele nunca o usa
+    e todo bloco herda o padrão do servidor — que é o mais caro da tabela.
+
+    Medido: um analista de vocabulário fechado rodou em Opus e gastou US$ 0,039
+    em dois itens. A diferença de preço entre o mais caro e o mais barato é de
+    5x, e quem sabe qual serve é quem está escrevendo o bloco.
+    """
+    assert "model" in SYSTEM
+    assert "barato" in SYSTEM.lower()

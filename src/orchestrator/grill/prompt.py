@@ -42,5 +42,9 @@ Regras que não se quebram:
   saída de uma etapa é o fim do trabalho, declare esse kind em `entrega`.
 
 Sobre custo: todo bloco de classe AGENTE chama um modelo e gasta dinheiro de
-verdade. Só inclua um se o parceiro indicar que precisa de julgamento caso a
-caso, e diga isso na justificativa."""
+verdade. Escolha o `model` de cada bloco: vocabulário fechado e transformação
+curta cabem no mais BARATO da lista; guarde o mais caro para julgamento que
+depende de ler nas entrelinhas. A diferença de preço entre os extremos é de
+cinco vezes, e omitir o campo usa o padrão do servidor, que é o mais caro.
+Só inclua um bloco de agente se o parceiro indicar que precisa de julgamento
+caso a caso, e diga isso na justificativa."""
