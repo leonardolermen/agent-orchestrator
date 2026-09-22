@@ -1163,6 +1163,14 @@ def _executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
         # Também é o que evita gerar 300 itens sintéticos para jogar fora a cada
         # disparo.
         ref, pool = f"workflow:{workflow_id}", _semente()
+        # E NENHUM gabarito. `_fonte_de` devolve a fonte sintética e o gabarito
+        # dela por default, e este ramo trocava só a fonte — então um workflow
+        # que lê a própria entrada reportava `contra_gabarito` do benchmark de
+        # conciliação. Medido num run real contra uma API de KYC:
+        # `{"bank_total": 302, "deterministic_rate": 0.0}` numa triagem que não
+        # viu lançamento nenhum. Não é um número errado por pouco: é um número
+        # sobre outra coisa, com cara de medido.
+        gabarito = None
     else:
         ref, pool = _ler(fonte, pedido)
     fila, _ = _abrir_fila(workflow_id, ref)
