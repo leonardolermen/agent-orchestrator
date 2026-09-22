@@ -92,7 +92,11 @@ class Enriquecimento:
         return ResolverDescription(
             name=self.name,
             cost_class=self.cost_class,
-            summary=f"busca {_url_publica(self.url)} para cada item",
+            # ESTÁTICO, e igual ao `resumo` do catálogo: há um teste que os
+            # compara, para a paleta e o grafo não contarem duas histórias sobre
+            # o mesmo bloco. A url não se perde — ela é um PARÂMETRO, e o nó do
+            # canvas mostra os parâmetros.
+            summary="busca numa API o detalhe de cada item e funde no payload",
             consome=frozenset({self.kind}),
             produz=frozenset({self.produz}),
         )
