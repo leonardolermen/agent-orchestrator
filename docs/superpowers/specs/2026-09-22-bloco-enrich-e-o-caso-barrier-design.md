@@ -84,7 +84,15 @@ orquestrador é acoplar dois produtos pelo lado errado.
 
 ## 3. O bloco `Enrich`
 
-`regras/enriquecimento.py`, categoria `DATA` no catálogo, `CostClass.REGRA`.
+`sources/enriquecimento.py`, categoria `DATA` no catálogo, `CostClass.REGRA`.
+
+> **Corrigido em 2026-09-22, antes da primeira linha de código.** A spec dizia
+> `regras/enriquecimento.py`, e a catraca de camadas recusaria: `PERMITIDO`
+> dá a `regras` apenas o `kernel`, por decisão de arquitetura — uma regra
+> determinística casa por nome de campo e não conhece o mundo. Este bloco
+> precisa da guarda de host, do cliente e do teto de bytes, que moram em
+> `sources`. O precedente é exato: `sources/bloco.py` é o `Input`, um resolver
+> que mora ali pela mesma razão.
 
 | parâmetro | papel |
 |---|---|
@@ -113,7 +121,7 @@ que só alcança o primeiro nível — aninhar tornaria inalcançável, pelo pro
 exatamente o dado que foi buscado para ele.
 
 **Em colisão, o campo ORIGINAL do item vence**, e os descartados vão nomeados
-para o trace. Uma resposta não pode reescrever o `assessmentId` que identifica
+no log (pela mesma razão da 3.2: o trace não tem canal por item). Uma resposta não pode reescrever o `assessmentId` que identifica
 o item: se pudesse, o id do run, a chave da fila e a decisão humana passariam a
 apontar para coisas diferentes.
 
@@ -124,8 +132,16 @@ terceiro chegando sobre um item que já tem identidade.
 ### 3.2 Falha por item não derruba o run
 
 Timeout, 500 do parceiro, corpo que não é JSON, `caminho` que não existe,
-template citando campo que o item não tem: o item **não é consumido**, fica no
-pool sem enriquecimento, e o motivo entra no trace.
+template citando campo que o item não tem: o item **não é consumido** e fica no
+pool sem enriquecimento.
+
+**O motivo vai para o LOG DO SERVIDOR, não para o trace do run** — e a primeira
+versão desta spec prometia o trace. `ResolverOutput` não tem canal por item para
+"pulei este e eis por quê": é a mesma lacuna que `agent/tarefa.py` declara sobre
+o teto de orçamento, e o canal certo é o mesmo que ele aponta
+(`Resolver.resolve(work, ctx)` com contexto de execução). Prometer trace seria
+prometer o que o tipo não carrega. O sinal VISÍVEL de um item pulado é ele
+aparecer na lacuna.
 
 É a mesma forma da abstenção de um agente, e pela mesma razão: uma falha de
 rede não pode derrubar um fechamento por causa de um item. O item aparecer na
