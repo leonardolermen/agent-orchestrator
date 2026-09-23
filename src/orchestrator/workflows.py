@@ -31,6 +31,7 @@ existir — e cada um deles some do `TypeError` para dentro do type checker.
 """
 
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -67,7 +68,7 @@ class WorkflowContext:
     # `construir_definicao(fabrica, ctx)` não tinha por onde passá-lo: a
     # definição saía montada com a tranca e o agente levantava ao primeiro
     # turno.
-    cliente: "LLMClient | None" = None
+    cliente_para: "Callable[[str], LLMClient] | None" = None
     # Os DADOS que as ferramentas leem. Mesma história do `cliente`, um degrau
     # adiante: um agente com ferramenta precisa de um registro LIGADO para ser
     # construído, e `construir_composicao` não tinha por onde recebê-lo daqui.
@@ -123,7 +124,10 @@ def _de_receita(receita: Receita) -> WorkflowFactory:
 
     def fabrica(ctx: WorkflowContext) -> WorkflowDefinition:
         return construir(
-            receita, fila=ctx.fila, cliente=ctx.cliente, context=ctx.contexto
+            receita,
+            fila=ctx.fila,
+            cliente_para=ctx.cliente_para,
+            context=ctx.contexto,
         )
 
     return fabrica
@@ -146,7 +150,10 @@ def _de_composicao(composicao: Composicao) -> WorkflowFactory:
 
     def fabrica(ctx: WorkflowContext) -> WorkflowDefinition:
         return construir_composicao(
-            composicao, fila=ctx.fila, cliente=ctx.cliente, contexto=ctx.contexto
+            composicao,
+            fila=ctx.fila,
+            cliente_para=ctx.cliente_para,
+            contexto=ctx.contexto,
         )
 
     return fabrica

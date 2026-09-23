@@ -52,6 +52,7 @@ degrau de verdade depois dele.
 
 import hashlib
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -304,7 +305,15 @@ def construir_composicao(
     c: Composicao,
     *,
     fila: Fila | None = None,
-    cliente: LLMClient | None = None,
+    # QUEM dá o cliente de cada bloco, a partir do modelo que ele declarou.
+    #
+    # Era um cliente só, e por isso `AgenteDeclarado.model` não decidia nada: o
+    # modelo da chamada é o do CLIENTE (`AnthropicClient.complete` usa
+    # `self.model`), então todo bloco falava com o mesmo. Medido contra uma API
+    # real — um bloco declarado em `claude-haiku-4-5` gastou preço de opus.
+    #
+    # `None` continua sendo a TRANCA, agora entregue por fábrica.
+    cliente_para: "Callable[[str], LLMClient] | None" = None,
     contexto: Any = None,
 ) -> WorkflowDefinition:
     """Valida construindo. Se retorna, a cascata roda.
@@ -364,8 +373,10 @@ def construir_composicao(
     # `ClienteDeValidacao` qualquer cliente que viesse a ser falsy — trocando um
     # teto de verdade por um sentinela que recusa falar, o que a pessoa leria
     # como "o agente não fez nada".
-    if cliente is None:
-        cliente = ClienteDeValidacao()
+    if cliente_para is None:
+        # `is None`, não `or`: mesma disciplina das linhas vizinhas.
+        def cliente_para(_model: str) -> LLMClient:
+            return ClienteDeValidacao()
     # `is None`, não `or`: mesma disciplina de `grill.receita.construir`. `Fila`
     # não define `__bool__` nem `__len__` hoje, mas no dia em que definir um
     # `or` trocaria silenciosamente uma fila vazia EXPLÍCITA pelo default.
@@ -381,7 +392,7 @@ def construir_composicao(
 
     for etapa in c.etapas:
         etapas.append(
-            _degrau(etapa, por_nome, vistos, cliente, ferramentas, fila)
+            _degrau(etapa, por_nome, vistos, cliente_para, ferramentas, fila)
         )
 
     return WorkflowDefinition(
@@ -393,7 +404,9 @@ def construir_composicao(
     )
 
 
-def _tripulacao(bloco: BlocoCrew, cliente: LLMClient, ferramentas: Any) -> Resolver:
+def _tripulacao(
+    bloco: BlocoCrew, cliente_para: "Callable[[str], LLMClient]", ferramentas: Any
+) -> Resolver:
     """Um `Crew` a partir da declaração. Valida CONSTRUINDO, como tudo aqui.
 
     `Crew.__post_init__` recusa tripulação vazia, sequencial com um agente só,
@@ -407,7 +420,11 @@ def _tripulacao(bloco: BlocoCrew, cliente: LLMClient, ferramentas: Any) -> Resol
     """
     from orchestrator.crew.crew import Conflito, Crew, Process
 
-    agentes = tuple(construir_agente(a, cliente, ferramentas) for a in bloco.agentes)
+    # Cada agente da tripulação pede o cliente do SEU modelo: um time pode
+    # misturar um caro e um barato, e é justamente aí que a escolha paga.
+    agentes = tuple(
+        construir_agente(a, cliente_para(a.model), ferramentas) for a in bloco.agentes
+    )
     try:
         return Crew(
             name=bloco.nome,
@@ -427,7 +444,7 @@ def _degrau(
     etapa: "Etapa",
     por_nome: dict[str, Any],
     vistos: set[str],
-    cliente: LLMClient,
+    cliente_para: "Callable[[str], LLMClient]",
     ferramentas: Any,
     fila: Fila,
 ) -> Stage:
@@ -478,18 +495,26 @@ def _degrau(
             else:
                 resolvers.append(regra.construir(dict(bloco.parametros)))
         elif isinstance(bloco, BlocoCrew):
-            resolvers.append(_tripulacao(bloco, cliente, ferramentas))
+            resolvers.append(_tripulacao(bloco, cliente_para, ferramentas))
         elif isinstance(bloco, BlocoTarefa):
             # `consome`/`produz` do degrau saem de `describe()` no `return` lá
             # embaixo, e é a `Tarefa` que os declara — sem isso este bloco
             # entraria no grafo com conjuntos vazios.
-            resolvers.append(construir_tarefa(bloco.declaracao, cliente, ferramentas))
+            resolvers.append(
+                construir_tarefa(
+                    bloco.declaracao, cliente_para(bloco.declaracao.model), ferramentas
+                )
+            )
         else:
             # Sem checagem de `kind` AQUI, de propósito: a composição não
             # conhece a fonte. `Stage.consome` sai de `consome_de` no `return`
             # abaixo, e é a borda do `/runs` (`_conferir_kinds`) que recusa um
             # kind que a fonte não entrega — por resolver, antes de gastar.
-            resolvers.append(construir_agente(bloco.declaracao, cliente, ferramentas))
+            resolvers.append(
+                construir_agente(
+                    bloco.declaracao, cliente_para(bloco.declaracao.model), ferramentas
+                )
+            )
 
     return Stage(
                 name=etapa.nome,

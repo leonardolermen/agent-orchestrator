@@ -45,7 +45,7 @@ def _comp(blocos, cid="minha") -> Composicao:
 
 
 def _construir(c, contexto=None):
-    return construir_composicao(c, cliente=FakeLLMClient([]), contexto=contexto)
+    return construir_composicao(c, cliente_para=lambda _model: FakeLLMClient([]), contexto=contexto)
 
 
 # -- o que a Receita não sabia carregar ------------------------------------
@@ -325,3 +325,89 @@ def test_o_cliente_default_e_a_TRANCA_e_nao_um_modelo():
     (r,) = d.stages[0].cascade
     with pytest.raises(RuntimeError, match="não fala com modelo"):
         r.client.complete("", [], [])
+
+
+def test_cada_bloco_recebe_o_CLIENTE_DO_SEU_MODELO():
+    """A fábrica é chamada com o modelo que o bloco declarou.
+
+    Sem isto, `model` era decorativo: medido contra uma API real, um bloco
+    declarado em `claude-haiku-4-5` fez a chamada em opus, porque quem decide é
+    `AnthropicClient.complete`, que usa o modelo do CLIENTE.
+    """
+    from orchestrator.agent.declarado import AgenteDeclarado
+    from orchestrator.agent.llm import FakeLLMClient
+    from orchestrator.authoring.composicao import (
+        BlocoAgente,
+        Composicao,
+        agora,
+        construir_composicao,
+    )
+
+    pedidos: list[str] = []
+
+    def fabrica(model: str):
+        pedidos.append(model)
+        return FakeLLMClient([], model=model or "claude-opus-5")
+
+    def _ag(nome, model):
+        return BlocoAgente(
+            declaracao=AgenteDeclarado(
+                name=nome,
+                system="s",
+                kind="issue",
+                prompt="{titulo}",
+                tipos=("BUG",),
+                abstem_com="NAO_SEI",
+                model=model,
+            )
+        )
+
+    construir_composicao(
+        Composicao(
+            id="c1",
+            nome="dois modelos",
+            gerado_em=agora(),
+            blocos=(_ag("barato", "claude-haiku-4-5"), _ag("caro", "claude-opus-5")),
+            entrega=("issue",),
+        ),
+        cliente_para=fabrica,
+    )
+
+    assert pedidos == ["claude-haiku-4-5", "claude-opus-5"]
+
+
+def test_sem_fabrica_a_TRANCA_continua_sendo_o_default():
+    """Compor não gasta. O default vira uma fábrica que devolve a tranca, e
+    `ClienteDeValidacao.complete` continua levantando se alguém chegar ao
+    modelo por um caminho que não deveria existir."""
+    from orchestrator.agent.declarado import AgenteDeclarado, ClienteDeValidacao
+    from orchestrator.authoring.composicao import (
+        BlocoAgente,
+        Composicao,
+        agora,
+        construir_composicao,
+    )
+
+    definicao = construir_composicao(
+        Composicao(
+            id="c2",
+            nome="sem fabrica",
+            gerado_em=agora(),
+            blocos=(
+                BlocoAgente(
+                    declaracao=AgenteDeclarado(
+                        name="a",
+                        system="s",
+                        kind="issue",
+                        prompt="{titulo}",
+                        tipos=("BUG",),
+                        abstem_com="NAO_SEI",
+                    )
+                ),
+            ),
+            entrega=("issue",),
+        )
+    )
+
+    (stage,) = definicao.stages
+    assert isinstance(stage.cascade[0].client, ClienteDeValidacao)

@@ -113,7 +113,7 @@ def test_COM_chave_o_workflow_com_agente_deixa_de_ser_recusado(tmp_path, monkeyp
     preparadas o que roda é o caminho feliz de verdade.
     """
     from orchestrator.agent.llm import FakeLLMClient, LLMResponse
-    from orchestrator.agent.teto import ClienteComTeto
+    from orchestrator.agent.teto import ClienteComTeto, Orcamento
     from orchestrator.kernel.cost import Cost
 
     def _resposta() -> LLMResponse:
@@ -128,13 +128,17 @@ def test_COM_chave_o_workflow_com_agente_deixa_de_ser_recusado(tmp_path, monkeyp
         )
 
     monkeypatch.setattr(app_mod, "_tem_chave", lambda: True)
-    monkeypatch.setattr(
-        app_mod,
-        "_cliente_de_execucao",
+    def _de_execucao(teto):
         # Folga deliberada: o número de itens que sobra para o agente é
         # propriedade da fonte sintética e da cascata, não deste teste.
-        lambda teto: ClienteComTeto(FakeLLMClient([_resposta()] * 200), teto_microcents=teto),
-    )
+        #
+        # A fábrica ignora o modelo — este teste é sobre a chave e o gasto, não
+        # sobre roteamento de modelo — e o orçamento é um só, como na produção.
+        fake = FakeLLMClient([_resposta()] * 200)
+        orcamento = Orcamento(teto)
+        return (lambda _model: ClienteComTeto(fake, orcamento=orcamento)), orcamento
+
+    monkeypatch.setattr(app_mod, "_cliente_de_execucao", _de_execucao)
     _gravar_pago(tmp_path)
     cliente = TestClient(app_mod.app)
 

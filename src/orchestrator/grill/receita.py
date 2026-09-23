@@ -6,6 +6,7 @@ nunca uma descrição paralela ao motor — fica intacto.
 """
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -95,7 +96,7 @@ def construir(
     receita: Receita,
     *,
     fila: Fila | None = None,
-    cliente: LLMClient | None = None,
+    cliente_para: "Callable[[str], LLMClient] | None" = None,
     context: ToolContext | None = None,
 ) -> WorkflowDefinition:
     """Valida construindo. Se retorna, a receita roda.
@@ -114,8 +115,11 @@ def construir(
     """
     if fila is None:
         fila = Fila.vazia()
-    if cliente is None:
-        cliente = ClienteAusente()
+    if cliente_para is None:
+        # A TRANCA, agora por fábrica: `ClienteAusente` levanta se algum
+        # caminho chegar ao modelo por onde não deveria existir caminho.
+        def cliente_para(_model: str) -> LLMClient:
+            return ClienteAusente()
     if context is None:
         context = ToolContext([], [])
 
@@ -187,7 +191,12 @@ def construir(
                 raise ValueError(
                     f"parâmetro desconhecido para {item.nome!r}: {desconhecidos}. aceitos: []"
                 )
-            resolvers.append(construir_agente(entrada, cliente, ferramentas))
+            # O cliente do MODELO que este agente declarou. Um cliente só
+            # fazia todo bloco falar com o mesmo, e era por isso que
+            # `AgenteDeclarado.model` não decidia nada.
+            resolvers.append(
+                construir_agente(entrada, cliente_para(entrada.model), ferramentas)
+            )
 
     return WorkflowDefinition(
         id=receita.id,
