@@ -48,16 +48,23 @@ class TetoDaExecucaoEstourado(RuntimeError):
     """
 
 
-class ClienteComTeto:
-    """`LLMClient` que embrulha outro, acumula o gasto e para no teto.
+class Orcamento:
+    """O teto de UMA requisição, e o gasto acumulado dela.
 
-    Uma instância por REQUISIÇÃO, e é essa vida curta que dá sentido ao teto:
-    um acumulador por processo somaria requisições de pessoas diferentes.
+    **Por que o acumulador saiu do cliente.** Ele guardava `gasto` como `Cost` e
+    o convertia com `self.model` — um modelo só, porque havia um cliente só.
+    Com `model` por bloco, uma cascata tem VÁRIOS clientes, e um acumulador por
+    cliente daria vários tetos: o pedido que autorizou gastar X gastaria X por
+    modelo, sem ninguém pedir.
+
+    **O acumulado é em MICRO-CENTAVOS, e não em tokens.** Com dois modelos,
+    tokens não somam: mil de haiku e mil de opus não são dois mil de coisa
+    nenhuma. O teto é sobre dinheiro, então a moeda é µ¢ — e é a mesma razão
+    pela qual `Cost` continua sem preço: cada lado guarda a unidade em que ele
+    é verdade.
     """
 
-    def __init__(
-        self, interno: LLMClient, *, teto_microcents: int | None = None
-    ) -> None:
+    def __init__(self, teto_microcents: int | None = None) -> None:
         if teto_microcents is not None and teto_microcents < 0:
             # Teto negativo nasceria estourado e faria TODO item abster sem
             # nunca chamar o modelo — pareceria um agente funcionando com
@@ -66,14 +73,8 @@ class ClienteComTeto:
             raise ValueError(
                 f"teto_microcents não pode ser negativo: {teto_microcents}"
             )
-        self.interno = interno
         self.teto_microcents = teto_microcents
-        # O MODELO é o do cliente de dentro. Copiado uma vez, e não delegado
-        # por property, porque `AgentSpec.model` é fixado na construção do
-        # agente: um modelo que mudasse no meio da execução converteria custo
-        # com uma tabela de preços e cobraria com outra.
-        self.model = interno.model
-        self.gasto = Cost.zero()
+        self._gasto = 0
         # Quantas chamadas este teto RECUSOU. Contado aqui e em lugar nenhum
         # mais, porque aqui é onde a recusa acontece.
         #
@@ -87,13 +88,84 @@ class ClienteComTeto:
         self.recusas = 0
 
     def gasto_microcents(self) -> int:
-        """O gasto acumulado, em micro-centavos do modelo deste cliente.
+        return self._gasto
 
-        `Cost.zero()` converte para zero em qualquer modelo — a mesma guarda de
-        `metrics.evaluate` e de `Run.custo_total_microcents`, para que uma
-        execução que não gastou nada não exija tabela de preços para ler zero.
+    def pode_gastar(self) -> bool:
+        """O teto é conferido ANTES de cada chamada, nunca depois: não há como
+        saber o custo de uma chamada sem fazê-la, então a última pode
+        ultrapassá-lo por um turno."""
+        return self.teto_microcents is None or self._gasto < self.teto_microcents
+
+    def registrar(self, cost: Cost, model: str) -> None:
+        """Soma no PREÇO do modelo que gastou.
+
+        `Cost.zero()` não consulta a tabela: uma execução que não gastou nada
+        não deve exigir preço para ler zero — a mesma guarda de
+        `metrics.evaluate` e de `Run.custo_total_microcents`.
         """
-        return self.gasto.microcents(self.model) if self.gasto != Cost.zero() else 0
+        if cost != Cost.zero():
+            self._gasto += cost.microcents(model)
+
+    def barrar(self) -> None:
+        self.recusas += 1
+
+
+class ClienteComTeto:
+    """`LLMClient` que embrulha outro, acumula o gasto e para no teto.
+
+    Uma instância por REQUISIÇÃO e por MODELO, dividindo um `Orcamento` com os
+    demais — e é essa vida curta que dá sentido ao teto: um acumulador por
+    processo somaria requisições de pessoas diferentes.
+    """
+
+    def __init__(
+        self,
+        interno: LLMClient,
+        *,
+        teto_microcents: int | None = None,
+        orcamento: Orcamento | None = None,
+    ) -> None:
+        # Sem `orcamento`, ele cria o seu — é a forma que todo chamador de hoje
+        # escreve, e ela continua significando "um teto para este cliente". Com
+        # `orcamento`, vários clientes de modelos diferentes dividem o mesmo
+        # teto, que é o que a requisição autorizou.
+        if orcamento is not None and teto_microcents is not None:
+            raise ValueError(
+                "passe `orcamento` OU `teto_microcents`, não os dois: o teto "
+                "mora no orçamento, e dois valores seriam duas respostas para "
+                "a mesma pergunta"
+            )
+        self.interno = interno
+        self.orcamento = (
+            orcamento if orcamento is not None else Orcamento(teto_microcents)
+        )
+        # O MODELO é o do cliente de dentro, e é com ele que ESTE embrulho
+        # precifica o que ELE gastou. Copiado uma vez, e não delegado por
+        # property, porque `AgentSpec.model` é fixado na construção do agente:
+        # um modelo que mudasse no meio da execução converteria custo com uma
+        # tabela de preços e cobraria com outra.
+        self.model = interno.model
+
+    @property
+    def teto_microcents(self) -> int | None:
+        """O teto mora no orçamento. A property fica porque quem lê o teto lê do
+        CLIENTE — era atributo dele até esta fatia."""
+        return self.orcamento.teto_microcents
+
+    @property
+    def recusas(self) -> int:
+        """Idem: `api/app.py` lê `cliente.recusas` para dizer `teto_atingido`, e
+        com vários clientes a resposta tem de vir do acumulador dividido."""
+        return self.orcamento.recusas
+
+    def gasto_microcents(self) -> int:
+        """O gasto DA REQUISIÇÃO, em micro-centavos.
+
+        Vem do orçamento, que já somou cada chamada no preço do modelo que a
+        fez. Era `self.gasto.microcents(self.model)` — um modelo só para tudo,
+        o que deixou de ser verdade quando o bloco passou a escolher o seu.
+        """
+        return self.orcamento.gasto_microcents()
 
     def complete(
         self,
@@ -101,13 +173,13 @@ class ClienteComTeto:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
     ) -> LLMResponse:
-        gasto = self.gasto_microcents()
-        if self.teto_microcents is not None and gasto >= self.teto_microcents:
-            self.recusas += 1
+        if not self.orcamento.pode_gastar():
+            self.orcamento.barrar()
             raise TetoDaExecucaoEstourado(
-                f"teto desta execução esgotado: {gasto} µ¢ gastos de um teto de "
-                f"{self.teto_microcents} µ¢"
+                f"teto desta execução esgotado: "
+                f"{self.orcamento.gasto_microcents()} µ¢ gastos de um teto de "
+                f"{self.orcamento.teto_microcents} µ¢"
             )
         resposta = self.interno.complete(system=system, messages=messages, tools=tools)
-        self.gasto = self.gasto + resposta.cost
+        self.orcamento.registrar(resposta.cost, self.model)
         return resposta
