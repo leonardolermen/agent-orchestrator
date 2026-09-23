@@ -1,6 +1,6 @@
 # O Modelo por Bloco, de Verdade — Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Fazer o `model` declarado num bloco decidir de verdade qual modelo é chamado, e fazer a tabela de custo do run precificar cada linha com o modelo daquela linha.
 
@@ -35,7 +35,7 @@
 - Consumes: `kernel/cost.py::Cost`.
 - Produces: `Orcamento(teto_microcents: int | None = None)` com `gasto_microcents() -> int`, `registrar(cost: Cost, model: str) -> None`, `barrar() -> None`, `pode_gastar() -> bool`, `recusas: int`. `ClienteComTeto(interno, *, teto_microcents=None, orcamento: Orcamento | None = None)`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Acrescentar a `tests/agent/test_teto.py`:
 
@@ -118,12 +118,12 @@ def test_sem_orcamento_o_cliente_cria_o_seu_e_nada_muda():
 
 Se `FakeLLMClient` do arquivo não aceitar `model=`, ele já aceita: a assinatura é `FakeLLMClient(respostas, model="claude-opus-5")`. `_resposta()` é o helper do arquivo; se ele não receber `Cost`, acrescente o parâmetro opcional `custo` nele em vez de criar um segundo helper.
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/agent/test_teto.py -q`
 Expected: FAIL com `ImportError: cannot import name 'Orcamento'`.
 
-- [ ] **Step 3: Write `Orcamento`**
+- [x] **Step 3: Write `Orcamento`**
 
 Em `src/orchestrator/agent/teto.py`, antes de `ClienteComTeto`:
 
@@ -180,7 +180,7 @@ class Orcamento:
         self.recusas += 1
 ```
 
-- [ ] **Step 4: `ClienteComTeto` passa a usar o `Orcamento`**
+- [x] **Step 4: `ClienteComTeto` passa a usar o `Orcamento`**
 
 Trocar o corpo de `__init__`, `gasto_microcents` e `complete`:
 
@@ -236,12 +236,12 @@ Trocar o corpo de `__init__`, `gasto_microcents` e `complete`:
         return resposta
 ```
 
-- [ ] **Step 5: Run to verify they pass**
+- [x] **Step 5: Run to verify they pass**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/agent/test_teto.py -q`
 Expected: PASS, incluindo os testes que já existiam no arquivo.
 
-- [ ] **Step 6: Suíte, lint e commit**
+- [x] **Step 6: Suíte, lint e commit**
 
 ```bash
 .venv/Scripts/python.exe -m pytest -q && .venv/Scripts/python.exe -m ruff check src tests
@@ -262,7 +262,7 @@ git commit -m "feat(teto): Orcamento — o teto que varios clientes dividem"
 - Consumes: nada da Task 1.
 - Produces: `ResolverDescription(..., model: str = "")`; `Agent.describe().model == spec.model`; `Tarefa.describe().model == spec.model`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Em `tests/agent/test_declarado.py`:
 
@@ -305,12 +305,12 @@ def test_um_resolver_que_NAO_fala_com_modelo_declara_vazio():
     assert d.model == ""
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/agent/test_declarado.py -q -k modelo`
 Expected: FAIL com `AttributeError: 'ResolverDescription' object has no attribute 'model'`.
 
-- [ ] **Step 3: Implementar**
+- [x] **Step 3: Implementar**
 
 Em `kernel/resolver.py`, no fim dos campos de `ResolverDescription`:
 
@@ -331,12 +331,12 @@ Em `kernel/resolver.py`, no fim dos campos de `ResolverDescription`:
 
 Em `agent/agent.py::Agent.describe` e `agent/tarefa.py::Tarefa.describe`, acrescentar `model=self.spec.model,`.
 
-- [ ] **Step 4: Run to verify it passes**
+- [x] **Step 4: Run to verify it passes**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/agent tests/kernel -q`
 Expected: PASS.
 
-- [ ] **Step 5: Suíte, lint e commit**
+- [x] **Step 5: Suíte, lint e commit**
 
 ```bash
 .venv/Scripts/python.exe -m pytest -q && .venv/Scripts/python.exe -m ruff check src tests
@@ -361,7 +361,7 @@ git commit -m "feat(kernel): o resolver declara com que modelo ele fala"
 
 **Decisão que o implementador não deve reabrir:** `construir_agente(decl, client, ferramentas)` **continua recebendo um CLIENTE**, não a fábrica. Quem chama a fábrica é o construtor da cascata, que sabe o `decl.model`. Isso mantém `construir_agente` testável com um fake direto — como 20 testes já fazem.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Em `tests/authoring/test_composicao.py`:
 
@@ -452,12 +452,12 @@ def test_sem_fabrica_a_TRANCA_continua_sendo_o_default():
     assert isinstance(stage.cascade[0].client, ClienteDeValidacao)
 ```
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/authoring/test_composicao.py -q -k "MODELO or TRANCA"`
 Expected: FAIL com `TypeError: construir_composicao() got an unexpected keyword argument 'cliente_para'`.
 
-- [ ] **Step 3: `construir_composicao` recebe a fábrica**
+- [x] **Step 3: `construir_composicao` recebe a fábrica**
 
 Trocar o parâmetro `cliente: LLMClient | None = None` por:
 
@@ -504,7 +504,7 @@ e em `_tripulacao`, cada agente da tripulação pede o SEU:
     )
 ```
 
-- [ ] **Step 4: `grill/receita.py::construir` e `workflows.py`**
+- [x] **Step 4: `grill/receita.py::construir` e `workflows.py`**
 
 Em `grill/receita.py`, a assinatura e o default:
 
@@ -549,12 +549,12 @@ Não há outro ponto: o ramo de `RegraDisponivel` chama `entrada.construir(...)`
 
 e as duas fábricas repassam `cliente_para=ctx.cliente_para`.
 
-- [ ] **Step 5: Run to verify they pass**
+- [x] **Step 5: Run to verify they pass**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/authoring tests/grill tests/api -q`
 Expected: PASS. Os testes que hoje passam `cliente=fake` para `construir_composicao`/`construir` viram `cliente_para=lambda _: fake` — é a tradução mecânica, e ela preserva exatamente o comportamento antigo.
 
-- [ ] **Step 6: Suíte, lint e commit**
+- [x] **Step 6: Suíte, lint e commit**
 
 ```bash
 .venv/Scripts/python.exe -m pytest -q && .venv/Scripts/python.exe -m ruff check src tests
@@ -574,7 +574,7 @@ git commit -m "feat(authoring): cada bloco recebe o cliente do SEU modelo"
 - Consumes: `Orcamento` (Task 1), `ResolverDescription.model` (Task 2), `cliente_para` (Task 3).
 - Produces: `RunJSON.por_resolver[].microcents` no preço do modelo daquela linha; `RunJSON.custo_microcents` = soma das linhas.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Em `tests/api/test_execucao.py`:
 
@@ -637,12 +637,12 @@ def test_dois_agentes_em_MODELOS_diferentes_dao_duas_linhas_com_precos_diferente
 
 `_fabrica_com_agentes` do arquivo monta a cascata com `construir_agente(d, cliente_do_ctx)`; ela passa a usar `ctx.cliente_para(d.model)`. `_declarado(**kw)` já aceita `name=` e passará a aceitar `model=` por já usar `base.update(kw)`.
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/api/test_execucao.py -q -k MODELOS_diferentes`
 Expected: FAIL — hoje as duas linhas têm o mesmo preço, porque as duas são convertidas com `MODELO_INERTE`.
 
-- [ ] **Step 3: `_cliente_de_execucao` devolve a fábrica e o orçamento**
+- [x] **Step 3: `_cliente_de_execucao` devolve a fábrica e o orçamento**
 
 ```python
 def _cliente_de_execucao(
@@ -698,7 +698,7 @@ e as duas leituras que hoje usam `cliente`:
                 "custo_microcents": orcamento.gasto_microcents() if orcamento else 0,
 ```
 
-- [ ] **Step 4: A tabela precifica por linha**
+- [x] **Step 4: A tabela precifica por linha**
 
 ```python
     # O modelo de CADA linha, declarado pelo resolver. Era `modelo` — um só
@@ -722,7 +722,7 @@ e o total:
         custo_microcents=sum(p.microcents for p in por_resolver),
 ```
 
-- [ ] **Step 5: Atualizar os cinco arquivos que trocam `_cliente_de_execucao`**
+- [x] **Step 5: Atualizar os cinco arquivos que trocam `_cliente_de_execucao`**
 
 `_cliente_de_execucao` passa a devolver `(fábrica, orçamento)` em vez de um cliente, então todo teste que o monkeypatcha muda. São **cinco**, e a tradução é mecânica:
 
@@ -745,12 +745,12 @@ Os arquivos: `tests/api/test_execucao.py`, `tests/api/test_bloco_tarefa.py`, `te
 
 **Um deles merece leitura, não substituição cega:** `test_execucao.py` tem os testes de teto (`test_o_teto_do_pedido_PARA_o_gasto`, `test_um_teto_GENEROSO_nao_desliga_o_teto_do_AGENTE`), e eles afirmam números de gasto. Os números não mudam — o fake continua sendo o mesmo e o modelo do embrulho continua sendo o do fake —, mas se algum mudar, é sinal de que o `Orcamento` está precificando diferente, e aí o teste está certo e o código errado.
 
-- [ ] **Step 6: Run to verify it passes**
+- [x] **Step 6: Run to verify it passes**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/api -q`
 Expected: PASS.
 
-- [ ] **Step 7: Suíte, lint, número do produto e commit**
+- [x] **Step 7: Suíte, lint, número do produto e commit**
 
 ```bash
 .venv/Scripts/python.exe -m pytest -q
