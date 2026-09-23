@@ -182,6 +182,7 @@ class Tarefa:
             name=self.name,
             cost_class=self.cost_class,
             summary=f"tarefa {self.spec.model}",
+            model=self.spec.model,
             consome=frozenset({self.spec.kind}) if self.spec.kind else frozenset(),
             produz=frozenset({self.spec.produz}) if self.spec.produz else frozenset(),
         )

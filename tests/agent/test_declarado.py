@@ -303,3 +303,42 @@ def test_o_agente_construido_sobre_um_CATALOGO_continua_desligado():
     )
 
     assert not agente.tools.ligado
+
+
+def test_o_resolver_DECLARA_com_que_modelo_roda():
+    """A borda precisa precificar CADA linha da tabela de custo com o modelo
+    daquela linha. Sem isto ela converte tudo com um modelo só — medido contra
+    uma API real: um bloco declarado em `claude-haiku-4-5` apareceu com
+    4.494.000 µ¢, que é preço de opus, 5x o que a chamada deveria custar.
+
+    Declarado no RESOLVER e não numa tabela de nomes na borda, pela mesma razão
+    que `consome`, `produz` e `payloads`: a lista paralela apodrece no dia em
+    que alguém escreve o próximo resolver.
+    """
+    from orchestrator.agent.declarado import AgenteDeclarado, construir_agente
+    from orchestrator.agent.llm import FakeLLMClient
+
+    declarado = AgenteDeclarado(
+        name="triador",
+        system="classifique",
+        kind="issue",
+        prompt="{titulo}",
+        tipos=("BUG",),
+        abstem_com="NAO_SEI",
+        model="claude-haiku-4-5",
+    )
+
+    agente = construir_agente(declarado, FakeLLMClient([], model="claude-opus-5"))
+
+    assert agente.describe().model == "claude-haiku-4-5"
+
+
+def test_um_resolver_que_NAO_fala_com_modelo_declara_vazio():
+    """Regra não tem modelo, e vazio é a resposta certa — não o padrão do
+    servidor, que faria uma linha de 0 µ¢ parecer precificada."""
+    from orchestrator.kernel.cost import CostClass
+    from orchestrator.kernel.resolver import ResolverDescription
+
+    d = ResolverDescription(name="L1", cost_class=CostClass.REGRA, summary="x")
+
+    assert d.model == ""

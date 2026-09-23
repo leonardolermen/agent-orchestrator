@@ -172,6 +172,7 @@ class Agent:
             name=self.name,
             cost_class=self.cost_class,
             summary=f"agente {self.spec.model}",
+            model=self.spec.model,
             consome=self.spec.consome,
         )
 
