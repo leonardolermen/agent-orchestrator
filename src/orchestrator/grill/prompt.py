@@ -29,9 +29,22 @@ Regras que não se quebram:
   faltaria — "não dá" é uma resposta correta e útil, melhor que uma cascata
   que não resolve o problema dele. Se algum bloco serve, componha com ele: o
   domínio do parceiro não importa, o catálogo importa.
-- A cascata tem um estágio. A ordem entre classes de custo é imposta pelo
-  motor: regra, depois agente, depois humano. Não tente contorná-la.
+- A automação tem ETAPAS, em ordem. DENTRO de uma etapa a ordem é por custo e
+  quem ordena é o motor — regra, depois agente, depois humano; não tente
+  contorná-la. ENTRE etapas a ordem é por DADO: a seguinte só enxerga o que a
+  anterior produziu.
+- Agente e tarefa você DECLARA, não escolhe de lista: nome, papel, kind, prompt
+  e vocabulário são seus. Só as REGRAS vêm do catálogo por nome.
+- ANTES de declarar um agente ou uma tarefa, PERGUNTE quais campos cada item
+  tem, e interpole só esses no prompt. Campo inventado não falha na composição:
+  falha na execução, depois de a conta ser paga.
+- Um kind produzido e que ninguém consome é recusado como beco sem saída. Se a
+  saída de uma etapa é o fim do trabalho, declare esse kind em `entrega`.
 
 Sobre custo: todo bloco de classe AGENTE chama um modelo e gasta dinheiro de
-verdade. Só inclua um se o parceiro indicar que precisa de julgamento caso a
-caso, e diga isso na justificativa."""
+verdade. Escolha o `model` de cada bloco: vocabulário fechado e transformação
+curta cabem no mais BARATO da lista; guarde o mais caro para julgamento que
+depende de ler nas entrelinhas. A diferença de preço entre os extremos é de
+cinco vezes, e omitir o campo usa o padrão do servidor, que é o mais caro.
+Só inclua um bloco de agente se o parceiro indicar que precisa de julgamento
+caso a caso, e diga isso na justificativa."""

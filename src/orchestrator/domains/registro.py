@@ -339,6 +339,26 @@ def _agrupamento(p: dict[str, ValorDeParametro]) -> Any:
     )
 
 
+def _enriquecimento(p: dict[str, ValorDeParametro]) -> Any:
+    """O bloco que busca o detalhe de cada item.
+
+    `token_env` vazio vira `None`, e não `""`: a tela manda string vazia quando
+    o campo não foi preenchido, e `""` como NOME de variável pediria uma
+    variável chamada vazio — `VariavelAusente('')`, que não diz nada a ninguém.
+    """
+    from orchestrator.sources.enriquecimento import Enriquecimento
+
+    _exige("enriquecer", p, ("kind", "produz", "url"))
+    token = str(p.get("token_env", "")).strip()
+    return Enriquecimento(
+        kind=str(p.get("kind", "")),
+        produz=str(p.get("produz", "")),
+        url=str(p.get("url", "")),
+        token_env=token or None,
+        caminho=str(p.get("caminho", "")),
+    )
+
+
 def _entrada(p: dict[str, ValorDeParametro]) -> Any:
     """O bloco de ENTRADA: uma fonte que vira degrau.
 
@@ -532,6 +552,35 @@ CATALOGO = Catalogo(
         # paralelismo é o oposto: toda transação passa pela checagem de fraude E
         # pela de KYC, e depois as duas se reencontram. Nenhum roteador faz
         # isso, porque roteador escolhe.
+        # O bloco que faltava entre `Input` e a decisão: buscar, para CADA item,
+        # o detalhe que a lista não trouxe. Sem ele, a única saída era pagar um
+        # turno de modelo para executar um GET que não decide nada.
+        RegraDisponivel(
+            nome="enriquecer",
+            rotulo="Enrich",
+            categoria="DATA",
+            cost_class=CostClass.REGRA,
+            resumo="busca numa API o detalhe de cada item e funde no payload",
+            parametros=(
+                ParametroDeRegra("kind", "", "o kind que entra neste bloco", obrigatorio=True),
+                ParametroDeRegra(
+                    "produz", "", "o kind que sai, já enriquecido", obrigatorio=True
+                ),
+                ParametroDeRegra(
+                    "url",
+                    "",
+                    "a url, com {campo} do item — ex.: https://api/v1/casos/{id}",
+                    obrigatorio=True,
+                ),
+                ParametroDeRegra(
+                    "token_env", "", "o NOME da variável de ambiente com o bearer"
+                ),
+                ParametroDeRegra(
+                    "caminho", "", "onde o objeto está no corpo (vazio = o corpo inteiro)"
+                ),
+            ),
+            construir=lambda p: _enriquecimento(p),
+        ),
         RegraDisponivel(
             nome="paralelo",
             cost_class=CostClass.REGRA,

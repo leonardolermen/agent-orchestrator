@@ -46,6 +46,7 @@ def _para_dict(s: StoredRun) -> dict:
             }
             for nome, c in sorted(s.cost_by_resolver.items())
         },
+        "modelo_por_resolver": dict(sorted(s.modelo_por_resolver.items())),
         "resolved_by_resolver": dict(sorted(s.resolved_by_resolver.items())),
         "error": s.error,
     }
@@ -67,6 +68,10 @@ def _de_dict(d: dict) -> StoredRun:
         proposed=d["proposed"],
         unresolved=d["unresolved"],
         cost_by_resolver={n: Cost(**c) for n, c in d["cost_by_resolver"].items()},
+        # `.get` e nao `[]`: as linhas gravadas antes deste campo continuam
+        # legiveis, e um resolver sem modelo cai no default de quem le — que
+        # e exatamente com o que elas foram precificadas na epoca.
+        modelo_por_resolver=dict(d.get("modelo_por_resolver", {})),
         resolved_by_resolver=dict(d["resolved_by_resolver"]),
         error=d.get("error"),
     )

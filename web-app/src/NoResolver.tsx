@@ -4,6 +4,7 @@ import {
   type AgenteDeclarado,
   type CostClass,
   type Regra,
+  type TarefaDeclarada,
   type ValorParametro,
 } from "./api";
 
@@ -55,7 +56,20 @@ export interface DadosCrew extends Record<string, unknown> {
   etapa: number;
 }
 
-export type DadosDoNo = DadosRegra | DadosAgente | DadosCrew;
+/** Uma TAREFA: consome um kind e produz outro, e o texto do modelo vira o item
+ *  do degrau seguinte.
+ *
+ *  Separada de `DadosAgente` e nao um `produz?` dentro dele, pelo mesmo motivo
+ *  que o bloco e um quarto tipo no servidor: com `produz` preenchido, `tipos` e
+ *  `abstem_com` deixam de significar qualquer coisa, e um no com os tres seria
+ *  metade dos campos ignorada em silencio conforme outro campo. */
+export interface DadosTarefa extends Record<string, unknown> {
+  tipo: "tarefa";
+  declaracao: TarefaDeclarada;
+  etapa: number;
+}
+
+export type DadosDoNo = DadosRegra | DadosAgente | DadosCrew | DadosTarefa;
 
 /** O que se LE no no. Diferente de `nomeDo`, que e IDENTIDADE.
  *
@@ -68,6 +82,9 @@ export type DadosDoNo = DadosRegra | DadosAgente | DadosCrew;
 export function rotuloDo(d: DadosDoNo): string {
   if (d.tipo === "regra") return d.regra.rotulo || d.regra.nome;
   if (d.tipo === "crew") return d.nome;
+  // Agente e tarefa caem no mesmo `return`: as duas declaracoes chamam o campo
+  // de `name`. Um ramo a mais para a tarefa seria a quarta copia da mesma
+  // leitura.
   return d.declaracao.name;
 }
 
@@ -87,6 +104,10 @@ export function classeDo(d: DadosDoNo): CostClass {
   // sobre o mesmo item. Dizer "AGENTE" aqui poria a tripulacao antes de um
   // agente sozinho na previa, contradizendo o servidor.
   if (d.tipo === "crew") return "CREW";
+  // Tarefa e classe AGENTE tambem, e nao uma classe propria: ela CHAMA O
+  // MODELO, que e o que a classe mede. `Tarefa.cost_class` no kernel diz o
+  // mesmo, e uma classe nova aqui poria a previa em desacordo com a ordem que
+  // `Stage.ordered()` aplica de verdade.
   return "AGENTE";
 }
 
@@ -138,9 +159,11 @@ export function NoResolver({ data, selected }: NodeProps) {
         <p
           className={[
             "mt-1 text-[11.5px] leading-snug text-neutral-600 dark:text-noite-fraca",
-            d.tipo === "agente" ? "line-clamp-2" : "",
+            d.tipo === "agente" || d.tipo === "tarefa" ? "line-clamp-2" : "",
           ].join(" ")}
-          title={d.tipo === "agente" ? d.declaracao.system : undefined}
+          title={
+            d.tipo === "agente" || d.tipo === "tarefa" ? d.declaracao.system : undefined
+          }
         >
           {d.tipo === "regra"
             ? d.regra.resumo
@@ -154,6 +177,8 @@ export function NoResolver({ data, selected }: NodeProps) {
         <CorpoRegra d={d} />
       ) : d.tipo === "crew" ? (
         <CorpoCrew d={d} />
+      ) : d.tipo === "tarefa" ? (
+        <CorpoTarefa d={d} />
       ) : (
         <CorpoAgente d={d} />
       )}
@@ -188,6 +213,58 @@ function CorpoCrew({ d }: { d: DadosCrew }) {
         {d.process} · conflito: {d.conflito}
       </div>
     </div>
+  );
+}
+
+/** O corpo de uma TAREFA. A linha de cima e `kind -> produz`, e ela e a razao
+ *  de este cartao existir separado do agente: e a UNICA informacao do bloco que
+ *  diz a quem ele entrega. Num agente nao ha o que desenhar ali — ele propoe, e
+ *  a proposta nao vira item de ninguem.
+ *
+ *  Vocabulario e abstencao nao aparecem porque nao existem: nao transformar e a
+ *  ausencia de resolucao, e ausencia nao tem rotulo. */
+function CorpoTarefa({ d }: { d: DadosTarefa }) {
+  const t = d.declaracao;
+  return (
+    <>
+      <div className={LINHA} title="o que esta tarefa consome e o que ela entrega ao degrau seguinte">
+        <span className="text-[11px] text-neutral-300 dark:text-noite-fraca">◇</span>
+        <span
+          className={`font-mono text-[11px] ${
+            t.kind ? "text-tinta dark:text-noite-tinta" : "text-lacuna dark:text-noite-crew"
+          }`}
+        >
+          {t.kind || "sem kind"}
+        </span>
+        <span className="text-[11px] text-neutral-300 dark:text-noite-fraca">→</span>
+        {/* `produz` vazio e DITO, como o kind: sem ele a tarefa consumiria o
+            item sem entregar a ninguem — o item sumiria do run, e para
+            descartar de proposito existe o `filtro`. O servidor recusa; a tela
+            diz antes. */}
+        <span
+          className={`font-mono text-[11px] ${
+            t.produz ? "text-tinta dark:text-noite-tinta" : "text-lacuna dark:text-noite-crew"
+          }`}
+        >
+          {t.produz || "sem produz"}
+        </span>
+      </div>
+
+      {t.ferramentas.map((f) => (
+        <div key={f} className={LINHA}>
+          <span className="text-[11px] text-neutral-300 dark:text-noite-fraca">⚒</span>
+          <span className="text-[11px] text-neutral-600 dark:text-noite-fraca">{f}</span>
+        </div>
+      ))}
+
+      <div className="flex items-baseline gap-2 border-t border-neutral-100 px-3 py-1.5 font-mono text-[10.5px] dark:border-noite-borda">
+        <span className="text-neutral-400 dark:text-noite-fraca">teto/item</span>
+        <span className="ml-auto text-tinta dark:text-noite-tinta">
+          US$ {(t.budget_microcents / 1e8).toFixed(4)}
+        </span>
+        <span className="text-neutral-300 dark:text-noite-fraca">· {t.max_turns} turnos</span>
+      </div>
+    </>
   );
 }
 

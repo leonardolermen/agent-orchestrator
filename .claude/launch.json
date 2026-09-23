@@ -4,8 +4,23 @@
     {
       "name": "canvas",
       "runtimeExecutable": ".venv/Scripts/python.exe",
-      "runtimeArgs": ["-m", "uvicorn", "orchestrator.api.app:app", "--port", "8111"],
+      "runtimeArgs": [
+        "-m",
+        "uvicorn",
+        "orchestrator.api.app:app",
+        "--port",
+        "8111"
+      ],
       "port": 8111
+    },
+    {
+      "name": "canvas-com-chave",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": [
+        "-c",
+        "import os,pathlib,uvicorn;linhas=[l.strip() for l in pathlib.Path('.env').read_text(encoding='utf-8').splitlines()];pares=[l.split('=',1) for l in linhas if l and not l.startswith('#') and '=' in l];[os.environ.__setitem__(k.strip(), v.strip().strip('\"').strip(\"'\")) for k,v in pares];uvicorn.run('orchestrator.api.app:app', port=8112)"
+      ],
+      "port": 8112
     }
   ]
 }

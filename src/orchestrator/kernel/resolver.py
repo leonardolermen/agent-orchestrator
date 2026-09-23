@@ -70,6 +70,19 @@ class ResolverDescription:
     # payload. Quem lê é a borda que junta uma FONTE a um WORKFLOW, e hoje há
     # uma só: `api/app.py`.
     payloads: dict[str, type] = field(default_factory=dict)
+    # COM QUE MODELO este resolver fala, quando fala. Vazio — o default — é
+    # "não falo com modelo nenhum", que é o caso de toda regra.
+    #
+    # Existe porque a tabela de custo do run precisa converter CADA linha com o
+    # preço certo. Antes dele a borda convertia tudo com um modelo só: medido
+    # contra uma API real, um bloco declarado em `claude-haiku-4-5` apareceu
+    # com 4.494.000 µ¢ — preço de opus, 5x o que aquela chamada custava. O
+    # número por resolver é o que este produto vende.
+    #
+    # Declarado no RESOLVER, e não numa tabela de nomes na borda, pela mesma
+    # razão que `payloads`, `consome` e `produz`: a lista paralela apodrece no
+    # dia em que alguém escreve o próximo resolver.
+    model: str = ""
     # Quais `WorkItem.kind` este resolver PEGA do pool. Vazio — o default — é
     # "vejo o pool inteiro", o MESMO significado do default de `Stage.consome`.
     #

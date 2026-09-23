@@ -1000,7 +1000,7 @@ def _declarado(**kw):
 
 
 def _fabrica_com_agentes(*declaracoes, workflow_id="com-agente"):
-    """Uma cascata de agentes declarados que HONRA `ctx.cliente`.
+    """Uma cascata de agentes declarados que HONRA `ctx.cliente_para`.
 
     É a mesma costura de `workflows._de_receita`: `None` continua significando
     `ClienteAusente` — a tranca —, e quem executa passa um cliente de verdade.
@@ -1010,7 +1010,9 @@ def _fabrica_com_agentes(*declaracoes, workflow_id="com-agente"):
     from orchestrator.kernel.definition import Stage, WorkflowDefinition
 
     def fabrica(ctx):
-        cliente_do_ctx = ctx.cliente if ctx.cliente is not None else ClienteAusente()
+        # A MESMA costura de `workflows._de_receita`: a fábrica é chamada com o
+        # modelo que o bloco declarou, e `None` continua significando a tranca.
+        para = ctx.cliente_para or (lambda _model: ClienteAusente())
         return WorkflowDefinition(
             id=workflow_id,
             name="cascata com agente",
@@ -1018,7 +1020,7 @@ def _fabrica_com_agentes(*declaracoes, workflow_id="com-agente"):
                 Stage(
                     name="triar",
                     cascade=tuple(
-                        construir_agente(d, cliente_do_ctx) for d in declaracoes
+                        construir_agente(d, para(d.model)) for d in declaracoes
                     ),
                 ),
             ),
@@ -1057,14 +1059,18 @@ def _cliente_falso(monkeypatch, respostas, teto_visto: dict | None = None):
     """
     import orchestrator.api.app as api_app
     from orchestrator.agent.llm import FakeLLMClient
-    from orchestrator.agent.teto import ClienteComTeto
+    from orchestrator.agent.teto import ClienteComTeto, Orcamento
 
     fake = FakeLLMClient(list(respostas))
 
     def _de_execucao(teto):
         if teto_visto is not None:
             teto_visto["teto"] = teto
-        return ClienteComTeto(fake, teto_microcents=teto)
+        # Um orçamento para a requisição, e uma fábrica que devolve o MESMO
+        # embrulho para qualquer modelo: estes testes medem teto e gasto, não
+        # roteamento de modelo.
+        orcamento = Orcamento(teto)
+        return (lambda _model: ClienteComTeto(fake, orcamento=orcamento)), orcamento
 
     monkeypatch.setattr(api_app, "_tem_chave", lambda: True)
     monkeypatch.setattr(api_app, "_cliente_de_execucao", _de_execucao)
@@ -1261,11 +1267,17 @@ def test_o_embrulho_de_teto_nao_inventa_ilimitado():
 
     # Construir NÃO fala com rede: `AnthropicClient` só instancia o SDK na
     # primeira chamada, e aqui nenhuma é feita.
-    c = api_app._cliente_de_execucao(None)
+    # Devolve a FÁBRICA e o orçamento: com `model` por bloco, um cliente só
+    # faria todo bloco falar com o mesmo modelo.
+    para, orcamento = api_app._cliente_de_execucao(None)
 
-    assert isinstance(c, ClienteComTeto)
-    assert c.teto_microcents is None
-    assert api_app._cliente_de_execucao(7).teto_microcents == 7
+    assert isinstance(para(""), ClienteComTeto)
+    assert orcamento.teto_microcents is None
+    assert api_app._cliente_de_execucao(7)[1].teto_microcents == 7
+    # E o mesmo modelo devolve o MESMO cliente: uma cascata de dez blocos
+    # iguais não abre dez clientes.
+    outra, _ = api_app._cliente_de_execucao(None)
+    assert outra("claude-haiku-4-5") is outra("claude-haiku-4-5")
 
 
 # -- guarda 2: o custo volta em CADA desfecho -------------------------------
@@ -1386,7 +1398,9 @@ def test_o_422_de_PAYLOAD_vem_ANTES_do_409_de_chave(tmp_path, monkeypatch):
     monkeypatch.setattr(api_app, "_tem_chave", lambda: False)
 
     def fabrica(ctx):
-        cliente_do_ctx = ctx.cliente if ctx.cliente is not None else ClienteAusente()
+        # A MESMA costura de `workflows._de_receita`: a fábrica é chamada com o
+        # modelo que o bloco declarou, e `None` continua significando a tranca.
+        para = ctx.cliente_para or (lambda _model: ClienteAusente())
         return WorkflowDefinition(
             id="misto",
             name="regra tipada mais agente",
@@ -1395,7 +1409,7 @@ def test_o_422_de_PAYLOAD_vem_ANTES_do_409_de_chave(tmp_path, monkeypatch):
                     name="s",
                     cascade=(
                         ExactMatcher(),
-                        construir_agente(_declarado(), cliente_do_ctx),
+                        construir_agente(_declarado(), para(_declarado().model)),
                     ),
                 ),
             ),
@@ -1841,7 +1855,7 @@ def test_desfecho_a_API_FALHOU_e_isso_NAO_e_abstencao_do_modelo(tmp_path, monkey
     dois, e ele e CONTADO no trace (`TraceKind.ERRO`), nao inferido.
     """
     import orchestrator.api.app as api_app
-    from orchestrator.agent.teto import ClienteComTeto
+    from orchestrator.agent.teto import ClienteComTeto, Orcamento
 
     _csv_de_issues(tmp_path, monkeypatch, linhas=3)
 
@@ -1852,11 +1866,14 @@ def test_desfecho_a_API_FALHOU_e_isso_NAO_e_abstencao_do_modelo(tmp_path, monkey
             raise ConnectionError("a rede caiu")
 
     monkeypatch.setattr(api_app, "_tem_chave", lambda: True)
-    monkeypatch.setattr(
-        api_app,
-        "_cliente_de_execucao",
-        lambda teto: ClienteComTeto(_CaiSempre(), teto_microcents=teto),
-    )
+
+    def _de_execucao(teto):
+        # A rede cai para QUALQUER modelo: a fabrica ignora o nome de proposito,
+        # senao este teste passaria a medir roteamento em vez de `falhas`.
+        orcamento = Orcamento(teto)
+        return (lambda _model: ClienteComTeto(_CaiSempre(), orcamento=orcamento)), orcamento
+
+    monkeypatch.setattr(api_app, "_cliente_de_execucao", _de_execucao)
     _registrar(monkeypatch, "com-agente", _fabrica_com_agentes(_declarado()))
 
     corpo = cliente.post(
@@ -1968,7 +1985,9 @@ def test_o_teto_VENCE_aguardando_humano_quando_os_dois_valem(tmp_path, monkeypat
             return ResolverOutput(resolutions=[])
 
     def fabrica(ctx):
-        cliente_do_ctx = ctx.cliente if ctx.cliente is not None else ClienteAusente()
+        # A MESMA costura de `workflows._de_receita`: a fábrica é chamada com o
+        # modelo que o bloco declarou, e `None` continua significando a tranca.
+        para = ctx.cliente_para or (lambda _model: ClienteAusente())
         return WorkflowDefinition(
             id="com-humano",
             name="agente mais revisor",
@@ -1976,7 +1995,7 @@ def test_o_teto_VENCE_aguardando_humano_quando_os_dois_valem(tmp_path, monkeypat
                 Stage(
                     name="triar",
                     cascade=(
-                        construir_agente(_declarado(), cliente_do_ctx),
+                        construir_agente(_declarado(), para(_declarado().model)),
                         _RevisorSemFila(),
                     ),
                 ),
@@ -2176,3 +2195,122 @@ def test_compor_com_id_de_workflow_EXISTENTE_e_409(tmp_path, monkeypatch):
         "blocos": [{"tipo": "regra", "nome": "L1", "parametros": {}}]})
     assert r.status_code == 409, r.text
     assert "ja-existe" in r.json()["detail"]
+
+
+def test_dois_agentes_em_MODELOS_diferentes_dao_duas_linhas_com_precos_diferentes(
+    tmp_path, monkeypatch
+):
+    """O criterio que fecha a fatia: os MESMOS tokens custam 5x mais em opus que
+    em haiku, e a tabela precisa dizer isso.
+
+    Antes, a borda convertia a tabela inteira com UM modelo — o padrao do
+    servidor. Medido contra a API do Barrier: um bloco declarado em
+    `claude-haiku-4-5` apareceu no relatorio com 4.494.000 µ¢, preco de opus
+    para uma chamada que deveria custar um quinto. O campo `model` do bloco era
+    cosmetico dos dois lados: nem escolhia com quem falar, nem precificava.
+
+    `vistos` e a outra metade, e sem ela o teste passaria com a chamada indo
+    para o modelo errado desde que a CONTA saisse certa — que e o defeito com
+    roupa melhor.
+    """
+    import orchestrator.api.app as api_app
+    from orchestrator.agent.llm import FakeLLMClient
+    from orchestrator.agent.teto import ClienteComTeto, Orcamento
+
+    _csv_de_issues(tmp_path, monkeypatch, linhas=1)
+    vistos: list[str] = []
+
+    def _de_execucao(teto):
+        orcamento = Orcamento(teto)
+
+        def fabrica(model: str):
+            vistos.append(model)
+            return ClienteComTeto(
+                FakeLLMClient([_resposta()] * 4, model=model), orcamento=orcamento
+            )
+
+        return fabrica, orcamento
+
+    monkeypatch.setattr(api_app, "_tem_chave", lambda: True)
+    monkeypatch.setattr(api_app, "_cliente_de_execucao", _de_execucao)
+    _registrar(
+        monkeypatch,
+        "dois-modelos",
+        _fabrica_com_agentes(
+            _declarado(name="barato", model="claude-haiku-4-5"),
+            _declarado(name="caro", model="claude-opus-5"),
+            workflow_id="dois-modelos",
+        ),
+    )
+
+    r = cliente.post(
+        "/api/workflows/dois-modelos/runs",
+        json={"fonte": _FONTE_ISSUES, "teto_microcents": 100_000_000},
+    )
+
+    assert r.status_code == 200, r.text
+    linhas = {p["name"]: p["microcents"] for p in r.json()["por_resolver"]}
+    # Mesmos tokens, precos diferentes: opus e 5x haiku na tabela de `_PRECOS`.
+    assert linhas["caro"] == 5 * linhas["barato"], linhas
+    # E o total e a SOMA das linhas, nao uma conversao unica.
+    assert r.json()["custo_microcents"] == linhas["caro"] + linhas["barato"]
+    # A chamada foi para o modelo que o BLOCO declarou, na ordem da cascata.
+    assert vistos == ["claude-haiku-4-5", "claude-opus-5"]
+
+
+def test_o_STORE_precifica_por_linha_igual_a_RESPOSTA(tmp_path, monkeypatch):
+    """Os dois endpoints falam do MESMO run e precisam dizer o mesmo numero.
+
+    `test_o_custo_do_caminho_feliz_tambem_esta_no_STORE` ja fixa essa igualdade,
+    e ela passava porque havia um modelo so: os dois lados convertiam com ele.
+    Com `model` por bloco, `_resumo_json` continuou convertendo a tabela inteira
+    com `claude-opus-5` fixo, e as duas respostas divergiram 5x.
+
+    Medido contra o Barrier em 2026-09-23, o mesmo run: `POST /runs` devolveu
+    541.300 µ¢ (haiku, certo) e `GET /api/runs` devolveu 2.706.500 µ¢ (opus).
+    Duas verdades sobre um fato — e a que fica em disco e alimenta a tela de
+    custo era a errada.
+
+    O modelo do resolver e um FATO do run, entao ele passou a ser gravado com o
+    custo, e nao reconstruido de um default na hora de ler.
+    """
+    import orchestrator.api.app as api_app
+    from orchestrator.agent.llm import FakeLLMClient
+    from orchestrator.agent.teto import ClienteComTeto, Orcamento
+
+    _csv_de_issues(tmp_path, monkeypatch, linhas=1)
+
+    def _de_execucao(teto):
+        orcamento = Orcamento(teto)
+        return (
+            lambda model: ClienteComTeto(
+                FakeLLMClient([_resposta()] * 4, model=model), orcamento=orcamento
+            )
+        ), orcamento
+
+    monkeypatch.setattr(api_app, "_tem_chave", lambda: True)
+    monkeypatch.setattr(api_app, "_cliente_de_execucao", _de_execucao)
+    _registrar(
+        monkeypatch,
+        "dois-modelos-store",
+        _fabrica_com_agentes(
+            _declarado(name="barato", model="claude-haiku-4-5"),
+            _declarado(name="caro", model="claude-opus-5"),
+            workflow_id="dois-modelos-store",
+        ),
+    )
+
+    corpo = cliente.post(
+        "/api/workflows/dois-modelos-store/runs",
+        json={"fonte": _FONTE_ISSUES, "teto_microcents": 100_000_000},
+    ).json()
+
+    (resumo,) = cliente.get(
+        "/api/runs", params={"workflow_id": "dois-modelos-store"}
+    ).json()
+    assert resumo["microcents"] == corpo["custo_microcents"]
+    # E o numero e o de DOIS precos, nao o de um: sem esta linha a igualdade
+    # acima passaria com os dois lados errados do mesmo jeito.
+    linhas = {p["name"]: p["microcents"] for p in corpo["por_resolver"]}
+    assert resumo["microcents"] == linhas["caro"] + linhas["barato"]
+    assert linhas["caro"] == 5 * linhas["barato"]

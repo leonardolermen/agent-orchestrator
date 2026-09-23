@@ -36,6 +36,9 @@ class StoredRun:
     proposed: int
     unresolved: int
     cost_by_resolver: dict[str, Cost] = field(default_factory=dict)
+    # Sem isto o custo em disco nao e conversivel: `Cost` guarda TOKENS, e
+    # quem lesse teria de adivinhar o modelo. Ver `Run.modelo_por_resolver`.
+    modelo_por_resolver: dict[str, str] = field(default_factory=dict)
     resolved_by_resolver: dict[str, int] = field(default_factory=dict)
     error: str | None = None
 
@@ -54,6 +57,7 @@ class StoredRun:
             proposed=len(run.proposals),
             unresolved=len(run.unresolved.items),
             cost_by_resolver=dict(run.cost_by_resolver),
+            modelo_por_resolver=dict(run.modelo_por_resolver),
             resolved_by_resolver=dict(run.resolved_by_resolver),
             error=run.error,
         )

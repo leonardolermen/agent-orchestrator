@@ -8,12 +8,14 @@ import {
   type Regra,
   type ValorParametro,
   type WorkflowConstruido,
+  type TarefaDeclarada,
 } from "./api";
 import {
   classeDo,
   nomeDo,
   type DadosAgente,
   type DadosCrew,
+  type DadosTarefa,
   type DadosDoNo,
 } from "./NoResolver";
 import { Paleta } from "./Paleta";
@@ -36,11 +38,13 @@ interface Props {
   onAcrescentarRegra: (r: Regra) => void;
   onAcrescentarAgente: (a: AgenteDeclarado) => void;
   onNovoAgente: () => void;
+  onNovaTarefa: () => void;
   onNovoTime: () => void;
   onMudarTime: (id: string, patch: Partial<DadosCrew>) => void;
   onRemover: (id: string) => void;
   onMudarParametro: (id: string, param: string, valor: ValorParametro) => void;
   onMudarAgente: (id: string, patch: Partial<AgenteDeclarado>) => void;
+  onMudarTarefa: (id: string, patch: Partial<TarefaDeclarada>) => void;
   onCompor: (id: string, nome: string, entrega: string[], maxRondas: number) => void;
   // Quantas etapas existem, como se chamam, e como mover um bloco entre elas.
   quantasEtapas: number;
@@ -292,6 +296,7 @@ export function Painel(p: Props) {
         onAcrescentarRegra={p.onAcrescentarRegra}
         onAcrescentarAgente={p.onAcrescentarAgente}
         onNovoAgente={p.onNovoAgente}
+        onNovaTarefa={p.onNovaTarefa}
         onNovoTime={p.onNovoTime}
       />
 
@@ -355,11 +360,23 @@ export function Painel(p: Props) {
         />
       )}
 
+      {p.selecionado?.data.tipo === "tarefa" && p.catalogo && (
+        <EditorDeTarefa
+          key={p.selecionado.id}
+          no={{ id: p.selecionado.id, data: p.selecionado.data }}
+          catalogo={p.catalogo}
+          ambiente={p.ambiente}
+          onMudar={p.onMudarTarefa}
+          onRemover={p.onRemover}
+        />
+      )}
+
       {p.selecionado?.data.tipo === "agente" && p.catalogo && (
         <EditorDeAgente
           key={p.selecionado.id}
           no={{ id: p.selecionado.id, data: p.selecionado.data }}
           catalogo={p.catalogo}
+          ambiente={p.ambiente}
           onMudar={p.onMudarAgente}
           onRemover={p.onRemover}
         />
@@ -584,14 +601,194 @@ export function Painel(p: Props) {
  * validação aqui divergiria da primeira, e o sintoma seria a tela barrando algo
  * que o servidor aceita — ou, pior, deixando passar algo que ele recusa.
  */
+/** O editor de uma TAREFA. O de agente menos o vocabulario, mais `produz`.
+ *
+ *  Nao e o mesmo componente com um `if`: os dois campos que sobram no agente —
+ *  `tipos` e `abstem_com` — carregam a invariante do P6.86 e o alerta dela, e
+ *  um editor que ora mostra ora esconde essa dupla acabaria mostrando o alerta
+ *  errado para o bloco errado. */
+function EditorDeTarefa({
+  no,
+  catalogo,
+  ambiente,
+  onMudar,
+  onRemover,
+}: {
+  no: { id: string; data: DadosTarefa };
+  catalogo: Catalogo;
+  ambiente: Ambiente | null;
+  onMudar: (id: string, patch: Partial<TarefaDeclarada>) => void;
+  onRemover: (id: string) => void;
+}) {
+  const t = no.data.declaracao;
+  const mudar = (patch: Partial<TarefaDeclarada>) => onMudar(no.id, patch);
+  const semInterpolacao = t.prompt.length > 0 && !t.prompt.includes("{");
+
+  return (
+    <Secao titulo={t.name || "tarefa"} ajuda="Ela TRANSFORMA: consome um kind e entrega outro.">
+      <Campo rotulo="nome">
+        <input value={t.name} onChange={(e) => mudar({ name: e.target.value })} className={CAMPO} />
+      </Campo>
+
+      <Campo
+        rotulo="kind"
+        dica="que tipo de item esta tarefa consome"
+        alerta={
+          t.kind.trim()
+            ? null
+            : "em branco: diga que tipo de item esta tarefa consome, senão não há como ligá-la a degrau nenhum"
+        }
+      >
+        <input
+          value={t.kind}
+          onChange={(e) => mudar({ kind: e.target.value })}
+          list="kinds-conhecidos"
+          placeholder="issue, rascunho… ou um kind novo"
+          spellCheck={false}
+          className={`${CAMPO} font-mono text-[11px]`}
+        />
+      </Campo>
+
+      {/* `produz` e o campo que o agente nao tem, e o alerta cobre as DUAS
+          recusas do servidor: vazio (o item sumiria do run, e para descartar
+          de proposito existe o `filtro`) e igual ao kind (o ramo alimentaria a
+          si mesmo, e o degrau rodaria sobre a propria saida ate o teto de
+          rondas). Dizer aqui poupa um 422 sobre o que ja da para ver. */}
+      <Campo
+        rotulo="produz"
+        dica="o kind que sai; o degrau seguinte lê o texto no campo com ESTE nome"
+        alerta={
+          !t.produz.trim()
+            ? "em branco: a tarefa consumiria o item sem entregá-lo a ninguém — para descartar de propósito existe o Filter"
+            : t.produz === t.kind
+              ? "igual ao kind: o ramo alimentaria a si mesmo, e o degrau rodaria sobre a própria saída"
+              : null
+        }
+      >
+        <input
+          value={t.produz}
+          onChange={(e) => mudar({ produz: e.target.value })}
+          list="kinds-conhecidos"
+          placeholder="rascunho, texto_final…"
+          spellCheck={false}
+          className={`${CAMPO} font-mono text-[11px]`}
+        />
+      </Campo>
+
+      <Campo rotulo="system" dica="a instrução permanente; é o que vai marcado para cache">
+        <textarea
+          value={t.system}
+          onChange={(e) => mudar({ system: e.target.value })}
+          rows={5}
+          className={`${CAMPO} font-mono text-[11px] leading-snug`}
+        />
+      </Campo>
+
+      <Campo
+        rotulo="prompt"
+        dica="template sobre o item: {campo} vira o valor do payload"
+        alerta={
+          semInterpolacao
+            ? "não interpola nada: todo item receberia o MESMO texto, e o modelo transformaria sem ler o item"
+            : null
+        }
+      >
+        <textarea
+          value={t.prompt}
+          onChange={(e) => mudar({ prompt: e.target.value })}
+          rows={3}
+          placeholder="Escreva a partir de: {achados}"
+          className={`${CAMPO} font-mono text-[11px] leading-snug`}
+        />
+      </Campo>
+
+      <Campo
+        rotulo="ferramentas"
+        dica={
+          catalogo.ferramentas.length
+            ? "a tarefa recebe as que DECLARA, não as que existem no catálogo"
+            : "o catálogo ainda não publica ferramenta nenhuma"
+        }
+      >
+        <div className="grid gap-1">
+          {catalogo.ferramentas.map((f) => (
+            <label key={f.nome} className="flex items-start gap-2 text-[11.5px]" title={f.descricao}>
+              <input
+                type="checkbox"
+                checked={t.ferramentas.includes(f.nome)}
+                onChange={(e) =>
+                  mudar({
+                    ferramentas: e.target.checked
+                      ? [...t.ferramentas, f.nome]
+                      : t.ferramentas.filter((n) => n !== f.nome),
+                  })
+                }
+                className="mt-0.5"
+              />
+              <span className="font-mono text-[11px] text-neutral-600 dark:text-noite-fraca">
+                {f.nome}
+              </span>
+            </label>
+          ))}
+        </div>
+      </Campo>
+
+      {/* O MODELO, e ele é a alavanca de custo por bloco: a tabela de preços do
+          servidor diz que o mais barato é 5x menos que o mais caro, na entrada
+          e na saída. A lista vem de `/api/ambiente` — a tela oferece
+          exatamente o que o servidor aceita, e uma lista literal aqui
+          ofereceria um modelo que `Cost.microcents` recusa. */}
+      <Campo
+        rotulo="modelo"
+        dica="vazio = o modelo padrão do servidor; vocabulário fechado costuma caber no mais barato"
+      >
+        <select
+          value={t.model}
+          onChange={(e) => mudar({ model: e.target.value })}
+          className={CAMPO}
+        >
+          <option value="">padrão do servidor</option>
+          {(ambiente?.modelos ?? []).map((m) => (
+            <option key={m} value={m}>
+              {m}
+            </option>
+          ))}
+        </select>
+      </Campo>
+
+      <Campo rotulo="teto por item (µ¢)" dica={`≈ US$ ${(t.budget_microcents / 1e8).toFixed(4)}`}>
+        <input
+          type="number"
+          value={t.budget_microcents}
+          onChange={(e) => mudar({ budget_microcents: parseInt(e.target.value, 10) })}
+          className={`${CAMPO} text-right font-mono`}
+        />
+      </Campo>
+
+      <Campo rotulo="max_turns" dica="quantas idas ao modelo por item, no máximo">
+        <input
+          type="number"
+          value={t.max_turns}
+          onChange={(e) => mudar({ max_turns: parseInt(e.target.value, 10) })}
+          className={`${CAMPO} text-right font-mono`}
+        />
+      </Campo>
+
+      <Remover onClick={() => onRemover(no.id)} />
+    </Secao>
+  );
+}
+
 function EditorDeAgente({
   no,
   catalogo,
+  ambiente,
   onMudar,
   onRemover,
 }: {
   no: { id: string; data: DadosAgente };
   catalogo: Catalogo;
+  ambiente: Ambiente | null;
   onMudar: (id: string, patch: Partial<AgenteDeclarado>) => void;
   onRemover: (id: string) => void;
 }) {
@@ -736,6 +933,29 @@ function EditorDeAgente({
       {/* O TETO, em duas escalas. `budget_microcents` é o campo porque a
           constraint de dinheiro do projeto proíbe float acumulando; o dólar ao
           lado é derivado, só para leitura. */}
+      {/* O MODELO, e ele é a alavanca de custo por bloco: a tabela de preços do
+          servidor diz que o mais barato é 5x menos que o mais caro, na entrada
+          e na saída. A lista vem de `/api/ambiente` — a tela oferece
+          exatamente o que o servidor aceita, e uma lista literal aqui
+          ofereceria um modelo que `Cost.microcents` recusa. */}
+      <Campo
+        rotulo="modelo"
+        dica="vazio = o modelo padrão do servidor; vocabulário fechado costuma caber no mais barato"
+      >
+        <select
+          value={a.model}
+          onChange={(e) => mudar({ model: e.target.value })}
+          className={CAMPO}
+        >
+          <option value="">padrão do servidor</option>
+          {(ambiente?.modelos ?? []).map((m) => (
+            <option key={m} value={m}>
+              {m}
+            </option>
+          ))}
+        </select>
+      </Campo>
+
       <Campo rotulo="teto por item (µ¢)" dica={`≈ US$ ${(a.budget_microcents / 1e8).toFixed(4)}`}>
         <input
           type="number"

@@ -177,6 +177,25 @@ afirmação sem fonte"* vale igual para uma resolução.
 
 ### 4.1 O payload é `{<produz>: texto}`, e isso não é detalhe
 
+> **Corrigido em 2026-09-21, por um run REAL.** O que está escrito abaixo
+> continua valendo para o campo NOVO — o texto entra sob o nome do kind
+> produzido. O que estava errado era o resto do payload: ele era *só* isso.
+>
+> Na primeira entrevista de verdade, o modelo propôs um revisor cujo prompt
+> cita `{titulo}` e `{corpo}` da issue para conferir o resumo contra ela — a
+> coisa certa a pedir. A execução morria com `KeyError: o prompt cita 'titulo'
+> e o payload de '1+resumo' não tem esse campo. disponíveis: ['resumo']`. Não
+> era invenção do modelo: era o formato jogando fora o item de origem, e com
+> ele a única coisa contra a qual um revisor pode comparar.
+>
+> **Um degrau que transforma ACRESCENTA:** o item produzido carrega os campos
+> de origem mais o seu. Colisão de nome é resolvida pelo novo — preservar o
+> velho faria a saída do modelo sumir sem uma palavra. A regra mora em
+> `Tarefa._transformar_carregando`, e não em cada `transformar`, porque o
+> contrato de `conversar` é compartilhado com o `Agent`; e só vale quando o
+> item produzido carrega CAMPOS, porque `domains/redacao` produz texto cru e
+> ali não há onde pôr campo nenhum.
+
 `domains/redacao` põe `payload=texto` — string crua. Isso **quebra o bloco
 seguinte**: `_campos` levanta `TypeError` para payload que não seja dict ou
 dataclass, e montar o prompt do próximo degrau é exatamente o que um pipeline

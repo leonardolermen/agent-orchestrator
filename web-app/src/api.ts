@@ -59,6 +59,33 @@ export interface AgenteDeclarado {
   ferramentas: string[];
   max_turns: number;
   budget_microcents: number;
+  // Vazio = o modelo do cliente da execução. É a alavanca de custo por BLOCO:
+  // a tabela de preços do servidor diz que o mais barato é 5x menos que o mais
+  // caro, na entrada e na saída.
+  model: string;
+}
+
+// Uma TAREFA como dado. O irmão do agente para o bloco que TRANSFORMA.
+//
+// Sem `tipos` e sem `abstem_com`, e a ausência é o contrato: transformar não
+// tem vocabulário de julgamento a rotular — quem não transforma simplesmente
+// não resolve, e o item fica no pool para o degrau seguinte.
+//
+// `produz` é o campo que o agente não tem, e é ele que liga este bloco ao
+// próximo: o texto do modelo vira o payload de um item novo desse kind, no
+// campo com esse mesmo nome — produz `rascunho`, o próximo interpola
+// `{rascunho}`.
+export interface TarefaDeclarada {
+  name: string;
+  system: string;
+  kind: string;
+  produz: string;
+  prompt: string;
+  ferramentas: string[];
+  max_turns: number;
+  budget_microcents: number;
+  // Mesma história do agente: vazio = o modelo do cliente.
+  model: string;
 }
 
 // Tudo que dá para compor, SEM agrupamento. Espelha `CatalogoJSON`.
@@ -146,6 +173,9 @@ export interface Receita {
 export type BlocoPedido =
   | { tipo: "regra"; nome: string; parametros: Record<string, ValorParametro> }
   | { tipo: "agente"; declaracao: AgenteDeclarado }
+  // O bloco que TRANSFORMA. `tipo` diz qual CONTRATO ele honra: `agente`
+  // propõe e nunca resolve, `tarefa` resolve e nunca propõe.
+  | { tipo: "tarefa"; declaracao: TarefaDeclarada }
   // Sem `abstem_com`: o servidor o DERIVA dos agentes, que ja o declaram cada
   // um. Mandar daqui seria a segunda fonte de verdade, e o sintoma seria o
   // Crew chamando de desacordo duas abstencoes.
@@ -156,6 +186,18 @@ export type BlocoPedido =
       process: string;
       conflito: string;
     };
+
+// O que o CHAT propõe. `Receita` continua existindo para os arquivos que já
+// estão em disco; o que mudou é o que o entrevistador PRODUZ — etapas, com
+// agente e tarefa declarados na conversa em vez de escolhidos de um cardápio.
+export interface ComposicaoProposta {
+  id: string;
+  nome: string;
+  justificativa: string;
+  etapas: { nome: string; blocos: BlocoPedido[] }[];
+  entrega: string[];
+  max_rondas: number;
+}
 
 export interface ComposicaoResumo {
   id: string;
@@ -169,6 +211,8 @@ export interface ComposicaoResumo {
 
 export interface Ambiente {
   modelo_padrao: string;
+  // O que o servidor sabe cobrar. O `<select>` do painel sai daqui.
+  modelos: string[];
   // Booleano de propósito. A tela precisa saber se a entrevista vai funcionar,
   // e não precisa — nunca — do valor da chave.
   tem_chave: boolean;
@@ -404,6 +448,29 @@ export function agenteEmBranco(nome: string): AgenteDeclarado {
     ferramentas: [],
     max_turns: 3,
     budget_microcents: 4_000_000,
+    // Vazio: quem monta escolhe, e até escolher vale o modelo do cliente.
+    model: "",
+  };
+}
+
+/** Uma TAREFA em branco. O espelho de `agenteEmBranco`, sem o vocabulário.
+ *
+ *  `kind` e `produz` nascem VAZIOS pela mesma razão que o `kind` do agente: é
+ *  a pessoa que diz sobre que item o bloco trabalha e o que ele entrega, e é
+ *  por esses dois que o grafo liga um degrau ao outro. Preencher com um chute
+ *  faria a tela decidir o desenho do workflow sem ninguém ver a decisão. */
+export function tarefaEmBranco(nome: string): TarefaDeclarada {
+  return {
+    name: nome,
+    system: "",
+    kind: "",
+    produz: "",
+    prompt: "",
+    ferramentas: [],
+    max_turns: 3,
+    budget_microcents: 4_000_000,
+    // Vazio: quem monta escolhe, e até escolher vale o modelo do cliente.
+    model: "",
   };
 }
 

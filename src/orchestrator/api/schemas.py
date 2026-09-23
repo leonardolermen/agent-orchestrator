@@ -469,6 +469,11 @@ class AmbienteJSON(BaseModel):
     """
 
     modelo_padrao: str
+    # TODOS os modelos que o produto sabe cobrar, para a tela OFERECER
+    # exatamente o que o servidor aceita. Sem isto o `<select>` teria a própria
+    # lista, e a que divergisse ofereceria um modelo que `Cost.microcents`
+    # recusa — erro que só aparece quando alguém aperta rodar.
+    modelos: list[str]
     tem_chave: bool
     seed: int
     n: int
@@ -508,6 +513,16 @@ class AgenteDeclaradoJSON(BaseModel):
     ferramentas: list[str]
     max_turns: int
     budget_microcents: int
+    # QUAL modelo este bloco usa. Vazio = o do cliente da execução, que é o
+    # default de todo workflow de hoje.
+    #
+    # Ele existia em `AgenteDeclarado` desde sempre e não existia AQUI, então a
+    # escolha não alcançava nem a tela nem o chat — toda composição herdava o
+    # modelo do cliente. Medido: um triador de vocabulário fechado rodou em
+    # Opus, gastou US$ 0,039 num run de dois itens e abstém por orçamento,
+    # porque não havia como dizer "este bloco é Haiku". A tabela de preços diz
+    # que Haiku é 5x mais barato que Opus na entrada e na saída.
+    model: str = ""
 
 
 class TarefaDeclaradaJSON(BaseModel):
@@ -524,6 +539,8 @@ class TarefaDeclaradaJSON(BaseModel):
     ferramentas: list[str]
     max_turns: int
     budget_microcents: int
+    # Mesma história do agente: vazio = o modelo do cliente.
+    model: str = ""
 
 
 class RegraJSON(BaseModel):

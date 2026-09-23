@@ -36,7 +36,7 @@ def _raizes_isoladas(tmp_path, monkeypatch):
 def _fake(monkeypatch, textos):
     import orchestrator.api.app as api_app
     from orchestrator.agent.llm import FakeLLMClient, LLMResponse
-    from orchestrator.agent.teto import ClienteComTeto
+    from orchestrator.agent.teto import ClienteComTeto, Orcamento
     from orchestrator.kernel.cost import Cost
 
     fake = FakeLLMClient(
@@ -45,11 +45,13 @@ def _fake(monkeypatch, textos):
             for t in textos
         ]
     )
-    monkeypatch.setattr(
-        api_app,
-        "_cliente_de_execucao",
-        lambda teto: ClienteComTeto(fake, teto_microcents=teto),
-    )
+    def _de_execucao(teto):
+        # A fábrica IGNORA o modelo: estes testes não são sobre qual modelo foi
+        # chamado, e um fake por modelo faria o `chamadas` deles se espalhar.
+        orcamento = Orcamento(teto)
+        return (lambda _model: ClienteComTeto(fake, orcamento=orcamento)), orcamento
+
+    monkeypatch.setattr(api_app, "_cliente_de_execucao", _de_execucao)
     return fake
 
 

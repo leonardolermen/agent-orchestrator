@@ -106,6 +106,18 @@ class Cost:
         )
 
 
+def modelos_precificados() -> list[str]:
+    """Os modelos que o produto sabe cobrar, em ordem.
+
+    Fronteira pública, como `modelo_precificado`, e pelo mesmo motivo — só que
+    para a LISTA: a tela e o chat precisam OFERECER exatamente o que o servidor
+    aceita. Sem ela, cada um faria a própria cópia, e a que divergisse
+    ofereceria um modelo que `microcents` recusa — o que só aparece quando
+    alguém aperta rodar.
+    """
+    return sorted(_PRECOS)
+
+
 def modelo_precificado(model: str) -> bool:
     """Verdadeiro quando o modelo tem preço conhecido na tabela.
 

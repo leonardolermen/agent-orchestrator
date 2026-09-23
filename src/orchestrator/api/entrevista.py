@@ -49,13 +49,14 @@ from typing import Any
 from fastapi import WebSocket, WebSocketDisconnect
 from starlette.concurrency import run_in_threadpool
 
+from orchestrator.authoring.composicao import para_json
 from orchestrator.grill.entrevistador import (
     Entrevistador,
     EntrevistaFalhou,
     Proposta,
     RecusaFinal,
 )
-from orchestrator.grill.receita import para_json, validar_id
+from orchestrator.grill.receita import validar_id
 from orchestrator.kernel.cost import Cost
 
 # Sentinela para acordar a thread quando o cliente desconecta no meio da
@@ -227,7 +228,7 @@ async def conduzir(
             if marca == "fim" and isinstance(carga, Proposta):
                 if gravar:
                     try:
-                        gravar(carga.receita)
+                        gravar(carga.composicao)
                     except ValueError as erro:
                         # Gravar pode RECUSAR — hoje por id já tomado no
                         # `registry()` (a mesma recusa que `/api/receitas`
@@ -254,7 +255,10 @@ async def conduzir(
                 await ws.send_json(
                     {
                         "tipo": "proposta",
-                        "receita": para_json(carga.receita),
+                        # A COMPOSIÇÃO, com as etapas. `receita` aqui deixaria
+                        # a tela empilhando todo bloco no primeiro degrau —
+                        # que é o que ela fazia enquanto este era o formato.
+                        "composicao": para_json(carga.composicao),
                         "custo_usd": _usd(carga.cost, modelo),
                         "transcricao": list(carga.transcricao),
                     }

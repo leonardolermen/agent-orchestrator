@@ -105,3 +105,50 @@ def test_registro_corrompido_diz_qual_linha(tmp_path):
 
 def test_arquivo_inexistente_devolve_vazio_em_vez_de_levantar(tmp_path):
     assert JsonlRunStore(tmp_path / "nunca-escrito.jsonl").list() == []
+
+
+def test_o_MODELO_de_cada_resolver_sobrevive_a_ida_e_volta(tmp_path):
+    """Sem ele o custo em disco nao e conversivel.
+
+    `Cost` guarda TOKENS de proposito — o preco depende do modelo —, entao
+    quem le precisa saber COM QUE modelo cada linha gastou. Enquanto nao
+    sabia, `api/app.py::_resumo_json` convertia tudo com `"claude-opus-5"`
+    fixo: medido contra o Barrier em 2026-09-23, o mesmo run saiu por 541.300
+    µ¢ na resposta e 2.706.500 µ¢ na listagem.
+    """
+    from dataclasses import replace
+
+    store = JsonlRunStore(tmp_path / "runs.jsonl")
+    run = replace(
+        _run("1789000000000-aaaa"),
+        modelo_por_resolver={"L1": "", "agente": "claude-haiku-4-5"},
+    )
+    store.save(run)
+
+    lido = store.get("1789000000000-aaaa")
+
+    assert lido.modelo_por_resolver == {"L1": "", "agente": "claude-haiku-4-5"}
+
+
+def test_linha_gravada_ANTES_do_campo_de_modelo_continua_legivel(tmp_path):
+    """O store e append-only: as linhas antigas ficam.
+
+    Um `d["modelo_por_resolver"]` derrubaria a listagem inteira por um registro
+    velho — e a `ValueError` de `_todos` e alto-falante, nao filtro. Ausente
+    vira `{}`, e quem le cai no proprio default: que e exatamente o modelo com
+    que aquelas linhas foram precificadas na epoca.
+    """
+    import json
+
+    caminho = tmp_path / "runs.jsonl"
+    store = JsonlRunStore(caminho)
+    store.save(_run("1789000000000-aaaa"))
+    # A linha "antiga": a mesma, sem o campo novo.
+    linha = json.loads(caminho.read_text(encoding="utf-8").strip())
+    del linha["modelo_por_resolver"]
+    caminho.write_text(json.dumps(linha, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    lido = store.get("1789000000000-aaaa")
+
+    assert lido is not None
+    assert lido.modelo_por_resolver == {}

@@ -24,10 +24,42 @@ def _propor(**extra):
     base = {
         "nome": "Conciliação Acme",
         "justificativa": "consolidam por fornecedor",
-        "resolvers": [{"nome": "L1"}, {"nome": "L2", "parametros": {"max_cents": 10}}],
+        "etapas": [
+            {
+                "nome": "casar",
+                "blocos": [
+                    {"tipo": "regra", "regra": {"nome": "L1"}},
+                    {"tipo": "regra", "regra": {"nome": "L2", "parametros": {"max_cents": 10}}},
+                ],
+            }
+        ],
     }
     base.update(extra)
     return _chamada("propor_workflow", **base)
+
+
+_ESCRITOR = {
+    "tipo": "tarefa",
+    "tarefa": {
+        "name": "escritor",
+        "system": "escreva",
+        "kind": "issue",
+        "produz": "rascunho",
+        "prompt": "Escreva sobre {titulo}",
+    },
+}
+
+_REVISOR = {
+    "tipo": "agente",
+    "agente": {
+        "name": "revisor",
+        "system": "revise",
+        "kind": "rascunho",
+        "prompt": "Revise {rascunho}",
+        "tipos": ["APROVADO", "REPROVADO"],
+        "abstem_com": "NAO_SEI",
+    },
+}
 
 
 class _Respostas:
@@ -45,7 +77,7 @@ class _Respostas:
         return self._respostas.pop(0)
 
 
-def test_entrevista_feliz_produz_receita():
+def test_entrevista_feliz_produz_composicao():
     cliente = FakeLLMClient([
         _chamada(
             "perguntar",
@@ -59,10 +91,10 @@ def test_entrevista_feliz_produz_receita():
     r = Entrevistador(client=cliente).entrevistar("acme", "conciliamos NF com extrato", responder)
 
     assert isinstance(r, Proposta)
-    assert r.receita.id == "acme"
-    assert r.receita.nome == "Conciliação Acme"
-    assert [x.nome for x in r.receita.resolvers] == ["L1", "L2"]
-    assert r.receita.resolvers[1].parametros == {"max_cents": 10}
+    assert r.composicao.id == "acme"
+    assert r.composicao.nome == "Conciliação Acme"
+    assert [x.nome for x in r.composicao.blocos] == ["L1", "L2"]
+    assert r.composicao.blocos[1].parametros == {"max_cents": 10}
     assert responder.perguntas == ["data de caixa ou competência?"]
     # Custo é a métrica central do produto: precisa somar os DOIS turnos, não
     # só o último. Pina a mutação `cost=total -> cost=Cost.zero()`.
@@ -83,7 +115,19 @@ def test_proposta_invalida_volta_ao_modelo_com_a_mensagem_do_resolver():
     # Asserção só no resultado passaria com um laço que ignorou o erro e deu
     # sorte no turno seguinte.
     cliente = FakeLLMClient([
-        _propor(resolvers=[{"nome": "L2", "parametros": {"max_cents": -1}}]),
+        _propor(
+            etapas=[
+                {
+                    "nome": "casar",
+                    "blocos": [
+                        {
+                            "tipo": "regra",
+                            "regra": {"nome": "L2", "parametros": {"max_cents": -1}},
+                        }
+                    ],
+                }
+            ]
+        ),
         _propor(),
     ])
 
@@ -105,7 +149,9 @@ def test_erro_de_ferramenta_desconhecida_tambem_volta_ao_modelo():
 
 
 def test_tentativas_de_formato_esgotadas_falha_alto():
-    ruim = _propor(resolvers=[{"nome": "L9"}])
+    ruim = _propor(
+        etapas=[{"nome": "casar", "blocos": [{"tipo": "regra", "regra": {"nome": "L9"}}]}]
+    )
     cliente = FakeLLMClient([ruim, ruim, ruim])
 
     with pytest.raises(EntrevistaFalhou, match="formato"):
@@ -322,3 +368,67 @@ def test_modelo_sem_preco_falha_na_construcao():
 
     with pytest.raises(ValueError, match="modelo sem preço"):
         Entrevistador(client=_SemPreco())
+
+
+def test_a_entrevista_propoe_uma_COMPOSICAO_de_duas_etapas():
+    """O desfecho que o chat não alcançava: dois degraus ligados por kind, com
+    um agente DECLARADO na conversa — não escolhido de um cardápio de três."""
+    from orchestrator.authoring.composicao import Composicao
+
+    cliente = FakeLLMClient([
+        _propor(
+            nome="Triagem",
+            etapas=[
+                {"nome": "escrever", "blocos": [_ESCRITOR]},
+                {"nome": "revisar", "blocos": [_REVISOR]},
+            ],
+            entrega=["rascunho"],
+        )
+    ])
+
+    r = Entrevistador(client=cliente).entrevistar(
+        "triagem", "classifique minhas issues", _Respostas()
+    )
+
+    assert isinstance(r, Proposta)
+    assert isinstance(r.composicao, Composicao)
+    assert [e.nome for e in r.composicao.etapas] == ["escrever", "revisar"]
+    assert r.composicao.entrega == ("rascunho",)
+
+
+def test_proposta_INVALIDA_volta_ao_modelo_em_vez_de_derrubar_a_entrevista():
+    """VALIDAR É CONSTRUIR, e o erro é do DOMÍNIO — texto escrito para ser
+    lido. Um prompt que não interpola campo nenhum faria todo item receber o
+    mesmo texto, e o modelo responderia sem ler o item; `AgenteDeclarado`
+    recusa, e a recusa precisa chegar ao modelo como `is_error` para ele
+    corrigir no turno seguinte, em vez de a entrevista morrer com a conversa
+    do parceiro junto."""
+    cego = {
+        "tipo": "agente",
+        "agente": {
+            "name": "cego",
+            "system": "s",
+            "kind": "issue",
+            "prompt": "classifique isto",
+            "tipos": ["A"],
+            "abstem_com": "NAO_SEI",
+        },
+    }
+    enxergando = {
+        "tipo": "agente",
+        "agente": {**cego["agente"], "prompt": "classifique {titulo}"},
+    }
+    cliente = FakeLLMClient([
+        _propor(etapas=[{"nome": "e1", "blocos": [cego]}], entrega=["issue"]),
+        _propor(etapas=[{"nome": "e1", "blocos": [enxergando]}], entrega=["issue"]),
+    ])
+
+    r = Entrevistador(client=cliente).entrevistar("triagem", "desc", _Respostas())
+
+    assert isinstance(r, Proposta)
+    # A asserção é sobre o que o modelo RECEBEU na chamada seguinte, como o
+    # teste irmão `test_proposta_invalida_volta_ao_modelo_com_a_mensagem_do_resolver`
+    # já faz: asserção só no resultado final passaria com um laço que ignorou o
+    # erro e deu sorte no turno seguinte.
+    enviado = json.dumps(cliente.chamadas[1]["messages"], ensure_ascii=False)
+    assert "não interpola campo nenhum" in enviado

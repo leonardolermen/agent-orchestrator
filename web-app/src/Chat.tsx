@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { Receita } from "./api";
+import type { ComposicaoProposta } from "./api";
 
 type Papel = "voce" | "entrevistador" | "sistema";
 interface Fala {
@@ -10,7 +10,7 @@ interface Fala {
 type Estado = "parado" | "conectando" | "esperando" | "perguntou" | "fim";
 
 interface Props {
-  aoPropor: (receita: Receita, custoUsd: number) => void;
+  aoPropor: (composicao: ComposicaoProposta, custoUsd: number) => void;
   temChave: boolean;
 }
 
@@ -74,12 +74,16 @@ export function Chat({ aoPropor, temChave }: Props) {
           setEstado("perguntou");
           return;
         case "proposta":
+          // O resumo é por ETAPA, não por bloco numa fileira só: entre etapas
+          // a ordem é por DADO, e uma lista plana de nomes esconderia o degrau
+          // — que é justamente o que o chat não sabia propor antes.
           dizer(
             "entrevistador",
-            `Proponho: ${m.receita.resolvers.map((r: { nome: string }) => r.nome).join(" → ")}. ` +
-              `${m.receita.justificativa}`,
+            `Proponho: ${(m.composicao.etapas as { nome: string; blocos: unknown[] }[])
+              .map((e) => `${e.nome} (${e.blocos.length})`)
+              .join(" → ")}. ${m.composicao.justificativa}`,
           );
-          aoPropor(m.receita, m.custo_usd);
+          aoPropor(m.composicao, m.custo_usd);
           setEstado("fim");
           return;
         case "recusa":

@@ -33,3 +33,20 @@ def test_modelo_sem_preco_levanta_em_vez_de_devolver_zero():
     # item é o número comercial deste produto.
     assert modelo_precificado("claude-opus-5")
     assert not modelo_precificado("modelo-inventado")
+
+
+def test_a_lista_de_modelos_precificados_e_publica():
+    """A tela e o chat precisam OFERECER exatamente o que o servidor aceita.
+
+    Sem uma fronteira pública, cada um faria a própria lista — e a que
+    divergisse ofereceria um modelo que `Cost.microcents` recusa, o que só
+    aparece quando alguém tenta rodar. `modelo_precificado` já é essa fronteira
+    para UM nome; faltava a lista.
+    """
+    from orchestrator.kernel.cost import modelo_precificado, modelos_precificados
+
+    nomes = modelos_precificados()
+
+    assert nomes == sorted(nomes), "ordenada: a tela mostra nesta ordem"
+    assert all(modelo_precificado(n) for n in nomes)
+    assert "claude-haiku-4-5" in nomes

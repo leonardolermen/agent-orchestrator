@@ -53,6 +53,7 @@ há chave. Desarmar a tranca é ato explícito, e só acontece nesse ponto.
 
 import os
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -66,7 +67,7 @@ from orchestrator.agent.declarado import (
     RegraDisponivel,
     TarefaDeclarada,
 )
-from orchestrator.agent.teto import ClienteComTeto
+from orchestrator.agent.teto import ClienteComTeto, Orcamento
 from orchestrator.agent.tools.registry import ToolRegistry
 from orchestrator.api import ambiente as variaveis
 from orchestrator.api import gatilhos
@@ -125,7 +126,12 @@ from orchestrator.domains.registro import CATALOGO
 from orchestrator.grill.catalogo import MODELO_INERTE
 from orchestrator.grill.receita import Receita, ResolverReceita, construir
 from orchestrator.grill.registro import gravar_receita, listar_receitas
-from orchestrator.kernel.cost import Cost, CostClass
+from orchestrator.kernel.cost import (
+    Cost,
+    CostClass,
+    modelo_precificado,
+    modelos_precificados,
+)
 from orchestrator.kernel.definition import WorkflowDefinition
 from orchestrator.kernel.event import EventBus
 from orchestrator.kernel.resolution import TraceKind
@@ -205,23 +211,47 @@ def _tem_chave() -> bool:
     return bool(os.environ.get("ANTHROPIC_API_KEY"))
 
 
-def _cliente_de_execucao(teto_microcents: int | None) -> ClienteComTeto:
-    """O cliente REAL, com o teto DESTA requisição. Um por execução.
+def _cliente_de_execucao(
+    teto_microcents: int | None,
+) -> tuple[Callable[[str], ClienteComTeto], Orcamento]:
+    """A FÁBRICA de clientes desta requisição, e o orçamento que todos dividem.
 
     **É o único caminho de código daqui até o modelo pela rota `/runs`**, e por
-    isso ele é chamado num ponto só: depois de saber que a cascata tem agente e
-    que há chave. Fora dali a construção cai no `ClienteAusente`, que levanta se
+    isso é chamada num ponto só: depois de saber que a cascata tem agente e que
+    há chave. Fora dali a construção cai no `ClienteAusente`, que levanta se
     alguém chegar ao modelo por onde não deveria existir caminho.
 
-    Construir NÃO fala com a rede: `AnthropicClient` só instancia o SDK na
-    primeira chamada (ver o docstring de lá), então até aqui nada foi gasto e
-    nada foi contatado.
+    **Por que uma fábrica e não um cliente.** O modelo da chamada é o do
+    CLIENTE — `AnthropicClient.complete` usa `self.model` —, então um cliente
+    só fazia todo bloco falar com o mesmo modelo, e `model` por bloco não
+    decidia nada. Medido contra a API do Barrier: um bloco declarado em
+    `claude-haiku-4-5` gastou 4.494.000 µ¢ de preço de opus.
+
+    **Por que UM orçamento.** O teto é da REQUISIÇÃO. Um acumulador por cliente
+    daria um teto por modelo, e o pedido que autorizou gastar X gastaria X por
+    modelo sem ninguém pedir.
+
+    Memoizado por modelo: uma cascata com dez blocos do mesmo modelo usa um
+    cliente só. Construir NÃO fala com a rede — `AnthropicClient` só instancia
+    o SDK na primeira chamada (ver o docstring de lá), então até aqui nada foi
+    gasto e nada foi contatado.
 
     `teto_microcents=None` NÃO é "sem teto" — ver `agent/teto.py`.
     """
     from orchestrator.agent.anthropic_client import AnthropicClient
 
-    return ClienteComTeto(AnthropicClient(), teto_microcents=teto_microcents)
+    orcamento = Orcamento(teto_microcents)
+    cache: dict[str, ClienteComTeto] = {}
+
+    def para(model: str) -> ClienteComTeto:
+        # Vazio = o padrão do servidor. É o default de todo bloco que não
+        # escolheu, e o mesmo nome que a tabela de custo usa para essas linhas.
+        nome = model or MODELO_INERTE
+        if nome not in cache:
+            cache[nome] = ClienteComTeto(AnthropicClient(nome), orcamento=orcamento)
+        return cache[nome]
+
+    return para, orcamento
 
 
 @app.get("/api/workflows", response_model=list[WorkflowResumoJSON])
@@ -268,6 +298,26 @@ def _ferramenta_json(ferramentas: ToolRegistry, nome: str) -> FerramentaJSON:
     return FerramentaJSON(nome=nome, descricao=ferramentas.spec(nome).description)
 
 
+def _modelo(nome: str) -> str:
+    """O modelo do bloco, conferido contra a TABELA DE PREÇOS.
+
+    Vazio passa: significa "o modelo do cliente da execução", que é o default
+    de todo workflow de hoje.
+
+    Um nome fora da tabela é recusado AQUI, na composição, e não na execução:
+    sem preço não há custo, e custo é o que este produto mede. `AnthropicClient`
+    também recusa — mas ali a recusa chega com a cascata montada e, pela web,
+    depois de a pessoa clicar em rodar.
+    """
+    if nome and not modelo_precificado(nome):
+        raise ValueError(
+            f"modelo sem preço conhecido: {nome!r}. sem preço não há custo, e "
+            f"custo é o que este produto mede. use um de "
+            f"{modelos_precificados()}"
+        )
+    return nome
+
+
 def _declaracao(d: AgenteDeclaradoJSON) -> AgenteDeclarado:
     """Um `AgenteDeclarado` a partir do JSON. Levanta `ValueError` do DOMÍNIO.
 
@@ -285,6 +335,7 @@ def _declaracao(d: AgenteDeclaradoJSON) -> AgenteDeclarado:
         ferramentas=tuple(d.ferramentas),
         max_turns=d.max_turns,
         budget_microcents=d.budget_microcents,
+        model=_modelo(d.model),
     )
 
 
@@ -301,6 +352,7 @@ def _declaracao_de_tarefa(d: TarefaDeclaradaJSON) -> TarefaDeclarada:
         ferramentas=tuple(d.ferramentas),
         max_turns=d.max_turns,
         budget_microcents=d.budget_microcents,
+        model=_modelo(d.model),
     )
 
 
@@ -480,6 +532,7 @@ def ambiente() -> AmbienteJSON:
     """
     return AmbienteJSON(
         modelo_padrao=MODELO_INERTE,
+        modelos=modelos_precificados(),
         # A MESMA leitura que a guarda 3 de `_executar` usa para recusar. Duas
         # leituras divergiriam no dia em que uma das duas mudasse de critério, e
         # o sintoma seria a tela anunciar que dá para rodar o que a rota recusa.
@@ -491,7 +544,7 @@ def ambiente() -> AmbienteJSON:
     )
 
 
-def _gravar_receita_do_chat(receita: Receita) -> None:
+def _gravar_composicao_do_chat(composicao: Composicao) -> None:
     """A TERCEIRA porta de escrita, com a mesma tranca das outras duas.
 
     `gravar_receita` só sabe se o ARQUIVO de receita existe — não consulta o
@@ -505,15 +558,15 @@ def _gravar_receita_do_chat(receita: Receita) -> None:
     `HTTPException` porque um WebSocket não carrega status HTTP: `conduzir`
     traduz esta recusa no desfecho `recusa` que a tela já sabe mostrar.
     """
-    if receita.id in registry(_RAIZ_RECEITAS, _RAIZ_COMPOSICOES):
-        raise ValueError(f"já existe um workflow com id {receita.id!r}; escolha outro")
-    gravar_receita(receita, _RAIZ_RECEITAS)
+    if composicao.id in registry(_RAIZ_RECEITAS, _RAIZ_COMPOSICOES):
+        raise ValueError(f"já existe um workflow com id {composicao.id!r}; escolha outro")
+    gravar(composicao, _RAIZ_COMPOSICOES)
 
 
 @app.websocket("/api/entrevista")
 async def entrevista(ws: WebSocket) -> None:
     """O chat que compõe. GASTA DINHEIRO — ver `api/entrevista.py`."""
-    await conduzir(ws, gravar=_gravar_receita_do_chat)
+    await conduzir(ws, gravar=_gravar_composicao_do_chat)
 
 
 @app.post("/api/receitas", response_model=WorkflowJSON, status_code=201)
@@ -1163,6 +1216,14 @@ def _executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
         # Também é o que evita gerar 300 itens sintéticos para jogar fora a cada
         # disparo.
         ref, pool = f"workflow:{workflow_id}", _semente()
+        # E NENHUM gabarito. `_fonte_de` devolve a fonte sintética e o gabarito
+        # dela por default, e este ramo trocava só a fonte — então um workflow
+        # que lê a própria entrada reportava `contra_gabarito` do benchmark de
+        # conciliação. Medido num run real contra uma API de KYC:
+        # `{"bank_total": 302, "deterministic_rate": 0.0}` numa triagem que não
+        # viu lançamento nenhum. Não é um número errado por pouco: é um número
+        # sobre outra coisa, com cara de medido.
+        gabarito = None
     else:
         ref, pool = _ler(fonte, pedido)
     fila, _ = _abrir_fila(workflow_id, ref)
@@ -1186,7 +1247,7 @@ def _executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
     _conferir_payload(definicao, pool, pedido.fonte.tipo)
     _conferir_kinds(definicao, pool)
 
-    cliente: ClienteComTeto | None = None
+    orcamento: Orcamento | None = None
     if tem_agente:
         # A guarda de teto (guarda 1) já rodou lá em cima, antes de a fonte ser
         # tocada — é checagem pura sobre o pedido. Aqui sobra o que depende do
@@ -1206,7 +1267,7 @@ def _executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
             )
         # Guarda 1: o teto do PEDIDO, não o default do agente — que é generoso
         # por ser um default. Só aqui a tranca é desarmada.
-        cliente = _cliente_de_execucao(pedido.teto_microcents)
+        cliente_para, orcamento = _cliente_de_execucao(pedido.teto_microcents)
         # Construída OUTRA VEZ, e é o preço de não construir um cliente pago
         # antes de saber que ele é necessário: o cliente entra no `Agent` na
         # CONSTRUÇÃO, então saber se há agente exige uma definição, e ter o
@@ -1218,7 +1279,9 @@ def _executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
         # em tudo que importa aqui.
         definicao = construir_definicao(
             fabrica,
-            WorkflowContext(fila=fila, cliente=cliente, contexto=_contexto_de(pool)),
+            WorkflowContext(
+                fila=fila, cliente_para=cliente_para, contexto=_contexto_de(pool)
+            ),
         )
 
     # O MESMO modelo que a conversão de custo vai usar, passado explicitamente
@@ -1246,7 +1309,7 @@ def _executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
         # `teto_atingido` da resposta. Dois cálculos para a mesma pergunta são
         # dois cálculos que divergem, e o sintoma seria uma resposta em que os
         # dois campos se contradizem.
-        parou_no_teto = cliente is not None and cliente.recusas > 0
+        parou_no_teto = orcamento is not None and orcamento.recusas > 0
         if parou_no_teto:
             # O MOTOR não tem como saber disto: o teto por requisição vive no
             # cliente, e `execute()` por desenho não inspeciona cliente nenhum —
@@ -1264,6 +1327,31 @@ def _executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
             # POR QUE existe lacuna, e mandar o operador para a fila de revisão
             # esconderia a causa atrás do sintoma.
             run = replace(run, state=RunState.LIMITE_DE_CUSTO)
+        # COM QUE MODELO cada resolver falou, gravado junto com o que ele
+        # gastou. Sem isto o custo em disco não é conversível: `Cost` guarda
+        # TOKENS, e os mesmos tokens custam 5x mais em opus que em haiku.
+        #
+        # Medido contra o Barrier em 2026-09-23, o MESMO run: `POST /runs`
+        # devolveu 541.300 µ¢ (haiku, certo) e `GET /api/runs` devolveu
+        # 2.706.500 µ¢, porque `_resumo_json` reconstruía o modelo de um
+        # `"claude-opus-5"` fixo. Duas verdades sobre um fato, e a errada era a
+        # que fica em disco e alimenta a tela de custo.
+        #
+        # **Feito AQUI e não no motor**, embora o motor seja quem vê o resolver
+        # rodar: ler `model` exige `describe()`, e o motor hoje precisa de três
+        # coisas de um resolver — `name`, `cost_class` e `resolve`. Exigir uma
+        # quarta para escriturar custo quebra todo resolver mínimo, e
+        # `tests/test_metrics.py::ResolverHostil` foi o mensageiro. A borda já
+        # tem a definição em mãos — a tabela `por_resolver` sai dela — então o
+        # fato está disponível sem alargar contrato nenhum.
+        run = replace(
+            run,
+            modelo_por_resolver={
+                d.name: d.model
+                for stage in definicao.stages
+                for d in (r.describe() for r in stage.ordered())
+            },
+        )
         # O run vai para o store ANTES de qualquer projeção para JSON: o que a
         # tela mostra é derivado, o que o store guarda é o fato.
         _run_store().save(run)
@@ -1302,7 +1390,7 @@ def _executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
                 # este zero é MEDIDO e não inventado: sem `_cliente_de_execucao`
                 # não há caminho até o modelo, e `ClienteAusente` levanta se
                 # alguém tentar — nada foi gasto porque nada podia ser.
-                "custo_microcents": cliente.gasto_microcents() if cliente else 0,
+                "custo_microcents": orcamento.gasto_microcents() if orcamento else 0,
             },
         ) from erro
 
@@ -1365,8 +1453,13 @@ def _executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
             # A mesma guarda de `metrics.evaluate`: um resolver que não gastou
             # token nenhum converte para zero em qualquer modelo, e uma cascata
             # só de regras não deve exigir tabela de preços para ler zero.
+            # O modelo de CADA linha, declarado pelo resolver. Era `modelo`
+            # — um só para a tabela inteira —, e com `model` por bloco isso
+            # passou a mentir: a linha de um bloco em haiku vinha com preço de
+            # opus, 5x maior. O número por resolver é o que este produto vende;
+            # ele não pode sair de um default.
             microcents=(
-                c.microcents(modelo)
+                c.microcents(d.model or modelo)
                 if (c := run.cost_by_resolver.get(d.name, Cost.zero())) != Cost.zero()
                 else 0
             ),
@@ -1416,7 +1509,11 @@ def _executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
             items=total - resolvidos,
             rate=(total - resolvidos) / total if total else 0.0,
         ),
-        custo_microcents=run.custo_total_microcents(modelo),
+        # A SOMA das linhas, cada uma no seu preço — e não
+        # `run.custo_total_microcents(modelo)`, que converte tudo com um modelo
+        # só. Aquele método continua existindo para a CLI e o `eval/`, que de
+        # fato rodam com um modelo só.
+        custo_microcents=sum(p.microcents for p in por_resolver),
         # O DESFECHO, e ele existe porque três coisas diferentes chegavam aqui
         # com a mesma cara: "o modelo não achou nada", "paramos no teto" e "a
         # API falhou". As duas últimas viram abstenção pela captura estreita de
@@ -1731,9 +1828,17 @@ def _resumo_json(s) -> RunResumoJSON:
         # Um resolver que não gastou token nenhum converte para zero em
         # qualquer modelo — a mesma guarda de `metrics.evaluate`, para que uma
         # cascata só de regras não exija um `model` válido para ler zero.
+        # O modelo de CADA linha, gravado junto com o custo dela. Era
+        # `"claude-opus-5"` fixo para a tabela inteira, e isso passou a mentir
+        # quando o bloco ganhou modelo proprio: medido contra o Barrier em
+        # 2026-09-23, o MESMO run saiu por 541.300 µ¢ em `POST /runs` e
+        # 2.706.500 µ¢ aqui. Duas verdades sobre um fato, e a errada era a que
+        # fica em disco e alimenta a tela de custo.
         microcents=sum(
-            c.microcents("claude-opus-5") if c != Cost.zero() else 0
-            for c in s.cost_by_resolver.values()
+            c.microcents(s.modelo_por_resolver.get(nome) or MODELO_INERTE)
+            if c != Cost.zero()
+            else 0
+            for nome, c in s.cost_by_resolver.items()
         ),
     )
 

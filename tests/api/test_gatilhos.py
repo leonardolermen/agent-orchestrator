@@ -234,3 +234,39 @@ def test_gatilho_sem_teto_e_recusado_no_MODELO(tmp_path):
 
 def test_ler_gatilho_inexistente_devolve_None(tmp_path: Path):
     assert gatilhos.ler("nao-existe", tmp_path) is None
+
+
+def test_um_workflow_que_carrega_a_PROPRIA_entrada_nao_reporta_gabarito(
+    tmp_path, monkeypatch
+):
+    """`contra_gabarito` é sobre o benchmark SINTÉTICO, e um workflow que lê a
+    própria fonte nunca o tocou.
+
+    Medido num run real contra uma API de KYC: a resposta trouxe
+    `{"bank_total": 302, "deterministic_rate": 0.0}` — números de uma
+    conciliação bancária, para uma triagem que não viu lançamento nenhum. A
+    causa é que `_fonte_de` devolve a fonte sintética E o gabarito dela por
+    default, e o ramo que planta a semente trocava só a fonte.
+
+    É o "número com cara de medido" que este repositório combate em toda parte:
+    ele não está errado por pouco, ele é sobre outra coisa.
+    """
+    import httpx
+
+    wid = _workflow_autossuficiente(tmp_path, monkeypatch)
+    monkeypatch.setattr(api_app, "_RAIZ_FILA", tmp_path / "dados")
+
+    def handler(pedido):
+        return httpx.Response(200, json=[{"id": "p1"}, {"id": "p2"}])
+
+    monkeypatch.setattr(
+        "orchestrator.sources.http._transporte_padrao",
+        lambda: httpx.MockTransport(handler),
+    )
+
+    r = cliente.post(f"/api/workflows/{wid}/runs", json={})
+
+    assert r.status_code == 200, r.text
+    assert r.json()["contra_gabarito"] is None
+    # E o `input_ref` continua dizendo de onde o dado veio de verdade.
+    assert r.json()["input_ref"] == f"workflow:{wid}"

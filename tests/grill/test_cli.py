@@ -18,20 +18,49 @@ def _propor() -> LLMResponse:
         "propor_workflow",
         nome="Acme",
         justificativa="j",
-        resolvers=[{"nome": "L1"}, {"nome": "L2", "parametros": {"max_cents": 10}}],
+        etapas=[
+            {
+                "nome": "casar",
+                "blocos": [
+                    {"tipo": "regra", "regra": {"nome": "L1"}},
+                    {"tipo": "regra", "regra": {"nome": "L2", "parametros": {"max_cents": 10}}},
+                ],
+            }
+        ],
     )
 
 
 def _propor_com_agente() -> LLMResponse:
-    # "investigador", não "agente": o catálogo plano (Task 3) nomeia o bloco
-    # AGENTE da conciliação pelo `Resolver.name` que ele sempre teve — o
-    # cardápio do grill é que usava a chave "agente" só para propor este
-    # mesmo bloco.
+    """Uma cascata com um bloco PAGO, para exercitar a ressalva.
+
+    O agente é DECLARADO, não escolhido pelo nome `investigador` — no formato
+    novo os três agentes prontos do catálogo saíram do `enum` da ferramenta, e
+    é essa a mudança: o chat declara em vez de escolher. O nome continua sendo
+    `investigador` porque é ele que a saída da CLI precisa nomear.
+    """
     return _chamada(
         "propor_workflow",
         nome="Acme",
         justificativa="j",
-        resolvers=[{"nome": "L1"}, {"nome": "investigador"}],
+        etapas=[
+            {
+                "nome": "casar",
+                "blocos": [
+                    {"tipo": "regra", "regra": {"nome": "L1"}},
+                    {
+                        "tipo": "agente",
+                        "agente": {
+                            "name": "investigador",
+                            "system": "investigue a divergência",
+                            "kind": "banco",
+                            "prompt": "Investigue {documento}",
+                            "tipos": ["DEFASAGEM_TEMPORAL", "DEVOLUCAO_FUNDOS"],
+                            "abstem_com": "NAO_IDENTIFICADO",
+                        },
+                    },
+                ],
+            }
+        ],
     )
 
 
@@ -53,7 +82,7 @@ def test_entrevista_feliz_grava_e_imprime_o_numero(capsys, tmp_path):
     codigo = _rodar(["--id", "acme", "--descricao", "conciliamos NF"], ["r"], ent)
 
     assert codigo == 0
-    assert (tmp_path / "workflows" / "acme.json").exists()
+    assert (tmp_path / "composicoes" / "acme.json").exists()
     saida = capsys.readouterr().out
     assert "acme" in saida
     assert "%" in saida
@@ -137,7 +166,7 @@ def test_parametro_fora_de_faixa_falha_antes_de_entrevistar_e_nao_grava(
 
     assert codigo != 0
     assert cliente.chamadas == []
-    assert not (tmp_path / "workflows" / "acme.json").exists()
+    assert not (tmp_path / "composicoes" / "acme.json").exists()
     assert flag in capsys.readouterr().err
 
 
@@ -152,7 +181,7 @@ def test_recusa_grava_e_sai_com_zero(capsys, tmp_path):
 
     assert codigo == 0
     assert (tmp_path / "grill" / "recusas" / "acme.json").exists()
-    assert not (tmp_path / "workflows" / "acme.json").exists()
+    assert not (tmp_path / "composicoes" / "acme.json").exists()
     assert "adquirente" in capsys.readouterr().out
 
 
@@ -163,14 +192,14 @@ def test_entrevista_falha_nao_grava_e_imprime_a_transcricao(capsys, tmp_path):
     codigo = _rodar(["--id", "acme", "--descricao", "d"], ["a", "b"], ent)
 
     assert codigo == 1
-    assert not (tmp_path / "workflows" / "acme.json").exists()
+    assert not (tmp_path / "composicoes" / "acme.json").exists()
     assert "p0" in capsys.readouterr().out
 
 
 def test_id_colidindo_recusa_antes_de_entrevistar(capsys, tmp_path):
     # Descobrir a colisão no fim desperdiçaria a conversa do parceiro.
-    (tmp_path / "workflows").mkdir(parents=True)
-    (tmp_path / "workflows" / "acme.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "composicoes").mkdir(parents=True)
+    (tmp_path / "composicoes" / "acme.json").write_text("{}", encoding="utf-8")
     cliente = FakeLLMClient([])
 
     codigo = _rodar(["--id", "acme", "--descricao", "d"], [], Entrevistador(client=cliente))

@@ -41,7 +41,7 @@ def _bloco(**kw) -> BlocoCrew:
 
 def _compor(bloco: BlocoCrew):
     c = Composicao(id="w", nome="W", gerado_em=AGORA, blocos=(bloco,))
-    return construir_composicao(c, cliente=FakeLLMClient([]))
+    return construir_composicao(c, cliente_para=lambda _model: FakeLLMClient([]))
 
 
 def test_a_declaracao_vira_tripulacao():
@@ -121,4 +121,4 @@ def test_o_nome_da_tripulacao_entra_na_unicidade_dos_blocos():
     )
 
     with pytest.raises(ValueError, match="repetido"):
-        construir_composicao(c, cliente=FakeLLMClient([]))
+        construir_composicao(c, cliente_para=lambda _model: FakeLLMClient([]))

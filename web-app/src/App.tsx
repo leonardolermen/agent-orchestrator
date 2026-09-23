@@ -15,6 +15,7 @@ import "@xyflow/react/dist/style.css";
 import {
   agenteEmBranco,
   api,
+  tarefaEmBranco,
   CORES,
   ErroDaApi,
   ORDEM_CLASSE,
@@ -22,7 +23,8 @@ import {
   type AgenteDeclarado,
   type BlocoPedido,
   type Catalogo,
-  type Receita,
+  type TarefaDeclarada,
+  type ComposicaoProposta,
   type Regra,
   type WorkflowConstruido,
   type ValorParametro,
@@ -263,6 +265,18 @@ export default function App() {
   const acrescentarAgente = (a: AgenteDeclarado) =>
     acrescentar({ tipo: "agente", declaracao: { ...a }, etapa: etapaDeNascimento() });
 
+  /** Uma TAREFA nova, em branco.
+   *
+   *  Nao ha "cardapio de tarefas" como ha de agentes: nenhum dominio declara
+   *  tarefa no `registro`, e uma tarefa pronta seria um prompt de outra pessoa
+   *  para um kind que nao e o seu. Ela nasce sempre declarada aqui. */
+  const novaTarefa = () => {
+    const usados = new Set(nos.map((n) => nomeDo(n.data)));
+    let nome = "tarefa";
+    for (let i = 2; usados.has(nome); i++) nome = `tarefa-${i}`;
+    acrescentar({ tipo: "tarefa", declaracao: tarefaEmBranco(nome), etapa: etapaDeNascimento() });
+  };
+
   /** Move um bloco de degrau. Etapas vazias somem sozinhas: o numero de etapas
    *  e DERIVADO do que os blocos dizem, entao nao existe estado "etapa vazia"
    *  para ficar inconsistente com o servidor (que recusa etapa sem bloco). */
@@ -349,6 +363,17 @@ export default function App() {
     invalidar();
   };
 
+  const mudarTarefa = (id: string, patch: Partial<TarefaDeclarada>) => {
+    setNos((atuais) =>
+      atuais.map((n) =>
+        n.id === id && n.data.tipo === "tarefa"
+          ? { ...n, data: { ...n.data, declaracao: { ...n.data.declaracao, ...patch } } }
+          : n,
+      ),
+    );
+    invalidar();
+  };
+
   const compor = async (
     id: string,
     nome: string,
@@ -390,6 +415,9 @@ export default function App() {
                   conflito: n.data.conflito,
                 };
               }
+              if (n.data.tipo === "tarefa") {
+                return { tipo: "tarefa", declaracao: n.data.declaracao };
+              }
               return { tipo: "agente", declaracao: n.data.declaracao };
             }),
           })),
@@ -419,7 +447,7 @@ export default function App() {
   // e validar" com um revisor no canvas devolvia 422. Um nome que não esteja
   // nem nas regras nem nos agentes ainda sai, e sair sem dizer seria a cascata
   // mentindo sobre o que foi proposto.
-  const aceitarProposta = (receita: Receita) => {
+  const aceitarProposta = (composicao: ComposicaoProposta) => {
     if (!catalogo) {
       setAviso("o catálogo ainda não carregou; a proposta do chat não pôde pousar");
       return;
@@ -427,30 +455,56 @@ export default function App() {
 
     const novos: NoDoCanvas[] = [];
     const naoColocados: string[] = [];
-    for (const r of receita.resolvers) {
-      const regra = catalogo.regras.find((x) => x.nome === r.nome);
-      const agente = catalogo.agentes.find((x) => x.name === r.nome);
-      let dados: DadosDoNo | null = null;
-      if (regra) {
-        const parametros: Record<string, ValorParametro> = {};
-        for (const p of regra.parametros) parametros[p.nome] = p.default;
-        dados = { tipo: "regra", regra, parametros: { ...parametros, ...(r.parametros ?? {}) }, etapa: 0 };
-      } else if (agente) {
-        dados = { tipo: "agente", declaracao: { ...agente }, etapa: 0 };
+    // POR ETAPA, e o índice é a etapa: antes tudo pousava em `etapa: 0`, que
+    // era verdade enquanto a proposta tinha um degrau só. Empilhar duas etapas
+    // numa faria os blocos disputarem o mesmo pool — outro workflow, com a
+    // mesma cara.
+    composicao.etapas.forEach((etapa, indice) => {
+      for (const bloco of etapa.blocos) {
+        let dados: DadosDoNo | null = null;
+        if (bloco.tipo === "regra") {
+          const regra = catalogo.regras.find((x) => x.nome === bloco.nome);
+          // O `push` do não-colocado mora AQUI DENTRO: só regra pode não
+          // pousar — o nome dela vem do catálogo, e um nome que não está lá é
+          // o chat propondo o que a tela não tem. Agente, tarefa e crew são
+          // DECLARADOS, não há o que procurar; fora deste ramo `bloco.nome`
+          // nem existe no tipo.
+          if (!regra) naoColocados.push(bloco.nome);
+          if (regra) {
+            const parametros: Record<string, ValorParametro> = {};
+            for (const p of regra.parametros) parametros[p.nome] = p.default;
+            dados = {
+              tipo: "regra",
+              regra,
+              parametros: { ...parametros, ...bloco.parametros },
+              etapa: indice,
+            };
+          }
+        } else if (bloco.tipo === "agente") {
+          dados = { tipo: "agente", declaracao: { ...bloco.declaracao }, etapa: indice };
+        } else if (bloco.tipo === "tarefa") {
+          dados = { tipo: "tarefa", declaracao: { ...bloco.declaracao }, etapa: indice };
+        } else {
+          dados = {
+            tipo: "crew",
+            nome: bloco.nome,
+            agentes: bloco.agentes.map((a) => ({ ...a })),
+            process: bloco.process,
+            conflito: bloco.conflito,
+            etapa: indice,
+          };
+        }
+        if (!dados) continue;
+        // Posição provisória: o auto-layout reempilha na ordem de execução
+        // assim que o React Flow mede os cartões.
+        novos.push({
+          id: `n${proximoId.current++}`,
+          type: "resolver",
+          position: { x: 0, y: 0 },
+          data: dados,
+        });
       }
-      if (!dados) {
-        naoColocados.push(r.nome);
-        continue;
-      }
-      // Posição provisória: o auto-layout reempilha na ordem de execução assim
-      // que o React Flow mede os cartões.
-      novos.push({
-        id: `n${proximoId.current++}`,
-        type: "resolver",
-        position: { x: 0, y: 0 },
-        data: dados,
-      });
-    }
+    });
     setNos(novos);
     setAviso(
       naoColocados.length
@@ -573,11 +627,13 @@ export default function App() {
           onAcrescentarRegra={acrescentarRegra}
           onAcrescentarAgente={acrescentarAgente}
           onNovoAgente={novoAgente}
+          onNovaTarefa={novaTarefa}
           onNovoTime={novoTime}
           onMudarTime={mudarTime}
           onRemover={remover}
           onMudarParametro={mudarParametro}
           onMudarAgente={mudarAgente}
+          onMudarTarefa={mudarTarefa}
           onCompor={compor}
           quantasEtapas={quantasEtapas}
           nomeDaEtapa={nomeDaEtapa}

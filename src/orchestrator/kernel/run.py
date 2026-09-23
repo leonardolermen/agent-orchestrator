@@ -90,6 +90,16 @@ class Run:
     proposals: tuple[Proposal, ...] = ()
     unresolved: WorkSet = field(default_factory=WorkSet)
     cost_by_resolver: dict[str, Cost] = field(default_factory=dict)
+    # COM QUE MODELO cada resolver falou. Vazio (`""`) e o resolver que nao
+    # escolheu: quem le converte com o padrao de quem esta lendo.
+    #
+    # Anda junto de `cost_by_resolver` porque sem ele o custo nao e
+    # conversivel: `Cost` guarda TOKENS, e os mesmos tokens custam 5x mais em
+    # opus que em haiku. Medido contra o Barrier em 2026-09-23, o mesmo run
+    # saiu por 541.300 µ¢ na resposta e 2.706.500 µ¢ no store, porque o store
+    # reconstruia o modelo de um default. O modelo e um FATO do run; um default
+    # na hora de LER e um palpite.
+    modelo_por_resolver: dict[str, str] = field(default_factory=dict)
     # Quantas RESOLUÇÕES cada resolver produziu.
     resolved_by_resolver: dict[str, int] = field(default_factory=dict)
     # Quantos ITENS as resoluções de cada resolver consumiram. Campo separado

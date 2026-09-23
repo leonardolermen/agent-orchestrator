@@ -37,7 +37,7 @@ ele.
 """
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from orchestrator.agent.conversa import conversar
 from orchestrator.agent.llm import LLMClient
@@ -45,7 +45,7 @@ from orchestrator.agent.tools.registry import ToolRegistry
 from orchestrator.kernel.cost import Cost, CostClass
 from orchestrator.kernel.resolution import Resolution, TraceEvent, TraceKind
 from orchestrator.kernel.resolver import ResolverDescription, ResolverOutput
-from orchestrator.kernel.work import WorkItem, WorkSet
+from orchestrator.kernel.work import WorkItem, WorkSet, campos_de
 
 
 @dataclass(frozen=True)
@@ -182,6 +182,7 @@ class Tarefa:
             name=self.name,
             cost_class=self.cost_class,
             summary=f"tarefa {self.spec.model}",
+            model=self.spec.model,
             consome=frozenset({self.spec.kind}) if self.spec.kind else frozenset(),
             produz=frozenset({self.spec.produz}) if self.spec.produz else frozenset(),
         )
@@ -238,7 +239,7 @@ class Tarefa:
                 max_turns=self.spec.max_turns,
                 max_format_retries=self.spec.max_format_retries,
                 budget_microcents=self.spec.budget_microcents,
-                interpretar=self.spec.transformar,
+                interpretar=self._transformar_carregando(item),
                 desistir=_abster,
             )
             total = total + saida.cost
@@ -252,6 +253,50 @@ class Tarefa:
         return ResolverOutput(
             resolutions=resolucoes, produced=tuple(produzidos), cost=total
         )
+
+    def _transformar_carregando(self, item: WorkItem):
+        """O `transformar` da spec, com os campos de ORIGEM carregados na saída.
+
+        **Por que aqui e não dentro de cada `transformar`.** O contrato de
+        `conversa.conversar` é `interpretar(item_id, texto, custo, trace)`, e ele
+        é compartilhado com o `Agent` — alargá-lo para receber o item arrastaria
+        os dois lados por causa de um só. Este embrulho dá à `Tarefa` o que só
+        ela precisa, sem tocar no laço.
+
+        **Por que a regra existe.** Achado num run real (2026-09-21): o
+        entrevistador propôs um revisor cujo prompt cita `{titulo}` e `{corpo}`
+        da issue para conferir o resumo contra ela — a coisa certa a pedir. O
+        item produzido carregava só `{resumo}`, e a execução morria com
+        `KeyError: o prompt cita 'titulo' e o payload de '1+resumo' não tem esse
+        campo`. Não era invenção do modelo: era o formato jogando fora o item de
+        origem. Um degrau que transforma ACRESCENTA.
+
+        **Só quando o item produzido carrega CAMPOS.** `domains/redacao` produz
+        payload de texto cru, e ali não há onde pôr campo nenhum — mesclar
+        exigiria inventar uma chave para o texto, que é decisão do domínio e não
+        desta função. Payload que não é dicionário passa intacto.
+        """
+
+        def interpretar(item_id: str, texto: str, custo: Cost, trace: list[TraceEvent]):
+            saida = self.spec.transformar(item_id, texto, custo, trace)
+            if saida is None or not saida.produced:
+                return saida
+            try:
+                origem = campos_de(item.payload)
+            except TypeError:
+                # Payload de origem sem campos (texto cru, por exemplo): não há
+                # o que carregar, e recusar aqui derrubaria um pipeline que
+                # funciona — `domains/redacao` é exatamente esse caso.
+                return saida
+            produzidos = tuple(
+                replace(p, payload={**origem, **p.payload})
+                if isinstance(p.payload, dict)
+                else p
+                for p in saida.produced
+            )
+            return replace(saida, produced=produzidos)
+
+        return interpretar
 
     def _conferir(self, item: WorkItem, saida: SaidaDaTarefa) -> None:
         """As duas metades de "transformar é resolver", impostas.

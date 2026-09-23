@@ -342,6 +342,7 @@ def _exigencias_esperadas() -> dict[str, dict[str, type]]:
         "filtro": _SEM_EXIGENCIA,
         "validacao": _SEM_EXIGENCIA,
         "condicao": _SEM_EXIGENCIA,
+        "enriquecer": _SEM_EXIGENCIA,
         # -- agentes declarados: montam o prompt a partir dos CAMPOS do item, e
         # `agent/declarado.py::_campos` aceita dataclass OU dict. Exigir tipo
         # aqui quebraria o caminho principal desta fatia — um CSV do usuário
@@ -397,6 +398,15 @@ _EXEMPLOS: dict[str, dict] = {
         "teste": "maior",
         "valor": "0",
         "produz": "suspeito",
+    },
+    # A url aponta para um host que NAO existe de proposito: estas catracas
+    # constroem o bloco e leem `describe()`, nunca o executam. Um host real aqui
+    # seria uma requisicao de verdade saindo da suite, que `_rede_proibida`
+    # recusa — e com razao.
+    "enriquecer": {
+        "kind": "banco",
+        "produz": "banco_completo",
+        "url": "https://api.invalida.test/v1/x/{document}",
     },
 }
 
@@ -472,6 +482,7 @@ CONSOME_ESPERADO: dict[str, frozenset[str]] = {
     "filtro": frozenset({"banco"}),
     "validacao": frozenset({"banco"}),
     "condicao": frozenset({"banco"}),
+    "enriquecer": frozenset({"banco"}),
     "L1": frozenset({"banco", "contabil"}),
     "L2": frozenset({"banco", "contabil"}),
     "L3": frozenset({"banco", "contabil"}),
@@ -532,3 +543,50 @@ def test_quem_exige_tipo_exige_o_TIPO_certo_e_nao_so_um_kind_qualquer():
 
     assert payloads[BANCO] is BankEntry
     assert payloads[CONTABIL] is LedgerEntry
+
+
+def test_o_bloco_ENRIQUECER_esta_no_catalogo_e_compoe():
+    """Ele precisa estar no catálogo para existir na paleta e no `enum` da
+    ferramenta do chat — é por ali que um bloco novo chega a quem monta.
+
+    A alternativa seria o bloco existir só para quem escreve Python, e foi
+    assim que a plataforma virou um cardápio de conciliação sem ninguém decidir
+    que viraria.
+    """
+    regra = next(r for r in CATALOGO.regras if r.nome == "enriquecer")
+
+    assert regra.categoria == "DATA"
+    assert {p.nome for p in regra.parametros} >= {
+        "kind",
+        "produz",
+        "url",
+        "token_env",
+        "caminho",
+    }
+    resolver = regra.construir(
+        {
+            "kind": "caso",
+            "produz": "caso_completo",
+            "url": "https://api.exemplo.test/v1/assessments/{assessmentId}",
+        }
+    )
+    assert resolver.describe().consome == frozenset({"caso"})
+    assert resolver.describe().produz == frozenset({"caso_completo"})
+
+
+def test_token_env_VAZIO_vira_None_e_nao_uma_variavel_chamada_vazio():
+    """A tela manda string vazia quando o campo não foi preenchido. `""` como
+    NOME de variável pediria uma variável chamada vazio e devolveria
+    `VariavelAusente('')`, que não diz nada a ninguém."""
+    regra = next(r for r in CATALOGO.regras if r.nome == "enriquecer")
+
+    resolver = regra.construir(
+        {
+            "kind": "caso",
+            "produz": "caso_completo",
+            "url": "https://api.exemplo.test/v1/x/{id}",
+            "token_env": "",
+        }
+    )
+
+    assert resolver.token_env is None
