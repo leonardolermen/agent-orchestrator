@@ -186,3 +186,49 @@ agentes em modelos diferentes reporta duas linhas com preços diferentes.**
    zero falso negativo.
 5. O caso do Barrier roda em Haiku e a linha do agente custa ~1/5 do que custou
    em Opus — a medição que motivou esta spec, fechada.
+
+---
+
+## 9. Executado — a medição, fechada (2026-09-23)
+
+Mesma composição, mesmo Barrier, mesma fila de duas avaliações em
+`ANALISE_PADRAO`. Teto de 3.000.000 µ¢ nas três.
+
+| | modelo declarado | modelo chamado | tokens do agente | reportado | estado |
+|---|---|---|---|---|---|
+| run 1 (22/09 07:19) | (nenhum) | opus | — | 3.863.500 µ¢ | `limite_de_custo` |
+| run 2 (22/09 19:05) | `claude-haiku-4-5` | **opus** | 238 in / 1.750 out, 1 item | 4.494.000 µ¢ | `limite_de_custo` |
+| run 3 (23/09 06:13) | `claude-haiku-4-5` | **haiku** | 363 in / 1.010 out, 2 itens | **541.300 µ¢** | `concluido` |
+
+A comparação honesta não é 4.494.000 ÷ 541.300. O run 2 gastou aquilo em **um
+item** e estourou o teto antes de tocar no segundo; o run 3 fez **os dois** e
+sobrou teto. O efeito de preço puro está nos mesmos tokens do run 3: 541.300 µ¢
+em haiku, 2.706.500 µ¢ em opus — os 5× que a spec prometia, agora medidos.
+
+### O defeito que esta medição achou
+
+O run 3 reportou **dois números para o mesmo run**: 541.300 µ¢ em
+`POST /runs` e 2.706.500 µ¢ em `GET /api/runs`. A borda de ESCRITA passou a
+precificar por linha nesta fatia; a de LEITURA continuou convertendo a tabela
+inteira com `"claude-opus-5"` fixo, porque `Cost` guarda tokens e o store não
+guardava o modelo. O número errado era o que fica em disco e alimenta a tela de
+custo.
+
+Corrigido em `ce69748`: `Run.modelo_por_resolver` anda junto de
+`cost_by_resolver`, atravessa `StoredRun` e o JSONL, e `_resumo_json`
+precifica linha a linha. Escriturado na BORDA e não no motor — ler `model`
+exige `describe()`, e o motor precisa de três coisas de um resolver
+(`name`, `cost_class`, `resolve`); exigir uma quarta quebrou
+`tests/test_metrics.py::ResolverHostil` na primeira tentativa.
+
+### O que continua sem funcionar, e não é sobre modelo
+
+Os **dois** itens do run 3 abstiveram, com `motivo: "sem conclusão"` e
+`stop_reason: end_turn` — 543 e 467 tokens de saída, prosa em vez da conclusão
+estruturada. O run 2, em opus, abstivera igual (1.750 tokens num item só). A
+composição declara `max_turns: 1` e `ferramentas: []`: o modelo tem um turno
+para acertar o formato e nenhuma chance de retry.
+
+Ou seja: **a parte de graça funciona, o preço agora é verdade, e a triagem
+ainda não sai.** Isso é assunto da composição que o chat gera — `max_turns` e o
+system prompt —, não do roteamento de modelo, e fica para uma fatia própria.
