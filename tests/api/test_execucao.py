@@ -2256,3 +2256,61 @@ def test_dois_agentes_em_MODELOS_diferentes_dao_duas_linhas_com_precos_diferente
     assert r.json()["custo_microcents"] == linhas["caro"] + linhas["barato"]
     # A chamada foi para o modelo que o BLOCO declarou, na ordem da cascata.
     assert vistos == ["claude-haiku-4-5", "claude-opus-5"]
+
+
+def test_o_STORE_precifica_por_linha_igual_a_RESPOSTA(tmp_path, monkeypatch):
+    """Os dois endpoints falam do MESMO run e precisam dizer o mesmo numero.
+
+    `test_o_custo_do_caminho_feliz_tambem_esta_no_STORE` ja fixa essa igualdade,
+    e ela passava porque havia um modelo so: os dois lados convertiam com ele.
+    Com `model` por bloco, `_resumo_json` continuou convertendo a tabela inteira
+    com `claude-opus-5` fixo, e as duas respostas divergiram 5x.
+
+    Medido contra o Barrier em 2026-09-23, o mesmo run: `POST /runs` devolveu
+    541.300 µ¢ (haiku, certo) e `GET /api/runs` devolveu 2.706.500 µ¢ (opus).
+    Duas verdades sobre um fato — e a que fica em disco e alimenta a tela de
+    custo era a errada.
+
+    O modelo do resolver e um FATO do run, entao ele passou a ser gravado com o
+    custo, e nao reconstruido de um default na hora de ler.
+    """
+    import orchestrator.api.app as api_app
+    from orchestrator.agent.llm import FakeLLMClient
+    from orchestrator.agent.teto import ClienteComTeto, Orcamento
+
+    _csv_de_issues(tmp_path, monkeypatch, linhas=1)
+
+    def _de_execucao(teto):
+        orcamento = Orcamento(teto)
+        return (
+            lambda model: ClienteComTeto(
+                FakeLLMClient([_resposta()] * 4, model=model), orcamento=orcamento
+            )
+        ), orcamento
+
+    monkeypatch.setattr(api_app, "_tem_chave", lambda: True)
+    monkeypatch.setattr(api_app, "_cliente_de_execucao", _de_execucao)
+    _registrar(
+        monkeypatch,
+        "dois-modelos-store",
+        _fabrica_com_agentes(
+            _declarado(name="barato", model="claude-haiku-4-5"),
+            _declarado(name="caro", model="claude-opus-5"),
+            workflow_id="dois-modelos-store",
+        ),
+    )
+
+    corpo = cliente.post(
+        "/api/workflows/dois-modelos-store/runs",
+        json={"fonte": _FONTE_ISSUES, "teto_microcents": 100_000_000},
+    ).json()
+
+    (resumo,) = cliente.get(
+        "/api/runs", params={"workflow_id": "dois-modelos-store"}
+    ).json()
+    assert resumo["microcents"] == corpo["custo_microcents"]
+    # E o numero e o de DOIS precos, nao o de um: sem esta linha a igualdade
+    # acima passaria com os dois lados errados do mesmo jeito.
+    linhas = {p["name"]: p["microcents"] for p in corpo["por_resolver"]}
+    assert resumo["microcents"] == linhas["caro"] + linhas["barato"]
+    assert linhas["caro"] == 5 * linhas["barato"]

@@ -1327,6 +1327,31 @@ def _executar(workflow_id: str, pedido: RunRequest) -> RunJSON:
             # POR QUE existe lacuna, e mandar o operador para a fila de revisão
             # esconderia a causa atrás do sintoma.
             run = replace(run, state=RunState.LIMITE_DE_CUSTO)
+        # COM QUE MODELO cada resolver falou, gravado junto com o que ele
+        # gastou. Sem isto o custo em disco não é conversível: `Cost` guarda
+        # TOKENS, e os mesmos tokens custam 5x mais em opus que em haiku.
+        #
+        # Medido contra o Barrier em 2026-09-23, o MESMO run: `POST /runs`
+        # devolveu 541.300 µ¢ (haiku, certo) e `GET /api/runs` devolveu
+        # 2.706.500 µ¢, porque `_resumo_json` reconstruía o modelo de um
+        # `"claude-opus-5"` fixo. Duas verdades sobre um fato, e a errada era a
+        # que fica em disco e alimenta a tela de custo.
+        #
+        # **Feito AQUI e não no motor**, embora o motor seja quem vê o resolver
+        # rodar: ler `model` exige `describe()`, e o motor hoje precisa de três
+        # coisas de um resolver — `name`, `cost_class` e `resolve`. Exigir uma
+        # quarta para escriturar custo quebra todo resolver mínimo, e
+        # `tests/test_metrics.py::ResolverHostil` foi o mensageiro. A borda já
+        # tem a definição em mãos — a tabela `por_resolver` sai dela — então o
+        # fato está disponível sem alargar contrato nenhum.
+        run = replace(
+            run,
+            modelo_por_resolver={
+                d.name: d.model
+                for stage in definicao.stages
+                for d in (r.describe() for r in stage.ordered())
+            },
+        )
         # O run vai para o store ANTES de qualquer projeção para JSON: o que a
         # tela mostra é derivado, o que o store guarda é o fato.
         _run_store().save(run)
@@ -1803,9 +1828,17 @@ def _resumo_json(s) -> RunResumoJSON:
         # Um resolver que não gastou token nenhum converte para zero em
         # qualquer modelo — a mesma guarda de `metrics.evaluate`, para que uma
         # cascata só de regras não exija um `model` válido para ler zero.
+        # O modelo de CADA linha, gravado junto com o custo dela. Era
+        # `"claude-opus-5"` fixo para a tabela inteira, e isso passou a mentir
+        # quando o bloco ganhou modelo proprio: medido contra o Barrier em
+        # 2026-09-23, o MESMO run saiu por 541.300 µ¢ em `POST /runs` e
+        # 2.706.500 µ¢ aqui. Duas verdades sobre um fato, e a errada era a que
+        # fica em disco e alimenta a tela de custo.
         microcents=sum(
-            c.microcents("claude-opus-5") if c != Cost.zero() else 0
-            for c in s.cost_by_resolver.values()
+            c.microcents(s.modelo_por_resolver.get(nome) or MODELO_INERTE)
+            if c != Cost.zero()
+            else 0
+            for nome, c in s.cost_by_resolver.items()
         ),
     )
 
