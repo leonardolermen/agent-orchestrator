@@ -766,13 +766,13 @@ git commit -m "feat(runs): a chamada vai para o modelo do bloco, e o preco e por
 
 **GASTA DINHEIRO — não execute sem dizer o custo esperado e obter um sim.**
 
-- [ ] **Step 1: Subir o servidor com chave e conferir a mesa**
+- [x] **Step 1: Subir o servidor com chave e conferir a mesa**
 
 `preview_start` com `canvas-com-chave` (porta 8112), e
 `GET http://192.168.1.13:8080/v1/mesa/queues/ANALISE_PADRAO` com o bearer do
 Barrier deve devolver os dois casos.
 
-- [ ] **Step 2: Rodar `mesa-barrier-haiku`**
+- [x] **Step 2: Rodar `mesa-barrier-haiku`**
 
 ```bash
 curl -X POST http://localhost:8112/api/workflows/mesa-barrier-haiku/runs \
@@ -783,7 +783,7 @@ Expected: `estado: concluido`, a linha do `analista-de-mesa` custando ~1/5 do
 que custou em opus (4.494.000 µ¢), e duas propostas na fila com o
 encaminhamento de cada caso.
 
-- [ ] **Step 3: Registrar os números na spec e commitar**
+- [x] **Step 3: Registrar os números na spec e commitar**
 
 Acrescentar a seção "Executado" com o custo medido das duas execuções lado a
 lado, e commitar com `docs(spec):`.
